@@ -460,14 +460,14 @@ function ScoreScreen({ match, onExit }) {
         </div>
       ) : phase === "done" && lastResult ? (
         <div style={{ marginBottom: 6 }}>
-          <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "7px 10px", textAlign: "center", fontSize: 12.5, fontWeight: 700 }}>
-            {pl[lastResult.w].name} 9番　<b style={{ color: C.win }}>＋14</b>
-            <span style={{ color: C.minus, marginLeft: 6 }}>（球{lastResult.winnerBalls}個を置換 −{lastResult.winnerBalls}）</span>
-            <span style={{ marginLeft: 8 }}>相手 ＋{lastResult.loserPts}</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <button onClick={correct} style={ctrl}>◀ 訂正</button>
             <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          </div>
+          <div style={{ textAlign: "center", marginTop: 5, fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+            <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+            <span style={{ color: C.red }}>{lastResult.add[1]}</span>
           </div>
         </div>
       ) : null}
