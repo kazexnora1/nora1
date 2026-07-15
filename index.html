@@ -182,9 +182,9 @@ function RosterScreen({ roster, setRoster, onNext }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 80px" }}>
       <div style={{ textAlign: "center", marginBottom: 18 }}>
         <div style={{ fontSize: 27, fontWeight: 800, color: C.ink }}>選手リスト</div>
-        <div style={{ fontSize: 14, color: C.sub, marginTop: 4 }}>名前とファーゴレートを登録（みんなで共有）</div>
+        <div style={{ fontSize: 15.5, color: C.sub, marginTop: 4 }}>名前とファーゴレートを登録（みんなで共有）</div>
         {appUrl && (
-          <button onClick={openQR} style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 13, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
+          <button onClick={openQR} style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
             📱 アプリを共有（QR）
           </button>
         )}
@@ -201,7 +201,7 @@ function RosterScreen({ roster, setRoster, onNext }) {
         </div>
       ))}
       {roster.length < 30 && (
-        <button onClick={add} style={{ width: "100%", marginTop: 2, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 12, color: C.blue, fontSize: 16, fontWeight: 700, padding: "14px 0", cursor: "pointer", fontFamily: FONT }}>
+        <button onClick={add} style={{ width: "100%", marginTop: 2, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 12, color: C.blue, fontSize: 17.5, fontWeight: 700, padding: "14px 0", cursor: "pointer", fontFamily: FONT }}>
           ＋ 選手を追加
         </button>
       )}
@@ -215,14 +215,14 @@ function RosterScreen({ roster, setRoster, onNext }) {
       {showQR && (
         <div onClick={() => setShowQR(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>このQRを読み取って開く</div>
+            <div style={{ fontSize: 17.5, fontWeight: 800, marginBottom: 14 }}>このQRを読み取って開く</div>
             {appUrl ? (
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(appUrl)}`} alt="QR code" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
             ) : (
-              <div style={{ fontSize: 13, color: C.sub, padding: "60px 0" }}>読み込み中…</div>
+              <div style={{ fontSize: 14.5, color: C.sub, padding: "60px 0" }}>読み込み中…</div>
             )}
-            {appUrl && <div style={{ fontSize: 11, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{appUrl}</div>}
-            <button onClick={() => setShowQR(false)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+            {appUrl && <div style={{ fontSize: 12.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{appUrl}</div>}
+            <button onClick={() => setShowQR(false)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 16.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
               閉じる
             </button>
           </div>
@@ -262,14 +262,14 @@ function CreateMatch({ roster, lenPct, setLenPct, onBack, onStart }) {
 
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, margin: "18px 0" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>試合の長さ</span>
-          <span style={{ fontSize: 22, fontWeight: 800 }}>{lenPct}%<span style={{ fontSize: 15, color: C.sub, marginLeft: 8, fontWeight: 700 }}>{lenTag}</span></span>
+          <span style={{ fontSize: 17.5, fontWeight: 700 }}>試合の長さ</span>
+          <span style={{ fontSize: 22, fontWeight: 800 }}>{lenPct}%<span style={{ fontSize: 16.5, color: C.sub, marginLeft: 8, fontWeight: 700 }}>{lenTag}</span></span>
         </div>
         <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", height: 28, accentColor: C.blue }} />
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           {[["ショート", 75], ["ロング", 100], ["長め", 120]].map(([t, v]) => (
             <button key={t} onClick={() => setLenPct(v)}
-              style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", color: C.ink, borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+              style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", color: C.ink, borderRadius: 12, padding: "12px 0", fontSize: 16.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
               {t}
             </button>
           ))}
@@ -282,15 +282,15 @@ function CreateMatch({ roster, lenPct, setLenPct, onBack, onStart }) {
       {res && (
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 18 }}>
           <div style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 12px", textAlign: "center" }}>
-            <div style={{ fontSize: 14, color: C.sub, fontWeight: 700, marginBottom: 6 }}>目標点（Race-To）</div>
+            <div style={{ fontSize: 15.5, color: C.sub, fontWeight: 700, marginBottom: 6 }}>目標点（Race-To）</div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
-              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.blue }}>{res.rt1}</div><div style={{ fontSize: 13, color: C.sub }}>{p1.name}</div></div>
-              <div style={{ fontSize: 16, color: C.sub, fontWeight: 800 }}>対</div>
-              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.red }}>{res.rt2}</div><div style={{ fontSize: 13, color: C.sub }}>{p2.name}</div></div>
+              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.blue }}>{res.rt1}</div><div style={{ fontSize: 14.5, color: C.sub }}>{p1.name}</div></div>
+              <div style={{ fontSize: 17.5, color: C.sub, fontWeight: 800 }}>対</div>
+              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.red }}>{res.rt2}</div><div style={{ fontSize: 14.5, color: C.sub }}>{p2.name}</div></div>
             </div>
           </div>
           <button disabled={!valid} onClick={() => onStart({ names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] })}
-            style={{ flex: 0.6, background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 16, padding: "20px 12px", fontSize: 15, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT, height: "fit-content", whiteSpace: "nowrap" }}>
+            style={{ flex: 0.6, background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 16, padding: "20px 12px", fontSize: 16.5, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT, height: "fit-content", whiteSpace: "nowrap" }}>
             この対戦を<br />開始する<br />▶
           </button>
         </div>
@@ -302,13 +302,13 @@ function CreateMatch({ roster, lenPct, setLenPct, onBack, onStart }) {
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 15.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>
       {children}
     </div>
   );
 }
 function Notice({ children }) {
-  return <div style={{ fontSize: 13, color: C.hill, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>{children}</div>;
+  return <div style={{ fontSize: 14.5, color: C.hill, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>{children}</div>;
 }
 const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 17, padding: "13px 14px", outline: "none", fontFamily: FONT };
 
@@ -418,7 +418,7 @@ function ScoreScreen({ match, onExit }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <button onClick={() => { if (window.confirm("対戦内容は消えますがよろしいですか？")) discardAndExit(); }} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
-        <span style={{ fontSize: 11, color: C.sub }}>第 {rack} ラック</span>
+        <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
@@ -426,13 +426,13 @@ function ScoreScreen({ match, onExit }) {
           const pc = PC[i]; const hi = hillInfo(i);
           return (
             <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>{pl[i].name}</div>
+              <div style={{ fontSize: 16.5, fontWeight: 800 }}>{pl[i].name}</div>
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{disp[i]}</div>
-              <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.95 }}>Race to <b>{pl[i].raceTo}</b></div>
-              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
+              <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.95 }}>Race to <b>{pl[i].raceTo}</b></div>
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 14.5, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
                 {brk === i && (
-                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
                 )}
               </div>
             </div>
@@ -441,7 +441,7 @@ function ScoreScreen({ match, onExit }) {
       </div>
 
       {hillHill && matchWinner == null && phase === "play" && (
-        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 12, fontWeight: 800, marginBottom: 6 }}>
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
           ヒルヒル：このラックで9番を落とした方が勝ち
         </div>
       )}
@@ -449,8 +449,8 @@ function ScoreScreen({ match, onExit }) {
       {matchWinner != null ? (
         <div style={{ marginBottom: 6 }}>
           <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-            <div style={{ fontSize: 16, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
-            <div style={{ fontSize: 12, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+            <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
+            <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
             <button onClick={correct} style={ctrl}>◀ 訂正</button>
@@ -464,7 +464,7 @@ function ScoreScreen({ match, onExit }) {
             <button onClick={correct} style={ctrl}>◀ 訂正</button>
             <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
           </div>
-          <div style={{ textAlign: "center", marginTop: 5, fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ textAlign: "center", marginTop: 6, fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
             <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
             <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
             <span style={{ color: C.red }}>{lastResult.add[1]}</span>
@@ -477,7 +477,7 @@ function ScoreScreen({ match, onExit }) {
 
       {/* ball tray: clean 3x3 grid, flanked by hint text in the leftover space */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
-        <div style={{ flex: 1, fontSize: 10.5, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
           {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 58px)", gap: 8, flexShrink: 0 }}>
@@ -486,8 +486,8 @@ function ScoreScreen({ match, onExit }) {
             return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
           })}
         </div>
-        <div style={{ flex: 1, fontSize: 10.5, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
-          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 9.5 }}>2回タップで無効球</span></>}
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
         </div>
       </div>
 
@@ -501,13 +501,13 @@ function ScoreScreen({ match, onExit }) {
 
       {histRows.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
           {histRows.slice().reverse().map((h, k) => (
             <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
-              <span style={{ fontSize: 12, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
+              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
               <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
-                <b style={{ fontSize: 15 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
-                <span style={{ fontSize: 10, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
+                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
+                <span style={{ fontSize: 11.5, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
               </span>
             </div>
           ))}
@@ -520,8 +520,8 @@ function ScoreScreen({ match, onExit }) {
 function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
   return (
     <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color }}>{label}</div>
-      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 10, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
+      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
         {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
       </div>
@@ -567,7 +567,7 @@ function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
         boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
         color: nine && !b.dead ? base : "#fff",
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: big ? 18 : 13, fontWeight: 800, boxSizing: "border-box",
+        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
         touchAction: "none", cursor: "pointer", position: "relative",
         userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
         transform: pressed ? "scale(1.25)" : "scale(1)",
@@ -576,11 +576,11 @@ function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
         ...style }}>
       {b.n}
       {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
-      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
+      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
     </div>
   );
 }
-const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 12, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
+const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
