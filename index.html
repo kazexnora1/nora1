@@ -430,9 +430,11 @@ function ScoreScreen({ match, onExit }) {
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{disp[i]}</div>
               <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.95 }}>Race to <b>{pl[i].raceTo}</b></div>
               {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
-              {brk === i && (
-                <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 10, fontWeight: 800, marginTop: 4, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
-              )}
+              <div style={{ minHeight: 18, marginTop: 4 }}>
+                {brk === i && (
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -468,21 +470,25 @@ function ScoreScreen({ match, onExit }) {
             <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
           </div>
         </div>
-      ) : (
-        <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 6, lineHeight: 1.3 }}>
-          球を上にスワイプで {pl[0].name}／下にスワイプで {pl[1].name}／逆方向で戻す／ダブルタップで無効球
-        </div>
-      )}
+      ) : null}
 
       {/* P1 zone (top) */}
       <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
-      {/* ball tray: clean 3x3 grid, all 9 always visible */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 50px)", justifyContent: "center", gap: 8, padding: "8px 0", margin: "4px 0" }}>
-        {balls.map((b) => {
-          const moved = b.loc !== "c";
-          return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
-        })}
+      {/* ball tray: clean 3x3 grid, flanked by hint text in the leftover space */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+        <div style={{ flex: 1, fontSize: 10.5, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+          {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 58px)", gap: 8, flexShrink: 0 }}>
+          {balls.map((b) => {
+            const moved = b.loc !== "c";
+            return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+          })}
+        </div>
+        <div style={{ flex: 1, fontSize: 10.5, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 9.5 }}>2回タップで無効球</span></>}
+        </div>
       </div>
 
       {/* P2 zone (bottom) */}
@@ -513,7 +519,7 @@ function ScoreScreen({ match, onExit }) {
 
 function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
   return (
-    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 6px", minHeight: 44, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color }}>{label}</div>
       {balls.length === 0 && <div style={{ color: C.sub, fontSize: 10, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
