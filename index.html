@@ -64,6 +64,7 @@ const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c",
 const local = {
   get(k) { try { const v = localStorage.getItem(k); return v; } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  remove(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
 /* ========= GAS バックエンド：ロスター／試合結果（共有データ、fetch経由） =========
@@ -387,6 +388,7 @@ function ScoreScreen({ match, onExit }) {
     setTot([0, 0]); setRack(1); setBrk(0); setBalls(mkBalls());
     setPhase("play"); setLastResult(null); setHist([]);
   };
+  const discardAndExit = () => { local.remove(matchKey); onExit(); };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
 
@@ -414,7 +416,7 @@ function ScoreScreen({ match, onExit }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button onClick={() => { if (window.confirm("対戦内容は消えますがよろしいですか？")) onExit(); }} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
+        <button onClick={() => { if (window.confirm("対戦内容は消えますがよろしいですか？")) discardAndExit(); }} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
         <span style={{ fontSize: 11, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
@@ -448,7 +450,7 @@ function ScoreScreen({ match, onExit }) {
           <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
             <button onClick={correct} style={ctrl}>◀ 訂正</button>
             <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
-            <button onClick={onExit} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>戻る</button>
+            <button onClick={discardAndExit} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>戻る</button>
           </div>
         </div>
       ) : phase === "done" && lastResult ? (
