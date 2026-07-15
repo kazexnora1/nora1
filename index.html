@@ -389,6 +389,7 @@ function ScoreScreen({ match, onExit }) {
     setPhase("play"); setLastResult(null); setHist([]);
   };
   const discardAndExit = () => { local.remove(matchKey); onExit(); };
+  const swapBreak = () => { if (phase !== "play") return; if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); setBrk((b) => 1 - b); } };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
 
@@ -429,7 +430,9 @@ function ScoreScreen({ match, onExit }) {
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{disp[i]}</div>
               <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.95 }}>Race to <b>{pl[i].raceTo}</b></div>
               {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
-              {brk === i && <div style={{ fontSize: 10, fontWeight: 800, marginTop: 4, letterSpacing: 1 }}>● ブレイク</div>}
+              {brk === i && (
+                <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 10, fontWeight: 800, marginTop: 4, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+              )}
             </div>
           );
         })}
@@ -520,7 +523,7 @@ function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
   );
 }
 function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
-  const size = big ? 50 : 34;
+  const size = big ? 58 : 38;
   const base = BALL[b.n]; const nine = b.n === 9;
   const ref = useRef(null);
   const startYRef = useRef(0);
