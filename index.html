@@ -69,7 +69,7 @@ const local = {
 /* ========= GAS バックエンド：ロスター／試合結果（共有データ、fetch経由） =========
    デプロイした Google Apps Script の Web App URL をここに貼る。
    例: https://script.google.com/macros/s/XXXXXXXX/exec               */
-const GAS_URL = "https://script.google.com/macros/s/AKfycbzDpwWZx5hNFWlFjLv-Kkj7F-DExBFrvVe0WEs7WzThgZfh7O7Ui3XdqZ73Lllcjlso/exec";
+const GAS_URL = "";
 
 const gas = {
   ready: () => !!GAS_URL,
@@ -323,7 +323,6 @@ function ScoreScreen({ match, onExit }) {
   const [hist, setHist] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [undoStack, setUndoStack] = useState([]);
-  const [submitted, setSubmitted] = useState(false);
   const lastTapRef = useRef({});
   const [pressed, setPressed] = useState(null);
 
@@ -335,11 +334,11 @@ function ScoreScreen({ match, onExit }) {
       const o = JSON.parse(s);
       if (o.tot) setTot(o.tot); if (o.rack) setRack(o.rack); if (typeof o.brk === "number") setBrk(o.brk);
       if (o.balls) setBalls(o.balls); if (o.phase) setPhase(o.phase); if ("lastResult" in o) setLastResult(o.lastResult);
-      if (o.hist) setHist(o.hist); if (o.submitted) setSubmitted(o.submitted);
+      if (o.hist) setHist(o.hist);
     } catch {} }
     setLoaded(true);
   }, []);
-  useEffect(() => { if (!loaded) return; local.set(matchKey, JSON.stringify({ tot, rack, brk, balls, phase, lastResult, hist, submitted })); }, [tot, rack, brk, balls, phase, lastResult, hist, submitted, loaded]);
+  useEffect(() => { if (!loaded) return; local.set(matchKey, JSON.stringify({ tot, rack, brk, balls, phase, lastResult, hist })); }, [tot, rack, brk, balls, phase, lastResult, hist, loaded]);
 
   const rt = (i) => parseInt(pl[i].raceTo, 10) || 0;
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
@@ -383,11 +382,10 @@ function ScoreScreen({ match, onExit }) {
   const undoRack = () => { pushUndo(); setHist((h) => { if (!h.length) return h; const last = h[h.length - 1]; setTot((t) => [t[0] - last.add[0], t[1] - last.add[1]]); setRack(last.rack); setBrk(last.brk); setBalls(mkBalls()); setPhase("play"); setLastResult(null); return h.slice(0, -1); }); };
   const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; setTot(prev.tot); setRack(prev.rack); setBrk(prev.brk); setBalls(prev.balls); setPhase(prev.phase); setLastResult(prev.lastResult); setHist(prev.hist); return s.slice(0, -1); });
 
-  const submitResult = async () => {
-    if (matchWinner == null || submitted) return;
-    const result = { names: pl.map((p) => p.name), score: tot, raceTo: [rt(0), rt(1)], winner: matchWinner, finishedAt: new Date().toISOString() };
-    await gas.addResult(result);
-    setSubmitted(true);
+  const rematch = () => {
+    pushUndo();
+    setTot([0, 0]); setRack(1); setBrk(0); setBalls(mkBalls());
+    setPhase("play"); setLastResult(null); setHist([]);
   };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
@@ -416,7 +414,7 @@ function ScoreScreen({ match, onExit }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button onClick={onExit} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
+        <button onClick={() => { if (window.confirm("対戦内容は消えますがよろしいですか？")) onExit(); }} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
         <span style={{ fontSize: 11, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
@@ -447,13 +445,11 @@ function ScoreScreen({ match, onExit }) {
             <div style={{ fontSize: 16, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
             <div style={{ fontSize: 12, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
           </div>
-          {submitted ? (
-            <div style={{ marginTop: 5, textAlign: "center", fontSize: 12, color: C.win, fontWeight: 700 }}>✓ 全体成績に登録しました</div>
-          ) : (
-            <button onClick={submitResult} style={{ ...ctrl, marginTop: 5, width: "100%", background: C.win, color: "#fff", border: "none" }}>全体成績に登録する</button>
-          )}
-          {!submitted && <button onClick={correct} style={{ ...ctrl, marginTop: 5, width: "100%" }}>◀ 訂正（このラックを取り消す）</button>}
-          {submitted && <button onClick={onExit} style={{ ...ctrl, marginTop: 5, width: "100%", background: C.ink, color: "#fff", border: "none" }}>対戦作成に戻る</button>}
+          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
+            <button onClick={onExit} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>戻る</button>
+          </div>
         </div>
       ) : phase === "done" && lastResult ? (
         <div style={{ marginBottom: 6 }}>
@@ -583,4 +579,3 @@ try {
 </script>
 </body>
 </html>
-
