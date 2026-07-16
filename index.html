@@ -421,23 +421,17 @@ function ScoreScreen({ match, onExit }) {
         <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
-      {/* 常に同じ位置に固定：プレイ中は1手戻す/1ラック戻す、ラック終了時は訂正/次のラックに切り替え */}
+      {/* 左＝1手系（1手戻す⟷訂正）、右＝1ラック系（1ラック戻す⟷次のラック）で位置固定 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         {matchWinner == null && phase === "done" && lastResult ? (
-          <>
-            <button onClick={correct} style={ctrl}>◀ 訂正</button>
-            <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
-          </>
-        ) : phase === "play" && matchWinner == null ? (
-          <>
-            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
-            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
-          </>
+          <button onClick={correct} style={ctrl}>◀ 訂正</button>
         ) : (
-          <>
-            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
-            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
-          </>
+          <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+        )}
+        {matchWinner == null && phase === "done" && lastResult ? (
+          <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+        ) : (
+          <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
         )}
       </div>
 
