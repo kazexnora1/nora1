@@ -421,20 +421,6 @@ function ScoreScreen({ match, onExit }) {
         <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
-      {/* 左＝1手系（1手戻す⟷訂正）、右＝1ラック系（1ラック戻す⟷次のラック）で位置固定 */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        {matchWinner == null && phase === "done" && lastResult ? (
-          <button onClick={correct} style={ctrl}>◀ 訂正</button>
-        ) : (
-          <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
-        )}
-        {matchWinner == null && phase === "done" && lastResult ? (
-          <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
-        ) : (
-          <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
-        )}
-      </div>
-
       <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
         {[0, 1].map((i) => {
           const pc = PC[i]; const hi = hillInfo(i);
@@ -473,13 +459,29 @@ function ScoreScreen({ match, onExit }) {
             <button onClick={discardAndExit} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>戻る</button>
           </div>
         </div>
-      ) : phase === "done" && lastResult ? (
-        <div style={{ marginBottom: 6, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-          <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
-          <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
-          <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+          {phase === "done" && lastResult ? (
+            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
+          ) : (
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          )}
+          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {phase === "done" && lastResult && (
+              <>
+                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+              </>
+            )}
+          </div>
+          {phase === "done" && lastResult ? (
+            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          ) : (
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          )}
         </div>
-      ) : null}
+      )}
 
       {/* P1 zone (top) */}
       <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
