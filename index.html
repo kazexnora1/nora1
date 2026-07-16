@@ -189,6 +189,7 @@ function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing }) {
   const add = () => roster.length < 30 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
 
   const [showQR, setShowQR] = useState(false);
+  const [showList, setShowList] = useState(false);
   const appUrl = typeof window !== "undefined" ? window.location.href : "";
   const openQR = () => setShowQR(true);
 
@@ -211,27 +212,33 @@ function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing }) {
         </div>
       </div>
 
-      {roster.map((p) => (
-        <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
-          <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))} placeholder="名前"
-            style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 17, padding: "13px 14px", outline: "none", fontFamily: FONT }} />
-          <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="ファーゴ"
-            style={{ width: 96, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 18, fontWeight: 700, padding: "13px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
-          <button onClick={() => remove(p.id)} aria-label="削除"
-            style={{ width: 46, height: 46, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.sub, fontSize: 20, cursor: "pointer" }}>×</button>
-        </div>
-      ))}
-      {roster.length < 30 && (
-        <button onClick={add} style={{ width: "100%", marginTop: 2, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 12, color: C.blue, fontSize: 17.5, fontWeight: 700, padding: "14px 0", cursor: "pointer", fontFamily: FONT }}>
-          ＋ 選手を追加
-        </button>
-      )}
+      <button onClick={onNext} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 10 }}>
+        対戦を作成する ▶
+      </button>
 
-      <div style={{ marginTop: 22 }}>
-        <button onClick={onNext} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-          対戦を作成する ▶
-        </button>
-      </div>
+      <button onClick={() => setShowList((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 15.5, fontWeight: 700, padding: "13px 0", cursor: "pointer", fontFamily: FONT, marginBottom: showList ? 14 : 0 }}>
+        選手リスト（{roster.length}人） {showList ? "▲" : "▼"}
+      </button>
+
+      {showList && (
+        <>
+          {roster.map((p) => (
+            <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+              <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))} placeholder="名前"
+                style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 17, padding: "13px 14px", outline: "none", fontFamily: FONT }} />
+              <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="ファーゴ"
+                style={{ width: 96, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 18, fontWeight: 700, padding: "13px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+              <button onClick={() => remove(p.id)} aria-label="削除"
+                style={{ width: 46, height: 46, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.sub, fontSize: 20, cursor: "pointer" }}>×</button>
+            </div>
+          ))}
+          {roster.length < 30 && (
+            <button onClick={add} style={{ width: "100%", marginTop: 2, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 12, color: C.blue, fontSize: 17.5, fontWeight: 700, padding: "14px 0", cursor: "pointer", fontFamily: FONT }}>
+              ＋ 選手を追加
+            </button>
+          )}
+        </>
+      )}
 
       {showQR && (
         <div onClick={() => setShowQR(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
