@@ -567,20 +567,25 @@ function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
   return (
     <div ref={ref}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
-        background: b.dead ? C.dead : "#fff",
-        border: !b.dead ? `${Math.round(size * 0.2)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
+      style={{ width: size, height: size, borderRadius: size, flexShrink: 0, overflow: "hidden",
+        background: b.dead ? C.dead : b.n === 9 ? "#fff" : base,
         boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
-        color: !b.dead ? base : "#fff",
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
-        touchAction: "none", cursor: "pointer", position: "relative",
+        boxSizing: "border-box", position: "relative",
+        touchAction: "none", cursor: "pointer",
         userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
         transform: pressed ? "scale(1.25)" : "scale(1)",
         transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
         zIndex: pressed ? 10 : 1,
         ...style }}>
-      {b.n}
+      {b.n === 9 && !b.dead && (
+        <div style={{ position: "absolute", top: "31%", left: 0, width: "100%", height: "38%", background: base }} />
+      )}
+      {!b.dead && (
+        <div style={{ position: "relative", width: "62%", height: "62%", borderRadius: "50%", background: "#fff", border: `${Math.max(1, Math.round(size * 0.035))}px solid ${base}`, display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
+          <span style={{ fontSize: big ? 20 : 15, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{b.n}</span>
+        </div>
+      )}
       {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
       {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
     </div>
