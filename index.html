@@ -1,155 +1,592 @@
-/* ============================================================
-   JCL9Match バックエンド（Google Apps Script・APIのみ）
-   ------------------------------------------------------------
-   このスクリプトはデータ保存だけを行う API です。
-   画面（フロント）は GitHub Pages などの完全公開サイトに置き、
-   そこから fetch() でこの Web アプリの URL を呼び出します。
-
-   使用シート（存在しなければ自動作成されます）:
-     - Roster  : id | name | fargo
-     - Results : timestamp | player1 | player2 | score1 | score2 | raceTo1 | raceTo2 | winner
-
-   デプロイ方法:
-     1. このコードを Code.gs に貼り付けて保存
-     2. スプレッドシートのURLからIDをコピーし、下の SPREADSHEET_ID に貼る
-     3. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」
-        実行するユーザー：自分 / アクセス：全員
-     4. 発行された .../exec の URL をコピー
-     5. フロント（index.html）の GAS_URL にそのURLを貼る
-   ============================================================ */
-
-const ROSTER_SHEET = "Roster";
-const RESULTS_SHEET = "Results";
-
-// スプレッドシートのURLの https://docs.google.com/spreadsheets/d/【ここ】/edit の部分をコピーして貼る
-const SPREADSHEET_ID = "1-N6y43jbI5i4dlid4B1cfC0J3C1fCTX0wWwu4PolBc8";
-
-function getSpreadsheet_() {
-  if (SPREADSHEET_ID) return SpreadsheetApp.openById(SPREADSHEET_ID);
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss) throw new Error("スプレッドシートが見つかりません。SPREADSHEET_ID を設定してください。");
-  return ss;
-}
-
-function getSheet_(name, headers) {
-  const ss = getSpreadsheet_();
-  let sh = ss.getSheetByName(name);
-  if (!sh) {
-    sh = ss.insertSheet(name);
-    sh.appendRow(headers);
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>JCL9Match</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<script>
+  function showCrash(msg) {
+    const el = document.getElementById("crashlog");
+    el.style.display = "block";
+    el.textContent = "エラーが発生しました:\n\n" + msg;
   }
-  return sh;
-}
+  window.onerror = function (msg, src, line, col, err) {
+    showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
+  };
+  window.addEventListener("unhandledrejection", function (e) {
+    showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
 
-function respond_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-/* ---------- ロスター ---------- */
-
-function loadRoster_() {
-  const sh = getSheet_(ROSTER_SHEET, ["id", "name", "fargo"]);
-  const rows = sh.getDataRange().getValues();
-  const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const [id, name, fargo] = rows[i];
-    if (!name && !id) continue;
-    out.push({
-      id: Number(id) || i,
-      name: String(name || ""),
-      r: fargo === "" || fargo == null ? "" : String(fargo),
-    });
+/* ========= ハンデ計算（8ボール式・Short/Long実測校正）========= */
+function computeRace(R1, R2, lenPct) {
+  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 100));
+  const p2 = 1 - p1;
+  const L1 = 4 + 0.66 * (p1 - 0.5), L2 = 4 + 0.66 * (p2 - 0.5);
+  const E1 = 14 * p1 + L1 * p2, E2 = 14 * p2 + L2 * p1;
+  const avg = (R1 + R2) / 2;
+  const Nlong = 0.01655 * avg - 0.617, Nshort = 0.01092 * avg + 0.331;
+  const t = (lenPct - 75) / 25;
+  let N = Math.max(Nshort + t * (Nlong - Nshort), 0.1);
+  let rt1 = Math.round(N * E1), rt2 = Math.round(N * E2);
+  if (rt1 > 99 || rt2 > 99) {
+    if (N * E1 >= N * E2) { rt1 = 99; rt2 = Math.round((99 * E2) / E1) - 4; }
+    else { rt2 = 99; rt1 = Math.round((99 * E1) / E2) - 4; }
   }
-  return out;
+  const floor = Math.round((28 * Math.min(lenPct, 100)) / 100);
+  return { rt1: Math.max(floor, rt1), rt2: Math.max(floor, rt2), p1, p2 };
 }
 
-function saveRoster_(roster) {
-  const sh = getSheet_(ROSTER_SHEET, ["id", "name", "fargo"]);
-  sh.clearContents();
-  sh.appendRow(["id", "name", "fargo"]);
-  (roster || []).forEach((p) => sh.appendRow([p.id, p.name, p.r]));
-}
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+const C = {
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
+};
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const PC = [C.blue, C.red];
+const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
 
-/* ---------- 試合結果 ---------- */
+/* ========= ローカル保存：進行中の画面/試合（端末内のみ・共有はしない） ========= */
+const local = {
+  get(k) { try { const v = localStorage.getItem(k); return v; } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  remove(k) { try { localStorage.removeItem(k); } catch {} },
+};
 
-function loadResults_() {
-  const sh = getSheet_(RESULTS_SHEET, [
-    "timestamp", "player1", "player2", "score1", "score2", "raceTo1", "raceTo2", "winner",
-  ]);
-  const rows = sh.getDataRange().getValues();
-  const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const [ts, p1, p2, s1, s2, r1, r2, w] = rows[i];
-    if (!p1 && !p2) continue;
-    out.push({
-      finishedAt: ts instanceof Date ? ts.toISOString() : String(ts),
-      names: [String(p1 || ""), String(p2 || "")],
-      score: [Number(s1) || 0, Number(s2) || 0],
-      raceTo: [Number(r1) || 0, Number(r2) || 0],
-      winner: Number(w),
-    });
-  }
-  return out;
-}
+/* ========= GAS バックエンド：ロスター／試合結果（共有データ、fetch経由） =========
+   デプロイした Google Apps Script の Web App URL をここに貼る。
+   例: https://script.google.com/macros/s/XXXXXXXX/exec               */
+const GAS_URL = "https://script.google.com/macros/s/AKfycbzWw3szvPbRRQ9GC9nWoxu6SPeDR8uyrH4_5ARon85xA8QVORrzv5kOWMEPKm_tBSyE/exec";
 
-function addResult_(result) {
-  const sh = getSheet_(RESULTS_SHEET, [
-    "timestamp", "player1", "player2", "score1", "score2", "raceTo1", "raceTo2", "winner",
-  ]);
-  sh.appendRow([
-    result.finishedAt || new Date().toISOString(),
-    (result.names && result.names[0]) || "",
-    (result.names && result.names[1]) || "",
-    (result.score && result.score[0]) || 0,
-    (result.score && result.score[1]) || 0,
-    (result.raceTo && result.raceTo[0]) || 0,
-    (result.raceTo && result.raceTo[1]) || 0,
-    result.winner,
-  ]);
-}
-
-/* ---------- エントリポイント（JSON API） ---------- */
-
-function doGet(e) {
-  const action = (e && e.parameter && e.parameter.action) || null;
-  if (action === "roster") return respond_(loadRoster_());
-  if (action === "results") return respond_(loadResults_());
-  if (action === "saveRoster") {
+const gas = {
+  ready: () => !!GAS_URL,
+  async loadRoster() {
+    if (!gas.ready()) return null;
     try {
-      const roster = JSON.parse(e.parameter.data || "[]");
-      saveRoster_(roster);
-      return respond_({ ok: true });
-    } catch (err) {
-      return respond_({ error: "invalid data: " + err.message });
-    }
-  }
-  if (action === "addResult") {
+      const res = await fetch(`${GAS_URL}?action=roster`);
+      const data = await res.json();
+      return Array.isArray(data) ? data : null;
+    } catch { return null; }
+  },
+  async saveRoster(roster) {
+    if (!gas.ready()) return;
     try {
-      const result = JSON.parse(e.parameter.data || "{}");
-      addResult_(result);
-      return respond_({ ok: true });
-    } catch (err) {
-      return respond_({ error: "invalid data: " + err.message });
-    }
-  }
-  return respond_({ error: "unknown action: " + action });
+      const data = encodeURIComponent(JSON.stringify(roster));
+      await fetch(`${GAS_URL}?action=saveRoster&data=${data}`);
+    } catch {}
+  },
+  async addResult(result) {
+    if (!gas.ready()) return;
+    try {
+      const data = encodeURIComponent(JSON.stringify(result));
+      await fetch(`${GAS_URL}?action=addResult&data=${data}`);
+    } catch {}
+  },
+  async loadResults() {
+    if (!gas.ready()) return [];
+    try {
+      const res = await fetch(`${GAS_URL}?action=results`);
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch { return []; }
+  },
+};
+
+let _id = 1;
+const nid = () => _id++;
+const seedRoster = [
+  { id: nid(), name: "テストA", r: "500" },
+  { id: nid(), name: "テストB", r: "400" },
+  { id: nid(), name: "選手3", r: "" },
+];
+
+/* ========= ルート：3画面を1アプリ内で切替 ========= */
+function App() {
+  const [screen, setScreen] = useState("roster"); // roster | create | score
+  const [roster, setRoster] = useState(seedRoster);
+  const [lenPct, setLenPct] = useState(100);
+  const [match, setMatch] = useState(null); // { names, raceTo }
+  const [loaded, setLoaded] = useState(false);
+
+  // 復元：ロスターは共有（GAS）、進行中の画面/試合は端末ローカル
+  useEffect(() => {
+    (async () => {
+      let o = await gas.loadRoster();
+      if (!o) {
+        const lg = local.get("jcl9:roster");
+        if (lg) { try { o = JSON.parse(lg); } catch {} }
+      }
+      if (Array.isArray(o) && o.length) { _id = Math.max(...o.map((p) => p.id)) + 1; setRoster(o); }
+      const me = local.get("jcl9:session");
+      if (me) { try { const s = JSON.parse(me); if (s.screen) setScreen(s.screen); if (s.lenPct) setLenPct(s.lenPct); if (s.match) setMatch(s.match); } catch {} }
+      setLoaded(true);
+    })();
+  }, []);
+  const rosterSaveTimer = useRef(null);
+  useEffect(() => {
+    if (!loaded) return;
+    local.set("jcl9:roster", JSON.stringify(roster));
+    clearTimeout(rosterSaveTimer.current);
+    rosterSaveTimer.current = setTimeout(() => gas.saveRoster(roster), 600);
+  }, [roster, loaded]);
+  useEffect(() => { if (!loaded) return; local.set("jcl9:session", JSON.stringify({ screen, lenPct, match })); }, [screen, lenPct, match, loaded]);
+
+  return (
+    <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT }}>
+      <div>
+        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} />}
+        {screen === "create" && (
+          <CreateMatch roster={roster} lenPct={lenPct} setLenPct={setLenPct}
+            onBack={() => setScreen("roster")}
+            onStart={(m) => { setMatch(m); setScreen("score"); }} />
+        )}
+        {screen === "score" && match && (
+          <ScoreScreen match={match} onExit={() => { setMatch(null); setScreen("create"); }} />
+        )}
+      </div>
+    </div>
+  );
 }
 
-function doPost(e) {
-  let body;
-  try {
-    body = JSON.parse((e && e.postData && e.postData.contents) || "{}");
-  } catch (err) {
-    return respond_({ error: "invalid JSON body" });
-  }
-  if (body.action === "saveRoster") {
-    saveRoster_(body.roster);
-    return respond_({ ok: true });
-  }
-  if (body.action === "addResult") {
-    addResult_(body.result);
-    return respond_({ ok: true });
-  }
-  return respond_({ error: "unknown action: " + body.action });
+/* ========= 画面1：選手リスト ========= */
+function RosterScreen({ roster, setRoster, onNext }) {
+  const update = (id, k, v) => setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
+  const remove = (id) => setRoster((rs) => rs.filter((p) => p.id !== id));
+  const add = () => roster.length < 30 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
+
+  const [showQR, setShowQR] = useState(false);
+  const appUrl = typeof window !== "undefined" ? window.location.href : "";
+  const openQR = () => setShowQR(true);
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 80px" }}>
+      <div style={{ textAlign: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 27, fontWeight: 800, color: C.ink }}>選手リスト</div>
+        <div style={{ fontSize: 15.5, color: C.sub, marginTop: 4 }}>名前とファーゴレートを登録（みんなで共有）</div>
+        {appUrl && (
+          <button onClick={openQR} style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
+            📱 アプリを共有（QR）
+          </button>
+        )}
+      </div>
+
+      {roster.map((p) => (
+        <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+          <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))} placeholder="名前"
+            style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 17, padding: "13px 14px", outline: "none", fontFamily: FONT }} />
+          <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="ファーゴ"
+            style={{ width: 96, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 18, fontWeight: 700, padding: "13px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+          <button onClick={() => remove(p.id)} aria-label="削除"
+            style={{ width: 46, height: 46, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.sub, fontSize: 20, cursor: "pointer" }}>×</button>
+        </div>
+      ))}
+      {roster.length < 30 && (
+        <button onClick={add} style={{ width: "100%", marginTop: 2, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 12, color: C.blue, fontSize: 17.5, fontWeight: 700, padding: "14px 0", cursor: "pointer", fontFamily: FONT }}>
+          ＋ 選手を追加
+        </button>
+      )}
+
+      <div style={{ marginTop: 22 }}>
+        <button onClick={onNext} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+          対戦を作成する ▶
+        </button>
+      </div>
+
+      {showQR && (
+        <div onClick={() => setShowQR(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
+            <div style={{ fontSize: 17.5, fontWeight: 800, marginBottom: 14 }}>このQRを読み取って開く</div>
+            {appUrl ? (
+              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(appUrl)}`} alt="QR code" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
+            ) : (
+              <div style={{ fontSize: 14.5, color: C.sub, padding: "60px 0" }}>読み込み中…</div>
+            )}
+            {appUrl && <div style={{ fontSize: 12.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{appUrl}</div>}
+            <button onClick={() => setShowQR(false)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 16.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
+
+/* ========= 画面2：対戦作成 ========= */
+function CreateMatch({ roster, lenPct, setLenPct, onBack, onStart }) {
+  const [i1, setI1] = useState(0);
+  const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
+  const p1 = roster[i1], p2 = roster[i2];
+  const R1 = parseInt(p1?.r, 10), R2 = parseInt(p2?.r, 10);
+  const valid = p1 && p2 && i1 !== i2 && R1 > 0 && R2 > 0;
+  const res = valid ? computeRace(R1, R2, lenPct) : null;
+  const lenTag = lenPct === 100 ? "ロング" : lenPct === 75 ? "ショート" : lenPct > 100 ? "長め" : "短め";
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 80px" }}>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", fontSize: 22, color: C.ink, cursor: "pointer", padding: "0 8px 0 0" }}>‹</button>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.ink }}>対戦を作成</div>
+      </div>
+
+      <Field label="プレイヤー1">
+        <select value={i1} onChange={(e) => setI1(+e.target.value)} style={selectStyle}>
+          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
+        </select>
+      </Field>
+      <Field label="プレイヤー2">
+        <select value={i2} onChange={(e) => setI2(+e.target.value)} style={selectStyle}>
+          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
+        </select>
+      </Field>
+
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, margin: "18px 0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+          <span style={{ fontSize: 17.5, fontWeight: 700 }}>試合の長さ</span>
+          <span style={{ fontSize: 22, fontWeight: 800 }}>{lenPct}%<span style={{ fontSize: 16.5, color: C.sub, marginLeft: 8, fontWeight: 700 }}>{lenTag}</span></span>
+        </div>
+        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", height: 28, accentColor: C.blue }} />
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          {[["ショート", 75], ["ロング", 100], ["長め", 120]].map(([t, v]) => (
+            <button key={t} onClick={() => setLenPct(v)}
+              style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", color: C.ink, borderRadius: 12, padding: "12px 0", fontSize: 16.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {i1 === i2 && <Notice>同じ選手が選ばれています</Notice>}
+      {i1 !== i2 && (!R1 || !R2) && <Notice>ファーゴレートが未入力の選手がいます</Notice>}
+
+      {res && (
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 18 }}>
+          <div style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 12px", textAlign: "center" }}>
+            <div style={{ fontSize: 15.5, color: C.sub, fontWeight: 700, marginBottom: 6 }}>目標点（Race-To）</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.blue }}>{res.rt1}</div><div style={{ fontSize: 14.5, color: C.sub }}>{p1.name}</div></div>
+              <div style={{ fontSize: 17.5, color: C.sub, fontWeight: 800 }}>対</div>
+              <div><div style={{ fontSize: 46, fontWeight: 800, color: C.red }}>{res.rt2}</div><div style={{ fontSize: 14.5, color: C.sub }}>{p2.name}</div></div>
+            </div>
+          </div>
+          <button disabled={!valid} onClick={() => onStart({ names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] })}
+            style={{ flex: 0.6, background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 16, padding: "20px 12px", fontSize: 16.5, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT, height: "fit-content", whiteSpace: "nowrap" }}>
+            この対戦を<br />開始する<br />▶
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 15.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+function Notice({ children }) {
+  return <div style={{ fontSize: 14.5, color: C.hill, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>{children}</div>;
+}
+const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 17, padding: "13px 14px", outline: "none", fontFamily: FONT };
+
+/* ========= 画面3：スコアリング ========= */
+function ScoreScreen({ match, onExit }) {
+  const [pl] = useState([{ name: match.names[0], raceTo: String(match.raceTo[0]) }, { name: match.names[1], raceTo: String(match.raceTo[1]) }]);
+  const [tot, setTot] = useState([0, 0]);
+  const [rack, setRack] = useState(1);
+  const [brk, setBrk] = useState(0);
+  const [balls, setBalls] = useState(mkBalls);
+  const [phase, setPhase] = useState("play");
+  const [lastResult, setLastResult] = useState(null);
+  const [hist, setHist] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [undoStack, setUndoStack] = useState([]);
+  const lastTapRef = useRef({});
+  const [pressed, setPressed] = useState(null);
+
+  const matchKey = "jcl9:live:" + match.names.join("_");
+
+  useEffect(() => {
+    const s = local.get(matchKey);
+    if (s) { try {
+      const o = JSON.parse(s);
+      if (o.tot) setTot(o.tot); if (o.rack) setRack(o.rack); if (typeof o.brk === "number") setBrk(o.brk);
+      if (o.balls) setBalls(o.balls); if (o.phase) setPhase(o.phase); if ("lastResult" in o) setLastResult(o.lastResult);
+      if (o.hist) setHist(o.hist);
+    } catch {} }
+    setLoaded(true);
+  }, []);
+  useEffect(() => { if (!loaded) return; local.set(matchKey, JSON.stringify({ tot, rack, brk, balls, phase, lastResult, hist })); }, [tot, rack, brk, balls, phase, lastResult, hist, loaded]);
+
+  const rt = (i) => parseInt(pl[i].raceTo, 10) || 0;
+  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const disp = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
+  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
+
+  let matchWinner = null;
+  if (tot[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+  else if (tot[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  else if (phase === "play" && !hillHill) {
+    if (disp[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+    else if (disp[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  }
+
+  const snapshot = () => ({ tot, rack, brk, balls, phase, lastResult, hist });
+  const pushUndo = () => setUndoStack((s) => [...s.slice(-19), snapshot()]);
+
+  const finish = (nb, w) => {
+    pushUndo();
+    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
+    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
+    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
+    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+    setBalls(nb); setTot((t) => [t[0] + add[0], t[1] + add[1]]);
+    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    setLastResult(entry); setHist((h) => [...h, entry]); setPhase("done");
+  };
+  const move = (n, dir) => {
+    if (phase !== "play") return;
+    const b = balls.find((x) => x.n === n);
+    let loc = b.loc;
+    if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
+    else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
+    const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
+    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
+    else { pushUndo(); setBalls(nb); }
+  };
+  const toggleDead = (n) => { if (phase === "play") { pushUndo(); setBalls((bs) => bs.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b))); } };
+  const correct = () => { if (!lastResult) return; pushUndo(); setTot((t) => [t[0] - lastResult.add[0], t[1] - lastResult.add[1]]); setHist((h) => h.slice(0, -1)); setLastResult(null); setPhase("play"); };
+  const nextRack = () => { pushUndo(); setBalls(mkBalls()); setRack((r) => r + 1); setBrk((b) => 1 - b); setLastResult(null); setPhase("play"); };
+  const undoRack = () => { pushUndo(); setHist((h) => { if (!h.length) return h; const last = h[h.length - 1]; setTot((t) => [t[0] - last.add[0], t[1] - last.add[1]]); setRack(last.rack); setBrk(last.brk); setBalls(mkBalls()); setPhase("play"); setLastResult(null); return h.slice(0, -1); }); };
+  const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; setTot(prev.tot); setRack(prev.rack); setBrk(prev.brk); setBalls(prev.balls); setPhase(prev.phase); setLastResult(prev.lastResult); setHist(prev.hist); return s.slice(0, -1); });
+
+  const rematch = () => {
+    pushUndo();
+    setTot([0, 0]); setRack(1); setBrk(0); setBalls(mkBalls());
+    setPhase("play"); setLastResult(null); setHist([]);
+  };
+  const discardAndExit = () => { local.remove(matchKey); onExit(); };
+  const swapBreak = () => { if (phase !== "play") return; if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); setBrk((b) => 1 - b); } };
+
+  const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+
+  const gestureImpl = (n, dy) => {
+    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
+    const now = Date.now();
+    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
+    else lastTapRef.current[n] = now;
+  };
+  const gestureRef = useRef(gestureImpl);
+  gestureRef.current = gestureImpl;
+  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+  const hillInfo = (i) => {
+    if (rt(i) <= 0) return { txt: "", on: false };
+    const rem = rt(i) - disp[i];
+    if (rem <= 0) return { txt: "達成", on: true };
+    const toHill = rem - 14;
+    return toHill > 0 ? { txt: `ヒルまで あと${toHill}`, on: false } : { txt: `残り${rem}`, on: true };
+  };
+  const col = (loc) => balls.filter((b) => b.loc === loc);
+  const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
+  let cum = [0, 0];
+  const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={() => { if (window.confirm("対戦内容は消えますがよろしいですか？")) discardAndExit(); }} style={{ background: "none", border: "none", fontSize: 18, color: C.ink, cursor: "pointer" }}>‹ 戻る</button>
+        <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+        {[0, 1].map((i) => {
+          const pc = PC[i]; const hi = hillInfo(i);
+          return (
+            <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
+              <div style={{ fontSize: 16.5, fontWeight: 800 }}>{pl[i].name}</div>
+              <div style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                {disp[i]}<span style={{ fontSize: 26, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+              </div>
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 14.5, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
+              <div style={{ minHeight: 18, marginTop: 4 }}>
+                {brk === i && (
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hillHill && matchWinner == null && phase === "play" && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          ヒルヒル：このラックで9番を落とした方が勝ち
+        </div>
+      )}
+
+      {matchWinner != null ? (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
+            <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
+            <button onClick={discardAndExit} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>戻る</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+          {phase === "done" && lastResult ? (
+            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
+          ) : (
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          )}
+          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {phase === "done" && lastResult && (
+              <>
+                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+              </>
+            )}
+          </div>
+          {phase === "done" && lastResult ? (
+            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          ) : (
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          )}
+        </div>
+      )}
+
+      {/* P1 zone (top) */}
+      <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+      {/* ball tray: clean 3x3 grid, flanked by hint text in the leftover space */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+          {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
+          {balls.map((b) => {
+            const moved = b.loc !== "c";
+            return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+          })}
+        </div>
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+        </div>
+      </div>
+
+      {/* P2 zone (bottom) */}
+      <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+      {histRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
+          {histRows.slice().reverse().map((h, k) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
+              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
+                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
+                <span style={{ fontSize: 11.5, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
+  return (
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
+      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
+        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+      </div>
+    </div>
+  );
+}
+function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
+  const size = big ? 52 : 34;
+  const base = BALL[b.n]; const nine = b.n === 9;
+  const ref = useRef(null);
+  const startYRef = useRef(0);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
+    const move = (e) => { e.preventDefault(); };
+    const end = (e) => {
+      e.preventDefault();
+      onPress(b.n, false);
+      const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
+      onGesture(b.n, y - startYRef.current);
+    };
+    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
+    const opts = { passive: false };
+    el.addEventListener("touchstart", start, opts);
+    el.addEventListener("touchmove", move, opts);
+    el.addEventListener("touchend", end, opts);
+    el.addEventListener("touchcancel", cancel, opts);
+    return () => {
+      el.removeEventListener("touchstart", start, opts);
+      el.removeEventListener("touchmove", move, opts);
+      el.removeEventListener("touchend", end, opts);
+      el.removeEventListener("touchcancel", cancel, opts);
+    };
+  }, [b.n, onPress, onGesture]);
+
+  return (
+    <div ref={ref}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
+        background: b.dead ? C.dead : nine ? "#fff" : base,
+        border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
+        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
+        color: nine && !b.dead ? base : "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
+        touchAction: "none", cursor: "pointer", position: "relative",
+        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+        transform: pressed ? "scale(1.25)" : "scale(1)",
+        transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
+        zIndex: pressed ? 10 : 1,
+        ...style }}>
+      {b.n}
+      {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
+      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
+    </div>
+  );
+}
+const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (e) {
+  showCrash(e.message + "\n" + (e.stack || ""));
+}
+</script>
+</body>
+</html>
