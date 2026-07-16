@@ -427,8 +427,9 @@ function ScoreScreen({ match, onExit }) {
           return (
             <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
               <div style={{ fontSize: 16.5, fontWeight: 800 }}>{pl[i].name}</div>
-              <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{disp[i]}</div>
-              <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.95 }}>Race to <b>{pl[i].raceTo}</b></div>
+              <div style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                {disp[i]}<span style={{ fontSize: 26, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+              </div>
               {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 14.5, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
                 {brk === i && (
