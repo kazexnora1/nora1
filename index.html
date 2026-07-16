@@ -121,6 +121,18 @@ function App() {
   const [lenPct, setLenPct] = useState(100);
   const [match, setMatch] = useState(null); // { names, raceTo }
   const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshRoster = async () => {
+    if (!gas.ready() || refreshing) return;
+    setRefreshing(true);
+    const o = await gas.loadRoster();
+    if (Array.isArray(o)) {
+      if (o.length) _id = Math.max(...o.map((p) => p.id)) + 1;
+      setRoster(o);
+    }
+    setRefreshing(false);
+  };
 
   // 復元：ロスターは共有（GAS）、進行中の画面/試合は端末ローカル
   useEffect(() => {
@@ -145,10 +157,18 @@ function App() {
   }, [roster, loaded]);
   useEffect(() => { if (!loaded) return; local.set("jcl9:session", JSON.stringify({ screen, lenPct, match })); }, [screen, lenPct, match, loaded]);
 
+  if (!loaded) {
+    return (
+      <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: C.sub, fontSize: 15, fontWeight: 700 }}>読み込み中…</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT }}>
       <div>
-        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} />}
+        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} onRefresh={refreshRoster} refreshing={refreshing} />}
         {screen === "create" && (
           <CreateMatch roster={roster} lenPct={lenPct} setLenPct={setLenPct}
             onBack={() => setScreen("roster")}
@@ -163,7 +183,7 @@ function App() {
 }
 
 /* ========= 画面1：選手リスト ========= */
-function RosterScreen({ roster, setRoster, onNext }) {
+function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing }) {
   const update = (id, k, v) => setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
   const remove = (id) => setRoster((rs) => rs.filter((p) => p.id !== id));
   const add = () => roster.length < 30 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
@@ -177,11 +197,18 @@ function RosterScreen({ roster, setRoster, onNext }) {
       <div style={{ textAlign: "center", marginBottom: 18 }}>
         <div style={{ fontSize: 27, fontWeight: 800, color: C.ink }}>選手リスト</div>
         <div style={{ fontSize: 15.5, color: C.sub, marginTop: 4 }}>名前とファーゴレートを登録（みんなで共有）</div>
-        {appUrl && (
-          <button onClick={openQR} style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
-            📱 アプリを共有（QR）
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 10 }}>
+          {onRefresh && (
+            <button onClick={onRefresh} disabled={refreshing} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT, opacity: refreshing ? 0.6 : 1 }}>
+              {refreshing ? "更新中…" : "🔄 最新の情報に更新"}
+            </button>
+          )}
+          {appUrl && (
+            <button onClick={openQR} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
+              📱 アプリを共有（QR）
+            </button>
+          )}
+        </div>
       </div>
 
       {roster.map((p) => (
