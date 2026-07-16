@@ -421,6 +421,21 @@ function ScoreScreen({ match, onExit }) {
         <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
+      {/* 1手戻す／1ラック戻す：常に同じ位置。ラック終了時は順序を入れ替えて、今使う方を左（1番目）に */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        {phase === "play" && matchWinner == null ? (
+          <>
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          </>
+        ) : (
+          <>
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          </>
+        )}
+      </div>
+
       <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
         {[0, 1].map((i) => {
           const pc = PC[i]; const hi = hillInfo(i);
@@ -481,7 +496,7 @@ function ScoreScreen({ match, onExit }) {
         <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
           {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 58px)", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
           {balls.map((b) => {
             const moved = b.loc !== "c";
             return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
@@ -494,11 +509,6 @@ function ScoreScreen({ match, onExit }) {
 
       {/* P2 zone (bottom) */}
       <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
-
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
-        <button onClick={undoRack} disabled={!hist.length || phase === "done"} style={{ ...ctrl, opacity: hist.length && phase !== "done" ? 1 : 0.4 }}>◀ 1ラック戻す</button>
-      </div>
 
       {histRows.length > 0 && (
         <div style={{ marginTop: 10 }}>
@@ -530,7 +540,7 @@ function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
   );
 }
 function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
-  const size = big ? 58 : 38;
+  const size = big ? 52 : 34;
   const base = BALL[b.n]; const nine = b.n === 9;
   const ref = useRef(null);
   const startYRef = useRef(0);
