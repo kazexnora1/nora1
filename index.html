@@ -421,9 +421,14 @@ function ScoreScreen({ match, onExit }) {
         <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
 
-      {/* 1手戻す／1ラック戻す：常に同じ位置。ラック終了時は順序を入れ替えて、今使う方を左（1番目）に */}
+      {/* 常に同じ位置に固定：プレイ中は1手戻す/1ラック戻す、ラック終了時は訂正/次のラックに切り替え */}
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        {phase === "play" && matchWinner == null ? (
+        {matchWinner == null && phase === "done" && lastResult ? (
+          <>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          </>
+        ) : phase === "play" && matchWinner == null ? (
           <>
             <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
             <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
@@ -475,16 +480,10 @@ function ScoreScreen({ match, onExit }) {
           </div>
         </div>
       ) : phase === "done" && lastResult ? (
-        <div style={{ marginBottom: 6 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={correct} style={ctrl}>◀ 訂正</button>
-            <button onClick={nextRack} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
-          </div>
-          <div style={{ textAlign: "center", marginTop: 6, fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-            <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
-            <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
-            <span style={{ color: C.red }}>{lastResult.add[1]}</span>
-          </div>
+        <div style={{ marginBottom: 6, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+          <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+          <span style={{ color: C.red }}>{lastResult.add[1]}</span>
         </div>
       ) : null}
 
