@@ -1,1 +1,600 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>JCL9Match B2テスト</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<script>
+  function showCrash(msg) {
+    const el = document.getElementById("crashlog");
+    el.style.display = "block";
+    el.textContent = "エラーが発生しました:\n\n" + msg;
+  }
+  window.onerror = function (msg, src, line, col, err) {
+    showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
+  };
+  window.addEventListener("unhandledrejection", function (e) {
+    showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ========= ハンデ計算（App Aと共通） ========= */
+function computeRace(R1, R2, lenPct) {
+  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 100));
+  const p2 = 1 - p1;
+  const L1 = 3.2602 + 1.1564 * (p1 - 0.5), L2 = 3.2602 + 1.1564 * (p2 - 0.5);
+  const E1 = 14 * p1 + L1 * p2, E2 = 14 * p2 + L2 * p1;
+  const avg = (R1 + R2) / 2;
+  const Nlong = 0.015768 * avg - 0.026412, Nshort = 0.012043 * avg - 0.058138;
+  const t = (lenPct - 75) / 25;
+  const N = Math.max(Nshort + t * (Nlong - Nshort), 0.1);
+  const floor = Math.round(0.16 * lenPct + 12);
+  let rt1 = Math.round(N * E1), rt2 = Math.round(N * E2);
+  rt1 = Math.min(Math.max(rt1, floor), 99);
+  rt2 = Math.min(Math.max(rt2, floor), 99);
+  return { rt1, rt2, p1, p2 };
+}
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+const C = {
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
+};
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const PC = [C.blue, C.red];
+const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+
+/* ========= 共有バックエンド（jsonbin.io、App Aと同じBinを使い回す） =========
+   Bin の中に matches: { [matchId]: {...試合state} } を追加して使う。   */
+const JSONBIN_ID = "6a59da56da38895dfe69af82";
+const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
+
+async function jsonbinRead() {
+  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+    headers: { "X-Master-Key": JSONBIN_KEY },
+  });
+  const data = await res.json();
+  const record = data && data.record ? data.record : {};
+  return {
+    roster: Array.isArray(record.roster) ? record.roster : [],
+    results: Array.isArray(record.results) ? record.results : [],
+    matches: record.matches && typeof record.matches === "object" ? record.matches : {},
+  };
+}
+async function jsonbinWrite(record) {
+  await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+    body: JSON.stringify(record),
+  });
+}
+async function loadMatchRemote(matchId) {
+  const record = await jsonbinRead();
+  return record.matches[matchId] || null;
+}
+async function saveMatchRemote(matchId, state) {
+  const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+  record.matches = record.matches || {};
+  record.matches[matchId] = state;
+  await jsonbinWrite(record);
+}
+
+const initialMatchState = (rt1, rt2) => ({
+  version: 1,
+  phase: "banking", // banking | play | done | finished
+  brk: null, // 0 | 1 | null
+  tot: [0, 0],
+  rack: 1,
+  balls: mkBalls(),
+  lastResult: null,
+  hist: [],
+  raceTo: [rt1, rt2],
+});
+
+function randomMatchId() {
+  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+}
+
+/* ========= ルート ========= */
+function App() {
+  const params = new URLSearchParams(window.location.search);
+  const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
+
+  const [setupInfo, setSetupInfo] = useState(() => {
+    if (hasSetup) {
+      return {
+        matchId: params.get("m"),
+        names: [params.get("p1"), params.get("p2")],
+        ratings: [Number(params.get("r1")), Number(params.get("r2"))],
+        lenPct: Number(params.get("len")),
+      };
+    }
+    return null;
+  });
+
+  if (!setupInfo) {
+    return <SetupScreen onCreate={(info) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("m", info.matchId);
+      url.searchParams.set("p1", info.names[0]);
+      url.searchParams.set("p2", info.names[1]);
+      url.searchParams.set("r1", info.ratings[0]);
+      url.searchParams.set("r2", info.ratings[1]);
+      url.searchParams.set("len", info.lenPct);
+      window.history.replaceState({}, "", url.toString());
+      setSetupInfo(info);
+    }} />;
+  }
+
+  return <MatchScreen setupInfo={setupInfo} />;
+}
+
+/* ========= セットアップ画面（本来はB1本部アプリが行う。今回はテスト用に手動作成） ========= */
+function SetupScreen({ onCreate }) {
+  const [p1, setP1] = useState("テストA");
+  const [r1, setR1] = useState("500");
+  const [p2, setP2] = useState("テストB");
+  const [r2, setR2] = useState("400");
+  const [lenPct, setLenPct] = useState(100);
+
+  const R1 = parseInt(r1, 10), R2 = parseInt(r2, 10);
+  const valid = p1 && p2 && R1 > 0 && R2 > 0;
+  const res = valid ? computeRace(R1, R2, lenPct) : null;
+
+  const create = () => {
+    if (!valid) return;
+    onCreate({
+      matchId: randomMatchId(),
+      names: [p1, p2],
+      ratings: [R1, R2],
+      lenPct,
+    });
+  };
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink }}>
+      <div style={{ textAlign: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 24, fontWeight: 800 }}>テスト対戦を作成</div>
+        <div style={{ fontSize: 13.5, color: C.sub, marginTop: 4 }}>
+          本来は本部アプリ（B1）がQRを発行しますが、まだ無いのでここで仮の対戦カードを作ります
+        </div>
+      </div>
+      <Field label="プレイヤー1">
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={p1} onChange={(e) => setP1(e.target.value.slice(0, 12))} style={{ ...inputStyle, flex: 1 }} />
+          <input inputMode="numeric" value={r1} onChange={(e) => setR1(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...inputStyle, width: 90, textAlign: "center" }} />
+        </div>
+      </Field>
+      <Field label="プレイヤー2">
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={p2} onChange={(e) => setP2(e.target.value.slice(0, 12))} style={{ ...inputStyle, flex: 1 }} />
+          <input inputMode="numeric" value={r2} onChange={(e) => setR2(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...inputStyle, width: 90, textAlign: "center" }} />
+        </div>
+      </Field>
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, margin: "16px 0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>試合の長さ</span>
+          <span style={{ fontSize: 18, fontWeight: 800 }}>{lenPct}%</span>
+        </div>
+        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          {[["ショート", 75], ["ロング", 100], ["長め", 120]].map(([t, v]) => (
+            <button key={t} onClick={() => setLenPct(v)} style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t}</button>
+          ))}
+        </div>
+      </div>
+      {res && (
+        <div style={{ textAlign: "center", marginBottom: 16, fontSize: 15, color: C.sub }}>
+          目標点：<b style={{ color: C.blue }}>{res.rt1}</b> 対 <b style={{ color: C.red }}>{res.rt2}</b>
+        </div>
+      )}
+      <button onClick={create} disabled={!valid} style={{ width: "100%", background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 14, padding: "16px 0", fontSize: 17, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT }}>
+        対戦を開始する ▶
+      </button>
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return <div style={{ marginBottom: 10 }}><div style={{ fontSize: 14, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>{children}</div>;
+}
+const inputStyle = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 16, padding: "12px 14px", outline: "none", fontFamily: FONT, boxSizing: "border-box" };
+
+/* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
+function MatchScreen({ setupInfo }) {
+  const { matchId, names, lenPct } = setupInfo;
+  const [res] = useState(() => computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
+  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2));
+  const [loaded, setLoaded] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [pressed, setPressed] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const lastTapRef = useRef({});
+  const dirtyRef = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const pushTimer = useRef(null);
+
+  const pl = [{ name: names[0], raceTo: String(state.raceTo[0]) }, { name: names[1], raceTo: String(state.raceTo[1]) }];
+
+  const applyLocal = (updater) => {
+    setState((s) => {
+      const next = typeof updater === "function" ? updater(s) : updater;
+      return { ...next, version: s.version + 1 };
+    });
+    dirtyRef.current = true;
+  };
+
+  // 初回：既存の共有stateがあれば取り込む。なければ自分の初期stateをそのまま登録
+  useEffect(() => {
+    (async () => {
+      try {
+        const remote = await loadMatchRemote(matchId);
+        if (remote) setState(remote);
+        else await saveMatchRemote(matchId, stateRef.current);
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // ポーリング：2.5秒ごとに相手の最新状態を確認
+  useEffect(() => {
+    if (!loaded) return;
+    const iv = setInterval(async () => {
+      try {
+        const remote = await loadMatchRemote(matchId);
+        if (remote && remote.version > stateRef.current.version) {
+          setState(remote);
+        }
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+    }, 2500);
+    return () => clearInterval(iv);
+  }, [loaded, matchId]);
+
+  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む
+  useEffect(() => {
+    if (!loaded || !dirtyRef.current) return;
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      dirtyRef.current = false;
+      try {
+        await saveMatchRemote(matchId, stateRef.current);
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+    }, 500);
+  }, [state, loaded]);
+
+  const rt = (i) => state.raceTo[i] || 0;
+  const { tot, rack, brk, balls, phase, lastResult, hist } = state;
+  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const disp = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
+  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
+
+  let matchWinner = null;
+  if (tot[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+  else if (tot[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  else if (phase === "play" && !hillHill) {
+    if (disp[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+    else if (disp[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  }
+
+  const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
+
+  const finish = (nb, w) => {
+    pushUndo();
+    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
+    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
+    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
+    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
+  };
+  const move = (n, dir) => {
+    if (phase !== "play") return;
+    const b = balls.find((x) => x.n === n);
+    let loc = b.loc;
+    if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
+    else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
+    const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
+    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
+    else { pushUndo(); applyLocal((s) => ({ ...s, balls: nb })); }
+  };
+  const toggleDead = (n) => {
+    if (phase !== "play") return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
+  };
+  const correct = () => {
+    if (!lastResult) return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
+  };
+  const nextRack = () => {
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
+  };
+  const undoRack = () => {
+    pushUndo();
+    applyLocal((s) => {
+      if (!s.hist.length) return s;
+      const last = s.hist[s.hist.length - 1];
+      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
+    });
+  };
+  const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
+  const rematch = () => {
+    pushUndo();
+    applyLocal((s) => ({ ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [] }));
+  };
+  const backToSetup = () => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); };
+  const swapBreak = () => {
+    if (phase !== "play") return;
+    if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
+  };
+  const chooseBreak = (i) => { applyLocal((s) => ({ ...s, brk: i, phase: "play" })); };
+
+  const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+  const gestureImpl = (n, dy) => {
+    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
+    const now = Date.now();
+    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
+    else lastTapRef.current[n] = now;
+  };
+  const gestureRef = useRef(gestureImpl);
+  gestureRef.current = gestureImpl;
+  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+
+  const hillInfo = (i) => {
+    if (rt(i) <= 0) return { txt: "", on: false };
+    const rem = rt(i) - disp[i];
+    if (rem <= 0) return { txt: "達成", on: true };
+    const toHill = rem - 14;
+    return toHill > 0 ? { txt: `ヒルまで あと${toHill}`, on: false } : { txt: `残り${rem}`, on: true };
+  };
+  const col = (loc) => balls.filter((b) => b.loc === loc);
+  const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
+  let cum = [0, 0];
+  const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
+
+  const appUrl = window.location.href;
+
+  if (!loaded) {
+    return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
+  }
+
+  if (phase === "banking") {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink, textAlign: "center" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>バンキング</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 20 }}>先攻を選んでください（どちらの端末からでもOK）</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[0].name}<br />が先攻</button>
+          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[1].name}<br />が先攻</button>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
+          目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
+        </div>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 700, padding: "10px 16px", cursor: "pointer", fontFamily: FONT }}>📱 相手の端末に共有（QR）</button>
+        {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
+        {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={() => setShowQR(true)} style={{ background: "none", border: "none", fontSize: 13, color: C.blue, cursor: "pointer", fontWeight: 700 }}>📱 共有</button>
+        <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+        {[0, 1].map((i) => {
+          const pc = PC[i]; const hi = hillInfo(i);
+          return (
+            <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>{pl[i].name}</div>
+              <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+              </div>
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
+              <div style={{ minHeight: 18, marginTop: 4 }}>
+                {brk === i && (
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hillHill && matchWinner == null && phase === "play" && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          ヒルヒル：このラックで9番を落とした方が勝ち
+        </div>
+      )}
+
+      {matchWinner != null ? (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
+            <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
+            <button onClick={backToSetup} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>終了</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+          {phase === "done" && lastResult ? (
+            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
+          ) : (
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          )}
+          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {phase === "done" && lastResult && (
+              <>
+                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+              </>
+            )}
+          </div>
+          {phase === "done" && lastResult ? (
+            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          ) : (
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          )}
+        </div>
+      )}
+
+      <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+          {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
+          {balls.map((b) => {
+            const moved = b.loc !== "c";
+            return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+          })}
+        </div>
+        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+        </div>
+      </div>
+
+      <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+      {histRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
+          {histRows.slice().reverse().map((h, k) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
+              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
+                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
+                <span style={{ fontSize: 11.5, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+    </div>
+  );
+}
+
+function QRModal({ url, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>相手の端末でこのQRを読む</div>
+        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`} alt="QR" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
+        <div style={{ fontSize: 10.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{url}</div>
+        <button onClick={onClose} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+      </div>
+    </div>
+  );
+}
+
+function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
+  return (
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
+      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
+        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+      </div>
+    </div>
+  );
+}
+function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
+  const size = big ? 52 : 34;
+  const base = BALL[b.n]; const nine = b.n === 9;
+  const ref = useRef(null);
+  const startYRef = useRef(0);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
+    const move = (e) => { e.preventDefault(); };
+    const end = (e) => {
+      e.preventDefault();
+      onPress(b.n, false);
+      const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
+      onGesture(b.n, y - startYRef.current);
+    };
+    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
+    const opts = { passive: false };
+    el.addEventListener("touchstart", start, opts);
+    el.addEventListener("touchmove", move, opts);
+    el.addEventListener("touchend", end, opts);
+    el.addEventListener("touchcancel", cancel, opts);
+    return () => {
+      el.removeEventListener("touchstart", start, opts);
+      el.removeEventListener("touchmove", move, opts);
+      el.removeEventListener("touchend", end, opts);
+      el.removeEventListener("touchcancel", cancel, opts);
+    };
+  }, [b.n, onPress, onGesture]);
+
+  return (
+    <div ref={ref}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
+        background: b.dead ? C.dead : nine ? "#fff" : base,
+        border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
+        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
+        color: nine && !b.dead ? base : "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
+        touchAction: "none", cursor: "pointer", position: "relative",
+        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+        transform: pressed ? "scale(1.25)" : "scale(1)",
+        transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
+        zIndex: pressed ? 10 : 1,
+        ...style }}>
+      {b.n}
+      {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
+      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
+    </div>
+  );
+}
+const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (e) {
+  showCrash(e.message + "\n" + (e.stack || ""));
+}
+</script>
+</body>
+</html>
 
