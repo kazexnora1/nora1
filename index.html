@@ -67,75 +67,45 @@ const local = {
   remove(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
-/* ========= GAS バックエンド：ロスター／試合結果（共有データ、JSONP経由） =========
-   Google Apps Script の Web App は fetch からの CORS に正式対応していないため、
-   <script>タグ経由のJSONP通信でCORSの制限を回避する。
-   デプロイした Web App の URL をここに貼る。
-   例: https://script.google.com/macros/s/XXXXXXXX/exec               */
-const GAS_URL = "https://script.google.com/macros/s/AKfycbzWw3szvPbRRQ9GC9nWoxu6SPeDR8uyrH4_5ARon85xA8QVORrzv5kOWMEPKm_tBSyE/exec";
+/* ========= バックエンド：ロスター／試合結果（共有データ、jsonbin.io経由） =========
+   jsonbin.io は fetch からの CORS に正式対応しているので、普通の fetch で読み書きできる。
+   jsonbin.io で作った Bin の ID と、X-Master-Key をここに貼る。               */
+const JSONBIN_ID = "6a59da56da38895dfe69af82";
+const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
 
-let pmSeq = 0;
+async function jsonbinRead() {
+  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+    headers: { "X-Master-Key": JSONBIN_KEY },
+  });
+  const data = await res.json();
+  const record = data && data.record ? data.record : {};
+  return { roster: Array.isArray(record.roster) ? record.roster : [], results: Array.isArray(record.results) ? record.results : [] };
+}
 
-// postMessage方式：CORSにもCross-Origin-Resource-Policyにも引っかからない。
-// GETは隠しiframeのsrcに直接クエリを付けて読み込み、POSTは隠しフォーム経由でiframeに送信。
-// どちらもGAS側がpostMessageで結果を返してくるのを待つ。
-function pmRequest({ method = "GET", action, params = {} }, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    const pmId = `pm${pmSeq++}_${Date.now()}`;
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = "position:absolute; width:1px; height:1px; left:-9999px; top:-9999px; border:0;";
-
-    let form = null;
-    const cleanup = () => {
-      clearTimeout(timer);
-      window.removeEventListener("message", onMessage);
-      iframe.remove();
-      if (form) form.remove();
-    };
-    const onMessage = (event) => {
-      const d = event.data;
-      if (d && d.source === "jcl9match" && d.pm === pmId) { cleanup(); resolve(d.data); }
-    };
-    const timer = setTimeout(() => { cleanup(); reject(new Error("timeout")); }, timeoutMs);
-    window.addEventListener("message", onMessage);
-
-    if (method === "GET") {
-      const qs = new URLSearchParams({ action, pm: pmId, ...params }).toString();
-      iframe.src = `${GAS_URL}?${qs}`;
-      document.body.appendChild(iframe);
-    } else {
-      const frameName = `jcl9frame${pmSeq}_${Date.now()}`;
-      iframe.name = frameName;
-      document.body.appendChild(iframe);
-      form = document.createElement("form");
-      form.method = "POST";
-      form.action = GAS_URL;
-      form.target = frameName;
-      form.style.display = "none";
-      Object.entries({ action, pm: pmId, ...params }).forEach(([k, v]) => {
-        const input = document.createElement("input");
-        input.type = "hidden"; input.name = k; input.value = v;
-        form.appendChild(input);
-      });
-      document.body.appendChild(form);
-      form.submit();
-    }
+async function jsonbinWrite(record) {
+  await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+    body: JSON.stringify(record),
   });
 }
 
 const gas = {
-  ready: () => !!GAS_URL,
+  ready: () => !!JSONBIN_ID && !!JSONBIN_KEY,
   async loadRoster() {
     if (!gas.ready()) return null;
-    const data = await pmRequest({ method: "GET", action: "roster" });
-    return Array.isArray(data) ? data : null;
+    try {
+      const record = await jsonbinRead();
+      return record.roster;
+    } catch { return null; }
   },
   async saveRoster(roster) {
-    if (!gas.ready()) return { ok: false, err: "GAS_URL未設定" };
+    if (!gas.ready()) return { ok: false, err: "JSONBIN未設定" };
     try {
-      const data = await pmRequest({ method: "POST", action: "saveRoster", params: { data: JSON.stringify(roster) } });
-      if (data && data.ok) return { ok: true };
-      return { ok: false, err: JSON.stringify(data) };
+      const record = await jsonbinRead().catch(() => ({ roster: [], results: [] }));
+      record.roster = roster;
+      await jsonbinWrite(record);
+      return { ok: true };
     } catch (err) {
       return { ok: false, err: String(err && err.message ? err.message : err) };
     }
@@ -143,14 +113,17 @@ const gas = {
   async addResult(result) {
     if (!gas.ready()) return;
     try {
-      await pmRequest({ method: "POST", action: "addResult", params: { data: JSON.stringify(result) } });
+      const record = await jsonbinRead().catch(() => ({ roster: [], results: [] }));
+      record.results = record.results || [];
+      record.results.push(result);
+      await jsonbinWrite(record);
     } catch {}
   },
   async loadResults() {
     if (!gas.ready()) return [];
     try {
-      const data = await pmRequest({ method: "GET", action: "results" });
-      return Array.isArray(data) ? data : [];
+      const record = await jsonbinRead();
+      return record.results;
     } catch { return []; }
   },
 };
