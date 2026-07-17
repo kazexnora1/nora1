@@ -1,4 +1,4 @@
-<!<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
@@ -83,7 +83,7 @@ function pmRequest({ method = "GET", action, params = {} }, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const pmId = `pm${pmSeq++}_${Date.now()}`;
     const iframe = document.createElement("iframe");
-    iframe.style.display = "none";
+    iframe.style.cssText = "position:absolute; width:1px; height:1px; left:-9999px; top:-9999px; border:0;";
 
     let form = null;
     const cleanup = () => {
