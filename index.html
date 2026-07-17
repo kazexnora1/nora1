@@ -123,10 +123,8 @@ const gas = {
   ready: () => !!GAS_URL,
   async loadRoster() {
     if (!gas.ready()) return null;
-    try {
-      const data = await jsonpRequest(`${GAS_URL}?action=roster`);
-      return Array.isArray(data) ? data : null;
-    } catch { return null; }
+    const data = await jsonpRequest(`${GAS_URL}?action=roster`);
+    return Array.isArray(data) ? data : null;
   },
   async saveRoster(roster) {
     if (!gas.ready()) return { ok: false, err: "GAS_URL未設定" };
@@ -169,14 +167,22 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // { ok, err } | null
+  const [loadStatus, setLoadStatus] = useState(null); // { ok, err } | null
 
   const refreshRoster = async () => {
     if (!gas.ready() || refreshing) return;
     setRefreshing(true);
-    const o = await gas.loadRoster();
-    if (Array.isArray(o)) {
-      if (o.length) _id = Math.max(...o.map((p) => p.id)) + 1;
-      setRoster(o);
+    try {
+      const o = await gas.loadRoster();
+      if (Array.isArray(o)) {
+        if (o.length) _id = Math.max(...o.map((p) => p.id)) + 1;
+        setRoster(o);
+        setLoadStatus({ ok: true });
+      } else {
+        setLoadStatus({ ok: false, err: "データが取得できませんでした" });
+      }
+    } catch (err) {
+      setLoadStatus({ ok: false, err: String(err && err.message ? err.message : err) });
     }
     setRefreshing(false);
   };
@@ -184,7 +190,13 @@ function App() {
   // 復元：ロスターは共有（GAS）、進行中の画面/試合は端末ローカル
   useEffect(() => {
     (async () => {
-      let o = await gas.loadRoster();
+      let o = null;
+      try {
+        o = await gas.loadRoster();
+        setLoadStatus(Array.isArray(o) ? { ok: true } : { ok: false, err: "データが取得できませんでした" });
+      } catch (err) {
+        setLoadStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
       if (!o) {
         const lg = local.get("jcl9:roster");
         if (lg) { try { o = JSON.parse(lg); } catch {} }
@@ -218,7 +230,7 @@ function App() {
   return (
     <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT }}>
       <div>
-        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} onRefresh={refreshRoster} refreshing={refreshing} saveStatus={saveStatus} />}
+        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} onRefresh={refreshRoster} refreshing={refreshing} saveStatus={saveStatus} loadStatus={loadStatus} />}
         {screen === "create" && (
           <CreateMatch roster={roster} lenPct={lenPct} setLenPct={setLenPct}
             onBack={() => setScreen("roster")}
@@ -233,7 +245,7 @@ function App() {
 }
 
 /* ========= 画面1：選手リスト ========= */
-function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing, saveStatus }) {
+function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing, saveStatus, loadStatus }) {
   const update = (id, k, v) => setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
   const remove = (id) => setRoster((rs) => rs.filter((p) => p.id !== id));
   const add = () => roster.length < 30 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
@@ -269,6 +281,11 @@ function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing, saveSt
       <button onClick={() => setShowList((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 15.5, fontWeight: 700, padding: "13px 0", cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
         選手リスト（{roster.length}人） {showList ? "▲" : "▼"}
       </button>
+      {loadStatus && (
+        <div style={{ fontSize: 12.5, textAlign: "center", marginBottom: 4, color: loadStatus.ok ? C.win : C.minus, fontWeight: 700 }}>
+          {loadStatus.ok ? "✓ 共有リストの読み込みに成功" : `✗ 読み込みに失敗: ${loadStatus.err}`}
+        </div>
+      )}
       {saveStatus && (
         <div style={{ fontSize: 12.5, textAlign: "center", marginBottom: showList ? 14 : 0, color: saveStatus.ok ? C.win : C.minus, fontWeight: 700 }}>
           {saveStatus.ok ? "✓ 共有リストに送信しました" : `✗ 送信に失敗: ${saveStatus.err}`}
