@@ -104,9 +104,9 @@ function pmRequest({ method = "GET", action, params = {} }, timeoutMs = 15000) {
       iframe.src = `${GAS_URL}?${qs}`;
       document.body.appendChild(iframe);
     } else {
-      document.body.appendChild(iframe);
       const frameName = `jcl9frame${pmSeq}_${Date.now()}`;
       iframe.name = frameName;
+      document.body.appendChild(iframe);
       form = document.createElement("form");
       form.method = "POST";
       form.action = GAS_URL;
