@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
@@ -74,47 +74,51 @@ const local = {
    例: https://script.google.com/macros/s/XXXXXXXX/exec               */
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzWw3szvPbRRQ9GC9nWoxu6SPeDR8uyrH4_5ARon85xA8QVORrzv5kOWMEPKm_tBSyE/exec";
 
-let jsonpSeq = 0;
-function jsonpRequest(url, timeoutMs = 15000) {
+let pmSeq = 0;
+
+// postMessage方式：CORSにもCross-Origin-Resource-Policyにも引っかからない。
+// GETは隠しiframeのsrcに直接クエリを付けて読み込み、POSTは隠しフォーム経由でiframeに送信。
+// どちらもGAS側がpostMessageで結果を返してくるのを待つ。
+function pmRequest({ method = "GET", action, params = {} }, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    const cbName = `jcl9cb${jsonpSeq++}_${Date.now()}`;
-    const script = document.createElement("script");
-    const cleanup = () => { delete window[cbName]; script.remove(); };
+    const pmId = `pm${pmSeq++}_${Date.now()}`;
+    const iframe = document.createElement("iframe");
+    iframe.style.display = "none";
+
+    let form = null;
+    const cleanup = () => {
+      clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+      iframe.remove();
+      if (form) form.remove();
+    };
+    const onMessage = (event) => {
+      const d = event.data;
+      if (d && d.source === "jcl9match" && d.pm === pmId) { cleanup(); resolve(d.data); }
+    };
     const timer = setTimeout(() => { cleanup(); reject(new Error("timeout")); }, timeoutMs);
-    window[cbName] = (data) => { clearTimeout(timer); cleanup(); resolve(data); };
-    script.src = url + (url.includes("?") ? "&" : "?") + "callback=" + cbName;
-    script.onerror = () => { clearTimeout(timer); cleanup(); reject(new Error("script load error")); };
-    document.body.appendChild(script);
-  });
-}
+    window.addEventListener("message", onMessage);
 
-// フォーム送信＋隠しiframe：CORSにもURLの長さ制限にも引っかからない書き込み専用の経路。
-// 応答は別オリジンのiframeなので中身は読めず、fire-and-forget（送信できたかどうかのみ分かる）。
-function formPostRequest(url, fields, waitMs = 1200) {
-  return new Promise((resolve, reject) => {
-    try {
-      const frameName = `jcl9frame${jsonpSeq++}_${Date.now()}`;
-      const iframe = document.createElement("iframe");
-      iframe.name = frameName;
-      iframe.style.display = "none";
+    if (method === "GET") {
+      const qs = new URLSearchParams({ action, pm: pmId, ...params }).toString();
+      iframe.src = `${GAS_URL}?${qs}`;
       document.body.appendChild(iframe);
-
-      const form = document.createElement("form");
+    } else {
+      document.body.appendChild(iframe);
+      const frameName = `jcl9frame${pmSeq}_${Date.now()}`;
+      iframe.name = frameName;
+      form = document.createElement("form");
       form.method = "POST";
-      form.action = url;
+      form.action = GAS_URL;
       form.target = frameName;
       form.style.display = "none";
-      Object.entries(fields).forEach(([k, v]) => {
+      Object.entries({ action, pm: pmId, ...params }).forEach(([k, v]) => {
         const input = document.createElement("input");
         input.type = "hidden"; input.name = k; input.value = v;
         form.appendChild(input);
       });
       document.body.appendChild(form);
       form.submit();
-
-      setTimeout(() => { form.remove(); iframe.remove(); resolve({ ok: true }); }, waitMs);
-    } catch (err) {
-      reject(err);
     }
   });
 }
@@ -123,14 +127,15 @@ const gas = {
   ready: () => !!GAS_URL,
   async loadRoster() {
     if (!gas.ready()) return null;
-    const data = await jsonpRequest(`${GAS_URL}?action=roster`);
+    const data = await pmRequest({ method: "GET", action: "roster" });
     return Array.isArray(data) ? data : null;
   },
   async saveRoster(roster) {
     if (!gas.ready()) return { ok: false, err: "GAS_URL未設定" };
     try {
-      await formPostRequest(GAS_URL, { action: "saveRoster", data: JSON.stringify(roster) });
-      return { ok: true };
+      const data = await pmRequest({ method: "POST", action: "saveRoster", params: { data: JSON.stringify(roster) } });
+      if (data && data.ok) return { ok: true };
+      return { ok: false, err: JSON.stringify(data) };
     } catch (err) {
       return { ok: false, err: String(err && err.message ? err.message : err) };
     }
@@ -138,13 +143,13 @@ const gas = {
   async addResult(result) {
     if (!gas.ready()) return;
     try {
-      await formPostRequest(GAS_URL, { action: "addResult", data: JSON.stringify(result) });
+      await pmRequest({ method: "POST", action: "addResult", params: { data: JSON.stringify(result) } });
     } catch {}
   },
   async loadResults() {
     if (!gas.ready()) return [];
     try {
-      const data = await jsonpRequest(`${GAS_URL}?action=results`);
+      const data = await pmRequest({ method: "GET", action: "results" });
       return Array.isArray(data) ? data : [];
     } catch { return []; }
   },
