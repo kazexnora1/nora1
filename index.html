@@ -130,11 +130,7 @@ const gas = {
 
 let _id = 1;
 const nid = () => _id++;
-const seedRoster = [
-  { id: nid(), name: "テストA", r: "500" },
-  { id: nid(), name: "テストB", r: "400" },
-  { id: nid(), name: "選手3", r: "" },
-];
+const seedRoster = [];
 
 /* ========= ルート：3画面を1アプリ内で切替 ========= */
 function App() {
@@ -191,9 +187,11 @@ function App() {
     savingRef.current = false;
     if (pendingRef.current) { pendingRef.current = false; saveRosterNow(); }
   };
+  const firstRosterEffect = useRef(true);
   useEffect(() => {
     if (!loaded) return;
     local.set("jcl9:roster", JSON.stringify(roster));
+    if (firstRosterEffect.current) { firstRosterEffect.current = false; return; }
     clearTimeout(rosterSaveTimer.current);
     rosterSaveTimer.current = setTimeout(() => saveRosterNow(), 600);
   }, [roster, loaded]);
