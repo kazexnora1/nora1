@@ -33,12 +33,12 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 /* ========= ハンデ計算（8ボール式・Short/Long実測校正）========= */
 function computeRace(R1, R2, lenPct) {
-  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 89.68));
+  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 100));
   const p2 = 1 - p1;
-  const L1 = 3.463 + 0.3193 * (p1 - 0.5), L2 = 3.463 + 0.3193 * (p2 - 0.5);
+  const L1 = 3.3525 + 1.3557 * (p1 - 0.5), L2 = 3.3525 + 1.3557 * (p2 - 0.5);
   const E1 = 14 * p1 + L1 * p2, E2 = 14 * p2 + L2 * p1;
   const avg = (R1 + R2) / 2;
-  const Nlong = 0.014550 * avg + 0.39939, Nshort = 0.011802 * avg - 0.037264;
+  const Nlong = 0.015015 * avg + 0.31579, Nshort = 0.011976 * avg - 0.050167;
   const t = (lenPct - 75) / 25;
   const N = Math.max(Nshort + t * (Nlong - Nshort), 0.1);
   const floor = Math.round(0.16 * lenPct + 12);
