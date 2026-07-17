@@ -192,25 +192,18 @@ function App() {
     setRefreshing(false);
   };
 
-  // 復元：ロスターは共有（GAS）、進行中の画面/試合は端末ローカル
+  // 起動時：ローカルの保存分を即表示（通信なし）。共有シートの最新版は「更新」ボタンでのみ取得
   useEffect(() => {
-    (async () => {
-      let o = null;
+    const lg = local.get("jcl9:roster");
+    if (lg) {
       try {
-        o = await gas.loadRoster();
-        setLoadStatus(Array.isArray(o) ? { ok: true } : { ok: false, err: "データが取得できませんでした" });
-      } catch (err) {
-        setLoadStatus({ ok: false, err: String(err && err.message ? err.message : err) });
-      }
-      if (!o) {
-        const lg = local.get("jcl9:roster");
-        if (lg) { try { o = JSON.parse(lg); } catch {} }
-      }
-      if (Array.isArray(o) && o.length) { _id = Math.max(...o.map((p) => p.id)) + 1; setRoster(o); }
-      const me = local.get("jcl9:session");
-      if (me) { try { const s = JSON.parse(me); if (s.screen) setScreen(s.screen); if (s.lenPct) setLenPct(s.lenPct); if (s.match) setMatch(s.match); } catch {} }
-      setLoaded(true);
-    })();
+        const o = JSON.parse(lg);
+        if (Array.isArray(o) && o.length) { _id = Math.max(...o.map((p) => p.id)) + 1; setRoster(o); }
+      } catch {}
+    }
+    const me = local.get("jcl9:session");
+    if (me) { try { const s = JSON.parse(me); if (s.screen) setScreen(s.screen); if (s.lenPct) setLenPct(s.lenPct); if (s.match) setMatch(s.match); } catch {} }
+    setLoaded(true);
   }, []);
   const rosterSaveTimer = useRef(null);
   const rosterRef = useRef(roster);
