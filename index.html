@@ -83,11 +83,16 @@ const gas = {
     } catch { return null; }
   },
   async saveRoster(roster) {
-    if (!gas.ready()) return;
+    if (!gas.ready()) return { ok: false, err: "GAS_URL未設定" };
     try {
       const data = encodeURIComponent(JSON.stringify(roster));
-      await fetch(`${GAS_URL}?action=saveRoster&data=${data}`);
-    } catch {}
+      const res = await fetch(`${GAS_URL}?action=saveRoster&data=${data}`);
+      const json = await res.json();
+      if (json && json.ok) return { ok: true };
+      return { ok: false, err: JSON.stringify(json) };
+    } catch (err) {
+      return { ok: false, err: String(err && err.message ? err.message : err) };
+    }
   },
   async addResult(result) {
     if (!gas.ready()) return;
@@ -122,6 +127,7 @@ function App() {
   const [match, setMatch] = useState(null); // { names, raceTo }
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null); // { ok, err } | null
 
   const refreshRoster = async () => {
     if (!gas.ready() || refreshing) return;
@@ -153,7 +159,10 @@ function App() {
     if (!loaded) return;
     local.set("jcl9:roster", JSON.stringify(roster));
     clearTimeout(rosterSaveTimer.current);
-    rosterSaveTimer.current = setTimeout(() => gas.saveRoster(roster), 600);
+    rosterSaveTimer.current = setTimeout(async () => {
+      const r = await gas.saveRoster(roster);
+      setSaveStatus(r || null);
+    }, 600);
   }, [roster, loaded]);
   useEffect(() => { if (!loaded) return; local.set("jcl9:session", JSON.stringify({ screen, lenPct, match })); }, [screen, lenPct, match, loaded]);
 
@@ -168,7 +177,7 @@ function App() {
   return (
     <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT }}>
       <div>
-        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} onRefresh={refreshRoster} refreshing={refreshing} />}
+        {screen === "roster" && <RosterScreen roster={roster} setRoster={setRoster} onNext={() => setScreen("create")} onRefresh={refreshRoster} refreshing={refreshing} saveStatus={saveStatus} />}
         {screen === "create" && (
           <CreateMatch roster={roster} lenPct={lenPct} setLenPct={setLenPct}
             onBack={() => setScreen("roster")}
@@ -183,7 +192,7 @@ function App() {
 }
 
 /* ========= 画面1：選手リスト ========= */
-function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing }) {
+function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing, saveStatus }) {
   const update = (id, k, v) => setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
   const remove = (id) => setRoster((rs) => rs.filter((p) => p.id !== id));
   const add = () => roster.length < 30 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
@@ -216,9 +225,14 @@ function RosterScreen({ roster, setRoster, onNext, onRefresh, refreshing }) {
         対戦を作成する ▶
       </button>
 
-      <button onClick={() => setShowList((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 15.5, fontWeight: 700, padding: "13px 0", cursor: "pointer", fontFamily: FONT, marginBottom: showList ? 14 : 0 }}>
+      <button onClick={() => setShowList((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 15.5, fontWeight: 700, padding: "13px 0", cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
         選手リスト（{roster.length}人） {showList ? "▲" : "▼"}
       </button>
+      {saveStatus && (
+        <div style={{ fontSize: 12.5, textAlign: "center", marginBottom: showList ? 14 : 0, color: saveStatus.ok ? C.win : C.minus, fontWeight: 700 }}>
+          {saveStatus.ok ? "✓ 共有リストに保存しました" : `✗ 保存に失敗: ${saveStatus.err}`}
+        </div>
+      )}
 
       {showList && (
         <>
