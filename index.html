@@ -213,14 +213,23 @@ function App() {
     })();
   }, []);
   const rosterSaveTimer = useRef(null);
+  const rosterRef = useRef(roster);
+  rosterRef.current = roster;
+  const savingRef = useRef(false);
+  const pendingRef = useRef(false);
+  const saveRosterNow = async () => {
+    if (savingRef.current) { pendingRef.current = true; return; }
+    savingRef.current = true;
+    const r = await gas.saveRoster(rosterRef.current);
+    setSaveStatus(r || null);
+    savingRef.current = false;
+    if (pendingRef.current) { pendingRef.current = false; saveRosterNow(); }
+  };
   useEffect(() => {
     if (!loaded) return;
     local.set("jcl9:roster", JSON.stringify(roster));
     clearTimeout(rosterSaveTimer.current);
-    rosterSaveTimer.current = setTimeout(async () => {
-      const r = await gas.saveRoster(roster);
-      setSaveStatus(r || null);
-    }, 600);
+    rosterSaveTimer.current = setTimeout(() => saveRosterNow(), 600);
   }, [roster, loaded]);
   useEffect(() => { if (!loaded) return; local.set("jcl9:session", JSON.stringify({ screen, lenPct, match })); }, [screen, lenPct, match, loaded]);
 
