@@ -96,15 +96,22 @@ function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
 const STALE_MS = 1000 * 60 * 60 * 6;
-function pickLatestForTable(matches, tableNum) {
-  let best = null, bestId = null;
+function isMatchFinished(m) {
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
+}
+// 卓ごとの待機列：未終了の対戦を作成順に並べる。[0]が現在対戦中、[1]が次戦
+function getQueueForTable(matches, tableNum) {
+  const list = [];
   for (const id in matches) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    if (!best || m.updatedAt > best.updatedAt) { best = m; bestId = id; }
+    if (isMatchFinished(m)) continue;
+    list.push({ ...m, id });
   }
-  return best ? { ...best, id: bestId } : null;
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
 }
 
 let _id = 1;
@@ -210,7 +217,7 @@ function ScheduleTab({ roster }) {
   const refreshStatus = async () => {
     try {
       const r = await jsonbinRead();
-      setTableStatus([1, 2, 3].map((t) => pickLatestForTable(r.matches, t)));
+      setTableStatus([1, 2, 3].map((t) => getQueueForTable(r.matches, t)[0] || null));
     } catch {}
   };
   useEffect(() => { refreshStatus(); const iv = setInterval(refreshStatus, 4000); return () => clearInterval(iv); }, []);
@@ -220,13 +227,8 @@ function ScheduleTab({ roster }) {
   const valid = p1 && p2 && i1 !== i2 && R1 > 0 && R2 > 0;
   const res = valid ? computeRace(R1, R2, lenPct) : null;
 
-  const busy = tableStatus[table - 1] && tableStatus[table - 1].phase !== "finished" &&
-    !(tableStatus[table - 1].phase === "done" === false);
-  const activeAtTable = tableStatus[table - 1] && ["banking", "play", "done"].includes(tableStatus[table - 1].phase);
-
   const create = async () => {
     if (!valid || creating) return;
-    if (activeAtTable && !window.confirm(`卓${table}は現在進行中の試合があります。上書きして新しい対戦を作成しますか？`)) return;
     setCreating(true);
     const matchId = randomMatchId();
     const state = {
@@ -326,17 +328,13 @@ const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff"
 /* ========= QR発行タブ ========= */
 /* ========= タイムラインタブ：対戦カードを作成順（古い→新しい）に縦並び。進行中はリアルタイムスコア、タップでQR ========= */
 function TimelineTab() {
-  const [list, setList] = useState([]);
-  const [openId, setOpenId] = useState(null);
+  const [queues, setQueues] = useState([[], [], []]);
+  const [openMatch, setOpenMatch] = useState(null);
 
   const refresh = async () => {
     try {
       const r = await jsonbinRead();
-      const arr = Object.keys(r.matches)
-        .map((id) => ({ id, ...r.matches[id] }))
-        .filter((m) => m.updatedAt && Date.now() - m.updatedAt <= STALE_MS)
-        .sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
-      setList(arr);
+      setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
     } catch {}
   };
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
@@ -353,49 +351,60 @@ function TimelineTab() {
     return url.toString();
   };
 
-  const opened = list.find((m) => m.id === openId);
-
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
+    <div style={{ padding: "20px 12px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>タイムライン</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>下ほど新しい対戦です。カードをタップでQR表示</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>上：現在対戦中／下：次戦。カードをタップでQR表示</div>
       </div>
-      {list.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 14, marginTop: 40 }}>まだ対戦がありません</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {list.map((m) => <TimelineCard key={m.id} m={m} onOpen={() => setOpenId(m.id)} />)}
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        {[0, 1, 2].map((ti) => (
+          <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ textAlign: "center", fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 2 }}>卓{ti + 1}</div>
+            {queues[ti].length === 0 && <EmptySlot label="待機中" />}
+            {queues[ti][0] && <TimelineCard m={queues[ti][0]} current onOpen={() => setOpenMatch(queues[ti][0])} />}
+            {queues[ti][1] ? <TimelineCard m={queues[ti][1]} onOpen={() => setOpenMatch(queues[ti][1])} /> : queues[ti].length > 0 && <EmptySlot label="次戦なし" small />}
+          </div>
+        ))}
       </div>
-      {opened && (
-        <div onClick={() => setOpenId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+      {openMatch && (
+        <div onClick={() => setOpenMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{opened.table}：{opened.names.join(" 対 ")}</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(opened))}`} style={{ width: 240, height: 240 }} />
-            <button onClick={() => setOpenId(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{openMatch.table}：{openMatch.names.join(" 対 ")}</div>
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(openMatch))}`} style={{ width: 240, height: 240 }} />
+            <button onClick={() => setOpenMatch(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
       )}
     </div>
   );
 }
-function TimelineCard({ m, onOpen }) {
+function EmptySlot({ label, small }) {
+  return (
+    <div style={{ background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 14, padding: small ? "10px 4px" : "20px 4px", textAlign: "center", color: C.sub, fontSize: small ? 11 : 13 }}>
+      {label}
+    </div>
+  );
+}
+function TimelineCard({ m, current, onOpen }) {
   const names = m.names || ["P1", "P2"];
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const balls = m.balls || [];
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
-  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const statusLabel = m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}ラック`;
+  const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const statusLabel = !current ? "次戦" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
   return (
-    <div onClick={onOpen} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 800, color: C.sub }}>卓 {m.table}</span>
-        <span style={{ fontSize: 12, color: C.sub }}>{statusLabel}</span>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
+    <div onClick={onOpen} style={{ background: current ? C.lightBlue : C.zone, border: `1.5px solid ${current ? C.blue : C.line}`, borderRadius: 14, padding: "10px 6px", cursor: "pointer" }}>
+      <div style={{ textAlign: "center", fontSize: 10.5, color: current ? C.blue : C.sub, fontWeight: 800, marginBottom: 6 }}>{statusLabel}</div>
+      <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, textAlign: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: C.ink }}>{m.phase === "banking" ? "–" : disp[i]}<span style={{ fontSize: 13, opacity: 0.5 }}>/{raceTo[i]}</span></div>
+          <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+            <div style={{ fontSize: current ? 22 : 15, fontWeight: 800, color: C.ink }}>
+              {current ? (m.phase === "banking" ? "–" : disp[i]) : ""}
+              <span style={{ fontSize: current ? 11 : 12, opacity: 0.5 }}>{current ? "/" : ""}{raceTo[i]}</span>
+            </div>
           </div>
         ))}
       </div>
