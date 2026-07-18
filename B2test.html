@@ -89,11 +89,11 @@ async function loadMatchRemote(matchId) {
 async function saveMatchRemote(matchId, state) {
   const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
   record.matches = record.matches || {};
-  record.matches[matchId] = state;
+  record.matches[matchId] = { ...state, updatedAt: Date.now() };
   await jsonbinWrite(record);
 }
 
-const initialMatchState = (rt1, rt2) => ({
+const initialMatchState = (rt1, rt2, names, table) => ({
   version: 1,
   phase: "banking", // banking | play | done | finished
   brk: null, // 0 | 1 | null
@@ -103,6 +103,8 @@ const initialMatchState = (rt1, rt2) => ({
   lastResult: null,
   hist: [],
   raceTo: [rt1, rt2],
+  names,
+  table,
 });
 
 function randomMatchId() {
@@ -121,6 +123,7 @@ function App() {
         names: [params.get("p1"), params.get("p2")],
         ratings: [Number(params.get("r1")), Number(params.get("r2"))],
         lenPct: Number(params.get("len")),
+        table: Number(params.get("t")) || 1,
       };
     }
     return null;
@@ -135,6 +138,7 @@ function App() {
       url.searchParams.set("r1", info.ratings[0]);
       url.searchParams.set("r2", info.ratings[1]);
       url.searchParams.set("len", info.lenPct);
+      url.searchParams.set("t", info.table);
       window.history.replaceState({}, "", url.toString());
       setSetupInfo(info);
     }} />;
@@ -150,6 +154,7 @@ function SetupScreen({ onCreate }) {
   const [p2, setP2] = useState("テストB");
   const [r2, setR2] = useState("400");
   const [lenPct, setLenPct] = useState(100);
+  const [table, setTable] = useState(1);
 
   const R1 = parseInt(r1, 10), R2 = parseInt(r2, 10);
   const valid = p1 && p2 && R1 > 0 && R2 > 0;
@@ -162,6 +167,7 @@ function SetupScreen({ onCreate }) {
       names: [p1, p2],
       ratings: [R1, R2],
       lenPct,
+      table,
     });
   };
 
@@ -170,9 +176,16 @@ function SetupScreen({ onCreate }) {
       <div style={{ textAlign: "center", marginBottom: 18 }}>
         <div style={{ fontSize: 24, fontWeight: 800 }}>テスト対戦を作成</div>
         <div style={{ fontSize: 13.5, color: C.sub, marginTop: 4 }}>
-          本来は本部アプリ（B1）がQRを発行しますが、まだ無いのでここで仮の対戦カードを作ります
+          本来は本部アプリ（B1）が卓・対戦者を決めてQRを発行しますが、まだ無いのでここで仮の対戦カードを作ります
         </div>
       </div>
+      <Field label="卓番号">
+        <div style={{ display: "flex", gap: 8 }}>
+          {[1, 2, 3].map((t) => (
+            <button key={t} onClick={() => setTable(t)} style={{ flex: 1, border: `2px solid ${table === t ? C.blue : C.line}`, background: table === t ? C.lightBlue : "#fff", borderRadius: 10, padding: "12px 0", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: FONT, color: C.ink }}>卓{t}</button>
+          ))}
+        </div>
+      </Field>
       <Field label="プレイヤー1">
         <div style={{ display: "flex", gap: 8 }}>
           <input value={p1} onChange={(e) => setP1(e.target.value.slice(0, 12))} style={{ ...inputStyle, flex: 1 }} />
@@ -215,9 +228,9 @@ const inputStyle = { background: "#fff", border: `1px solid ${C.line}`, borderRa
 
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo }) {
-  const { matchId, names, lenPct } = setupInfo;
+  const { matchId, names, lenPct, table } = setupInfo;
   const [res] = useState(() => computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
-  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2));
+  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
   const [loaded, setLoaded] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
@@ -407,7 +420,7 @@ function MatchScreen({ setupInfo }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <button onClick={() => setShowQR(true)} style={{ background: "none", border: "none", fontSize: 13, color: C.blue, cursor: "pointer", fontWeight: 700 }}>📱 共有</button>
-        <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
+        <span style={{ fontSize: 12.5, color: C.sub }}>卓{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
@@ -597,4 +610,3 @@ try {
 </script>
 </body>
 </html>
-
