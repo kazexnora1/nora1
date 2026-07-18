@@ -132,6 +132,13 @@ function NextList({ matches }) {
   );
 }
 
+function hillInfo(rt, disp) {
+  if (rt <= 0) return "";
+  const rem = rt - disp;
+  if (rem <= 0) return "達成";
+  const toHill = rem - 14;
+  return toHill > 0 ? `ヒルまで あと${toHill}` : `残り${rem}`;
+}
 function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
@@ -176,6 +183,7 @@ function TablePanel({ tableNum, m }) {
       <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
           const pc = i === 0 ? C.blue : C.red;
+          const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : "";
           return (
             <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "8px 4px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
@@ -183,7 +191,8 @@ function TablePanel({ tableNum, m }) {
                 {m.phase === "banking" ? "–" : disp[i]}
                 <span style={{ fontSize: "0.4em", opacity: 0.55, WebkitTextStroke: "0px", verticalAlign: "middle" }}>/{raceTo[i]}</span>
               </div>
-              {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 2 }}>● BREAK</div>}
+              {hi && <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 10, padding: "3px 12px", fontSize: 16, fontWeight: 800, marginTop: 2 }}>{hi}</div>}
+              {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 4 }}>● BREAK</div>}
             </div>
           );
         })}
