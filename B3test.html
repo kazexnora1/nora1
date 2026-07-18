@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>JCL9Match B3 観戦ディスプレイ</title>
 <style>
-  html, body, #root { margin: 0; padding: 0; height: 100%; background: #10161d; }
+  html, body, #root { margin: 0; padding: 0; height: 100%; background: #FFFFFF; }
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -32,8 +32,8 @@ const { useState, useEffect } = React;
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 const C = {
-  bg: "#10161d", panel: "#1B232C", ink: "#F3F5F7", sub: "#8B97A3", line: "#2B3441",
-  blue: "#4C8FE0", red: "#E2564F", win: "#4CAF6E", hill: "#E0A23B", hillBg: "#3A2F14",
+  bg: "#FFFFFF", panel: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0",
 };
 
 /* ========= 共有バックエンド（B2と同じBin、読み取り専用） ========= */
@@ -96,7 +96,7 @@ function App() {
 function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
-      <div style={{ flex: "1 1 380px", minWidth: 320, background: C.panel, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center" }}>
+      <div style={{ flex: "1 1 380px", minWidth: 320, background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center" }}>
         <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 40, letterSpacing: 2 }}>卓 {tableNum}</div>
         <div style={{ fontSize: 20, opacity: 0.6 }}>待機中</div>
       </div>
@@ -120,7 +120,7 @@ function TablePanel({ tableNum, m }) {
     (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
 
   return (
-    <div style={{ flex: "1 1 380px", minWidth: 320, background: C.panel, borderRadius: 20, padding: "18px 18px 22px", color: C.ink }}>
+    <div style={{ flex: "1 1 380px", minWidth: 320, background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "18px 18px 22px", color: C.ink }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <span style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
         <span style={{ fontSize: 13, color: C.sub }}>
@@ -138,7 +138,7 @@ function TablePanel({ tableNum, m }) {
         {[0, 1].map((i) => {
           const pc = i === 0 ? C.blue : C.red;
           return (
-            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 3px ${pc}` : "none", borderRadius: 14, padding: "10px 4px", background: "rgba(255,255,255,0.03)" }}>
+            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 3px ${pc}` : "none", borderRadius: 14, padding: "10px 4px", background: "rgba(0,0,0,0.03)" }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
               <div style={{ fontSize: 46, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
                 {m.phase === "banking" ? "–" : disp[i]}
@@ -167,4 +167,3 @@ try {
 </script>
 </body>
 </html>
-
