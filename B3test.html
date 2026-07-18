@@ -75,6 +75,22 @@ function getQueueForTable(matches, tableNum) {
 function App() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
+  const [isFs, setIsFs] = useState(false);
+
+  useEffect(() => {
+    const onFsChange = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    }
+  };
 
   useEffect(() => {
     let stop = false;
@@ -98,7 +114,10 @@ function App() {
     .filter(Boolean);
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative" }}>
+      <button onClick={toggleFullscreen} style={{ position: "absolute", top: 10, right: 14, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 13, fontWeight: 700, padding: "6px 12px", cursor: "pointer", fontFamily: FONT, zIndex: 10 }}>
+        {isFs ? "全画面を終了" : "⛶ 全画面表示"}
+      </button>
       <div style={{
         display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
         gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16, height: "calc(100vh - 36px)", maxWidth: 1600, margin: "0 auto",
@@ -137,7 +156,7 @@ function hillInfo(rt, disp) {
   const rem = rt - disp;
   if (rem <= 0) return { label: "達成", value: null };
   const toHill = rem - 14;
-  return toHill > 0 ? { label: "ヒルマデ", value: toHill } : { label: "勝ちマデ", value: rem };
+  return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
 }
 function TablePanel({ tableNum, m }) {
   if (!m) {
