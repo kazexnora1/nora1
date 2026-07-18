@@ -189,7 +189,7 @@ function TablePanel({ tableNum, m }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 17, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
         <span style={{ fontSize: 15, color: C.sub, fontWeight: 700 }}>
-          {m.phase === "banking" ? "バンキング中" : matchWinner != null ? "試合終了" : `第${m.rack}ラック`}
+          {m.phase === "banking" ? "バンキング中" : matchWinner != null ? "試合終了" : ""}
         </span>
       </div>
 
@@ -204,25 +204,19 @@ function TablePanel({ tableNum, m }) {
           const pc = i === 0 ? C.blue : C.red;
           const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
           return (
-            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "8px 4px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "center", overflow: "hidden" }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minHeight: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>{names[i]}</div>
+            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "10px 4px 8px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
+              <div style={{ fontSize: 24, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minHeight: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{names[i]}</div>
               <div style={{ minHeight: "clamp(58px, 9.5vw, 96px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {hi && hi.value != null ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%" }}>
-                    <div style={{ width: 46, flexShrink: 0, fontSize: 15, fontWeight: 800, color: pc, lineHeight: 1.15, textAlign: "center" }}>{hi.label.slice(0, 2)}<br />{hi.label.slice(2)}</div>
-                    <div style={{ flex: 1, fontSize: "clamp(48px, 8vw, 84px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
-                      {m.phase === "banking" ? "–" : hi.value}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: "clamp(40px, 7vw, 70px)", fontWeight: 900, lineHeight: 1.15, color: C.win, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
-                    {hi ? hi.label : (m.phase === "banking" ? "–" : disp[i])}
-                  </div>
-                )}
+                <div style={{ fontSize: "clamp(52px, 9vw, 92px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
+                  {m.phase === "banking" ? "–" : disp[i]}
+                  <span style={{ fontSize: "0.42em", opacity: 0.55, WebkitTextStroke: "0px" }}>/{raceTo[i]}</span>
+                </div>
               </div>
-              <div style={{ fontSize: 17, color: C.sub, fontWeight: 700, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
-                {m.phase === "banking" ? "" : `${disp[i]}/${raceTo[i]}`}
-              </div>
+              {hi && (
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "3px 12px", fontSize: 15, fontWeight: 800, marginTop: 4 }}>
+                  {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
+                </div>
+              )}
               {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 4 }}>● ブレイク</div>}
             </div>
           );
@@ -240,13 +234,6 @@ function TablePanel({ tableNum, m }) {
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-} catch (e) {
-  showCrash(e.message + "\n" + (e.stack || ""));
-}
-</script>
-</body>
-</html>
-reateRoot(document.getElementById("root")).render(<App />);
 } catch (e) {
   showCrash(e.message + "\n" + (e.stack || ""));
 }
