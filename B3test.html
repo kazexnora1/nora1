@@ -133,11 +133,11 @@ function NextList({ matches }) {
 }
 
 function hillInfo(rt, disp) {
-  if (rt <= 0) return "";
+  if (rt <= 0) return null;
   const rem = rt - disp;
-  if (rem <= 0) return "達成";
+  if (rem <= 0) return { label: "達成", value: null };
   const toHill = rem - 14;
-  return toHill > 0 ? `ヒルまで あと${toHill}` : `残り${rem}`;
+  return toHill > 0 ? { label: "ヒルマデ", value: toHill } : { label: "勝ちマデ", value: rem };
 }
 function TablePanel({ tableNum, m }) {
   if (!m) {
@@ -183,15 +183,25 @@ function TablePanel({ tableNum, m }) {
       <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
           const pc = i === 0 ? C.blue : C.red;
-          const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : "";
+          const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
           return (
             <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "8px 4px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-              <div style={{ fontSize: "clamp(48px, 8vw, 84px)", fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
-                {m.phase === "banking" ? "–" : disp[i]}
-                <span style={{ fontSize: "0.4em", opacity: 0.55, WebkitTextStroke: "0px", verticalAlign: "middle" }}>/{raceTo[i]}</span>
+              {hi && hi.value != null ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: pc, lineHeight: 1.15 }}>{hi.label.slice(0, 2)}<br />{hi.label.slice(2)}</div>
+                  <div style={{ fontSize: "clamp(48px, 8vw, 84px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
+                    {m.phase === "banking" ? "–" : hi.value}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: "clamp(40px, 7vw, 70px)", fontWeight: 900, lineHeight: 1, color: C.win, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
+                  {hi ? hi.label : (m.phase === "banking" ? "–" : disp[i])}
+                </div>
+              )}
+              <div style={{ fontSize: 17, color: C.sub, fontWeight: 700, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                {m.phase === "banking" ? "" : `${disp[i]}/${raceTo[i]}`}
               </div>
-              {hi && <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 10, padding: "3px 12px", fontSize: 16, fontWeight: 800, marginTop: 2 }}>{hi}</div>}
               {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 4 }}>● BREAK</div>}
             </div>
           );
