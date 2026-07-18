@@ -32,20 +32,36 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ========= ハンデ計算（8ボール式・Short/Long実測校正）========= */
+function roundHalfToEven(v) {
+  const w = Math.floor(v);
+  const d = v - w;
+  if (Math.abs(d - 0.5) > 1e-9) return d > 0.5 ? w + 1 : w;
+  return w % 2 === 1 ? w + 1 : w;
+}
+function normalizeRace(rt1, rt2, lowClamp) {
+  const highClamp = 99.0;
+  const p1IsHigh = rt1 >= rt2;
+  const highRace = Math.max(rt1, rt2), lowRace = Math.min(rt1, rt2);
+  let highC = highRace > highClamp ? highClamp : highRace;
+  let lowC = highRace > highClamp ? lowRace - lowRace * ((highRace - highClamp) / highRace) : lowRace;
+  highC = Math.min(lowRace < lowClamp ? highC + highC * ((lowClamp - lowRace) / lowC) : highC, highClamp);
+  lowC = Math.max(lowC < lowClamp ? lowClamp : lowC, lowClamp);
+  return { rt1: p1IsHigh ? highC : lowC, rt2: p1IsHigh ? lowC : highC };
+}
 function computeRace(R1, R2, lenPct) {
-  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 100));
-  const p2 = 1 - p1;
-  const L1 = 3.3525 + 1.3557 * (p1 - 0.5), L2 = 3.3525 + 1.3557 * (p2 - 0.5);
-  const E1 = 14 * p1 + L1 * p2, E2 = 14 * p2 + L2 * p1;
+  const dampFactor = lenPct / 100;
   const avg = (R1 + R2) / 2;
-  const Nlong = 0.015015 * avg + 0.31579, Nshort = 0.011976 * avg - 0.050167;
-  const t = (lenPct - 75) / 25;
-  const N = Math.max(Nshort + t * (Nlong - Nshort), 0.1);
-  const floor = Math.round(0.16 * lenPct + 12);
-  let rt1 = Math.round(N * E1), rt2 = Math.round(N * E2);
-  rt1 = Math.min(Math.max(rt1, floor), 99);
-  rt2 = Math.min(Math.max(rt2, floor), 99);
-  return { rt1, rt2, p1, p2 };
+  const gp = 0.018 * avg - 1.4;
+  const delta = R1 - R2;
+  const p1 = 1 - 1 / (1 + Math.pow(2, delta / 100));
+  const p2 = 1 - p1;
+  const p1AvgPts = p1 * 14.0 + p2 * (7.4 - 0.0062 * R2);
+  const p2AvgPts = p2 * 14.0 + p1 * (7.4 - 0.0062 * R1);
+  const rt1raw = p1AvgPts * gp * dampFactor;
+  const rt2raw = p2AvgPts * gp * dampFactor;
+  const lowClamp = 0.16 * lenPct + 12;
+  const norm = normalizeRace(rt1raw, rt2raw, lowClamp);
+  return { rt1: roundHalfToEven(norm.rt1), rt2: roundHalfToEven(norm.rt2), p1, p2 };
 }
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
