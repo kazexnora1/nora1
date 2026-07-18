@@ -32,20 +32,36 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ========= ハンデ計算（App Aと共通） ========= */
+function roundHalfToEven(v) {
+  const w = Math.floor(v);
+  const d = v - w;
+  if (Math.abs(d - 0.5) > 1e-9) return d > 0.5 ? w + 1 : w;
+  return w % 2 === 1 ? w + 1 : w;
+}
+function normalizeRace(rt1, rt2, lowClamp) {
+  const highClamp = 99.0;
+  const p1IsHigh = rt1 >= rt2;
+  const highRace = Math.max(rt1, rt2), lowRace = Math.min(rt1, rt2);
+  let highC = highRace > highClamp ? highClamp : highRace;
+  let lowC = highRace > highClamp ? lowRace - lowRace * ((highRace - highClamp) / highRace) : lowRace;
+  highC = Math.min(lowRace < lowClamp ? highC + highC * ((lowClamp - lowRace) / lowC) : highC, highClamp);
+  lowC = Math.max(lowC < lowClamp ? lowClamp : lowC, lowClamp);
+  return { rt1: p1IsHigh ? highC : lowC, rt2: p1IsHigh ? lowC : highC };
+}
 function computeRace(R1, R2, lenPct) {
-  const p1 = 1 / (1 + Math.pow(2, -(R1 - R2) / 100));
-  const p2 = 1 - p1;
-  const L1 = 3.2602 + 1.1564 * (p1 - 0.5), L2 = 3.2602 + 1.1564 * (p2 - 0.5);
-  const E1 = 14 * p1 + L1 * p2, E2 = 14 * p2 + L2 * p1;
+  const dampFactor = lenPct / 100;
   const avg = (R1 + R2) / 2;
-  const Nlong = 0.015768 * avg - 0.026412, Nshort = 0.012043 * avg - 0.058138;
-  const t = (lenPct - 75) / 25;
-  const N = Math.max(Nshort + t * (Nlong - Nshort), 0.1);
-  const floor = Math.round(0.16 * lenPct + 12);
-  let rt1 = Math.round(N * E1), rt2 = Math.round(N * E2);
-  rt1 = Math.min(Math.max(rt1, floor), 99);
-  rt2 = Math.min(Math.max(rt2, floor), 99);
-  return { rt1, rt2, p1, p2 };
+  const gp = 0.018 * avg - 1.4;
+  const delta = R1 - R2;
+  const p1 = 1 - 1 / (1 + Math.pow(2, delta / 100));
+  const p2 = 1 - p1;
+  const p1AvgPts = p1 * 14.0 + p2 * (7.4 - 0.0062 * R2);
+  const p2AvgPts = p2 * 14.0 + p1 * (7.4 - 0.0062 * R1);
+  const rt1raw = p1AvgPts * gp * dampFactor;
+  const rt2raw = p2AvgPts * gp * dampFactor;
+  const lowClamp = 0.16 * lenPct + 12;
+  const norm = normalizeRace(rt1raw, rt2raw, lowClamp);
+  return { rt1: roundHalfToEven(norm.rt1), rt2: roundHalfToEven(norm.rt2), p1, p2 };
 }
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
@@ -128,20 +144,32 @@ function App() {
     }
     return null;
   });
+  const [showTestSetup, setShowTestSetup] = useState(false);
 
   if (!setupInfo) {
-    return <SetupScreen onCreate={(info) => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("m", info.matchId);
-      url.searchParams.set("p1", info.names[0]);
-      url.searchParams.set("p2", info.names[1]);
-      url.searchParams.set("r1", info.ratings[0]);
-      url.searchParams.set("r2", info.ratings[1]);
-      url.searchParams.set("len", info.lenPct);
-      url.searchParams.set("t", info.table);
-      window.history.replaceState({}, "", url.toString());
-      setSetupInfo(info);
-    }} />;
+    if (showTestSetup) {
+      return <SetupScreen onCreate={(info) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("m", info.matchId);
+        url.searchParams.set("p1", info.names[0]);
+        url.searchParams.set("p2", info.names[1]);
+        url.searchParams.set("r1", info.ratings[0]);
+        url.searchParams.set("r2", info.ratings[1]);
+        url.searchParams.set("len", info.lenPct);
+        url.searchParams.set("t", info.table);
+        window.history.replaceState({}, "", url.toString());
+        setSetupInfo(info);
+      }} />;
+    }
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "60px 20px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>対戦QRを読み込んでください</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 24 }}>本部（B1）で発行されたQRコードをカメラで読み取ると、対戦が表示されます。</div>
+        <button onClick={() => setShowTestSetup(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 13, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
+          テスト用に自分で対戦を作成
+        </button>
+      </div>
+    );
   }
 
   return <MatchScreen setupInfo={setupInfo} />;
