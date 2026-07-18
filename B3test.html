@@ -246,3 +246,10 @@ try {
 </script>
 </body>
 </html>
+reateRoot(document.getElementById("root")).render(<App />);
+} catch (e) {
+  showCrash(e.message + "\n" + (e.stack || ""));
+}
+</script>
+</body>
+</html>
