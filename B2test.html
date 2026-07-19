@@ -139,6 +139,9 @@ function App() {
         names: [params.get("p1"), params.get("p2")],
         ratings: [Number(params.get("r1")), Number(params.get("r2"))],
         lenPct: Number(params.get("len")),
+        raceToParam: params.get("rt1") && params.get("rt2")
+          ? [Number(params.get("rt1")), Number(params.get("rt2"))]
+          : null,
         table: Number(params.get("t")) || 1,
       };
     }
@@ -257,7 +260,9 @@ const inputStyle = { background: "#fff", border: `1px solid ${C.line}`, borderRa
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo }) {
   const { matchId, names, lenPct, table } = setupInfo;
-  const [res] = useState(() => computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
+  const [res] = useState(() => setupInfo.raceToParam
+    ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
+    : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
   const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
   const [loaded, setLoaded] = useState(false);
   const [showQR, setShowQR] = useState(false);
