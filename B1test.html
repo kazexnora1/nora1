@@ -229,6 +229,51 @@ function ScheduleTab({ roster }) {
   const [tableStatus, setTableStatus] = useState([null, null, null]);
   const [creating, setCreating] = useState(false);
   const [createdInfo, setCreatedInfo] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importMsg, setImportMsg] = useState(null);
+  const [importing, setImporting] = useState(false);
+
+  // 試合割り作成ツールが出力した matches JSON を一括登録する
+  const runImport = async () => {
+    if (importing) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(importText);
+    } catch (e) {
+      setImportMsg({ ok: false, text: "JSONの形式が正しくありません" });
+      return;
+    }
+    const ids = Object.keys(parsed || {});
+    if (!ids.length) {
+      setImportMsg({ ok: false, text: "対戦が入っていません" });
+      return;
+    }
+    const bad = ids.find((id) => !parsed[id] || !Array.isArray(parsed[id].names) || !parsed[id].table);
+    if (bad) {
+      setImportMsg({ ok: false, text: "対戦データの中身が想定と違います" });
+      return;
+    }
+    if (!window.confirm(`${ids.length}件の対戦を登録します。\n現在の対戦はすべて置き換えられます。よろしいですか？`)) return;
+    setImporting(true);
+    try {
+      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const now = Date.now();
+      const next = {};
+      ids.forEach((id, i) => {
+        const m = parsed[id];
+        next[id] = { ...m, createdAt: m.createdAt || now + i * 1000, updatedAt: now };
+      });
+      record.matches = next; // 総入れ替え（前回大会の残りを一掃）
+      await jsonbinWrite(record);
+      setImportMsg({ ok: true, text: `${ids.length}件を登録しました` });
+      setImportText("");
+      refreshStatus();
+    } catch (e) {
+      setImportMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setImporting(false);
+  };
 
   const refreshStatus = async () => {
     try {
@@ -330,6 +375,32 @@ function ScheduleTab({ roster }) {
           <div style={{ fontSize: 12, color: C.sub, marginTop: 8 }}>{createdInfo.names.join(" 対 ")}</div>
         </div>
       )}
+
+      <div style={{ marginTop: 24, paddingTop: 18, borderTop: `1px solid ${C.line}` }}>
+        <button onClick={() => setShowImport((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
+          📥 試合割りを取り込む {showImport ? "▲" : "▼"}
+        </button>
+        {showImport && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8, lineHeight: 1.6 }}>
+              試合割り作成ツールの「matches JSON をコピー」でコピーした内容を貼り付けて登録します。<br />
+              <b style={{ color: C.hill }}>現在の対戦はすべて置き換わります。</b>
+            </div>
+            <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={6}
+              placeholder='{"abc123": { "names": [...], "table": 1, ... }, ...}'
+              style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, fontSize: 13, fontFamily: "monospace", outline: "none", marginBottom: 8 }} />
+            <button onClick={runImport} disabled={importing || !importText.trim()}
+              style={{ width: "100%", background: importText.trim() && !importing ? C.blue : C.line, color: importText.trim() && !importing ? "#fff" : C.sub, border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: importText.trim() && !importing ? "pointer" : "default", fontFamily: FONT }}>
+              {importing ? "登録中…" : "この内容で登録する"}
+            </button>
+            {importMsg && (
+              <div style={{ marginTop: 8, textAlign: "center", fontSize: 13, fontWeight: 700, color: importMsg.ok ? C.win : C.minus }}>
+                {importMsg.ok ? "✓ " : "✗ "}{importMsg.text}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -356,6 +427,7 @@ function TimelineTab() {
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
 
   const urlFor = (m) => {
+    const rt = m.raceTo || [0, 0];
     const url = new URL(B2_URL);
     url.searchParams.set("m", m.id);
     url.searchParams.set("p1", m.names[0]);
@@ -364,6 +436,8 @@ function TimelineTab() {
     url.searchParams.set("r2", 0);
     url.searchParams.set("len", 100);
     url.searchParams.set("t", m.table);
+    url.searchParams.set("rt1", rt[0]);
+    url.searchParams.set("rt2", rt[1]);
     return url.toString();
   };
 
