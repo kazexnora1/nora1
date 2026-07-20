@@ -125,6 +125,9 @@ const initialMatchState = (rt1, rt2, names, table) => ({
   names,
   table,
   startedAt: null, // バンキング画面を最初に開いた時刻
+  finishedAt: null, // 決着した時刻
+  elapsedMs: null, // 所要時間（ミリ秒）
+  winner: null,
 });
 
 function randomMatchId() {
@@ -385,6 +388,22 @@ function MatchScreen({ setupInfo }) {
   }
   const isFinalRack = isTimeUp && matchWinner == null;
 
+  // 試合が決まった時点で所要時間を記録（画面には出さない）。訂正で決着が戻ったら記録も消す
+  useEffect(() => {
+    if (!loaded) return;
+    if (matchWinner != null && !state.finishedAt) {
+      const fin = Date.now();
+      applyLocal((s) => ({
+        ...s,
+        finishedAt: fin,
+        elapsedMs: s.startedAt ? fin - s.startedAt : null,
+        winner: matchWinner,
+      }));
+    } else if (matchWinner == null && state.finishedAt) {
+      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null }));
+    }
+  }, [matchWinner, loaded, state.finishedAt]);
+
   const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
 
   const finish = (nb, w) => {
@@ -431,7 +450,7 @@ function MatchScreen({ setupInfo }) {
   const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
   const rematch = () => {
     pushUndo();
-    applyLocal((s) => ({ ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [] }));
+    applyLocal((s) => ({ ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: Date.now(), finishedAt: null, elapsedMs: null, winner: null }));
   };
   const backToSetup = () => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); };
   const swapBreak = () => {
