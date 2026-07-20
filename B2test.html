@@ -279,6 +279,16 @@ function MatchScreen({ setupInfo }) {
     const iv = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(iv);
   }, []);
+
+  // 球エリア内では画面スクロール（スワイプ）を無効化し、球の操作だけ効くようにする
+  const playAreaRef = useRef(null);
+  useEffect(() => {
+    const el = playAreaRef.current;
+    if (!el) return;
+    const block = (e) => e.preventDefault();
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block, { passive: false });
+  });
   const [pressed, setPressed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const lastTapRef = useRef({});
@@ -593,24 +603,26 @@ function MatchScreen({ setupInfo }) {
         </div>
       )}
 
-      <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+      <div ref={playAreaRef} style={{ touchAction: "none" }}>
+        <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
-        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
-          {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+            {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
+            {balls.map((b) => {
+              const moved = b.loc !== "c";
+              return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+            })}
+          </div>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+            {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+          </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
-          {balls.map((b) => {
-            const moved = b.loc !== "c";
-            return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
-          })}
-        </div>
-        <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
-          {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
-        </div>
+
+        <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
       </div>
-
-      <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
       {histRows.length > 0 && (
         <div style={{ marginTop: 10 }}>
