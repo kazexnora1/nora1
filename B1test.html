@@ -414,14 +414,32 @@ const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff"
 
 /* ========= QR発行タブ ========= */
 /* ========= タイムラインタブ：対戦カードを作成順（古い→新しい）に縦並び。進行中はリアルタイムスコア、タップでQR ========= */
+function fmtElapsed(ms) {
+  if (!ms || ms < 0) return "";
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}分${String(s % 60).padStart(2, "0")}秒`;
+}
+function getFinishedMatches(matches) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || !isMatchFinished(m)) continue;
+    list.push({ ...m, id });
+  }
+  list.sort((a, b) => (b.finishedAt || b.updatedAt || 0) - (a.finishedAt || a.updatedAt || 0));
+  return list;
+}
+
 function TimelineTab() {
   const [queues, setQueues] = useState([[], [], []]);
+  const [finished, setFinished] = useState([]);
   const [openMatch, setOpenMatch] = useState(null);
 
   const refresh = async () => {
     try {
       const r = await jsonbinRead();
       setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
+      setFinished(getFinishedMatches(r.matches));
     } catch {}
   };
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
@@ -445,18 +463,50 @@ function TimelineTab() {
     <div style={{ padding: "20px 12px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>タイムライン</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>上：現在対戦中／下：次戦。カードをタップでQR表示</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>一番上が対戦中。カードをタップでQR表示</div>
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
         {[0, 1, 2].map((ti) => (
-          <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
             <div style={{ textAlign: "center", fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 2 }}>卓{ti + 1}</div>
-            {queues[ti].length === 0 && <EmptySlot label="待機中" />}
-            {queues[ti][0] && <TimelineCard m={queues[ti][0]} current onOpen={() => setOpenMatch(queues[ti][0])} />}
-            {queues[ti][1] ? <TimelineCard m={queues[ti][1]} onOpen={() => setOpenMatch(queues[ti][1])} /> : queues[ti].length > 0 && <EmptySlot label="次戦なし" small />}
+            {queues[ti].length === 0 && <EmptySlot label="予定なし" />}
+            {queues[ti].map((m, k) => (
+              <TimelineCard key={m.id} m={m} current={k === 0} order={k} onOpen={() => setOpenMatch(m)} />
+            ))}
           </div>
         ))}
       </div>
+
+      {finished.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>結果（{finished.length}試合）</div>
+          <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 12 }}>
+            {finished.map((m) => {
+              const names = m.names || ["P1", "P2"];
+              const tot = m.tot || [0, 0];
+              const rt = m.raceTo || [0, 0];
+              const w = m.winner != null ? m.winner : (tot[0] >= rt[0] ? 0 : 1);
+              return (
+                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderBottom: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.sub, flexShrink: 0, width: 26 }}>卓{m.table}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <b style={{ color: w === 0 ? C.win : C.sub, fontWeight: w === 0 ? 800 : 600 }}>{names[0]}</b>
+                    <span style={{ color: C.sub, margin: "0 5px" }}>対</span>
+                    <b style={{ color: w === 1 ? C.win : C.sub, fontWeight: w === 1 ? 800 : 600 }}>{names[1]}</b>
+                  </span>
+                  <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                    <span style={{ color: C.blue }}>{tot[0]}</span>
+                    <span style={{ color: C.sub, margin: "0 2px" }}>-</span>
+                    <span style={{ color: C.red }}>{tot[1]}</span>
+                  </span>
+                  <span style={{ fontSize: 10.5, color: C.sub, flexShrink: 0, width: 52, textAlign: "right" }}>{fmtElapsed(m.elapsedMs)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {openMatch && (
         <div onClick={() => setOpenMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
@@ -476,24 +526,30 @@ function EmptySlot({ label, small }) {
     </div>
   );
 }
-function TimelineCard({ m, current, onOpen }) {
+function TimelineCard({ m, current, order, onOpen }) {
   const names = m.names || ["P1", "P2"];
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const balls = m.balls || [];
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
   const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const statusLabel = !current ? "次戦" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
+  const statusLabel = !current ? `${order + 1}戦後` : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
   return (
-    <div onClick={onOpen} style={{ background: current ? C.lightBlue : C.zone, border: `1.5px solid ${current ? C.blue : C.line}`, borderRadius: 14, padding: "10px 6px", cursor: "pointer" }}>
-      <div style={{ textAlign: "center", fontSize: 10.5, color: current ? C.blue : C.sub, fontWeight: 800, marginBottom: 6 }}>{statusLabel}</div>
+    <div onClick={onOpen} style={{
+      background: current ? C.lightBlue : "#fff",
+      border: current ? `3px solid ${C.blue}` : `1px solid ${C.line}`,
+      boxShadow: current ? `0 2px 10px rgba(46,109,181,0.25)` : "none",
+      borderRadius: 14, padding: current ? "10px 6px" : "7px 5px", cursor: "pointer",
+      opacity: current ? 1 : 0.85,
+    }}>
+      <div style={{ textAlign: "center", fontSize: current ? 11 : 9.5, color: current ? C.blue : C.sub, fontWeight: 800, marginBottom: current ? 6 : 4 }}>{statusLabel}</div>
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-            <div style={{ fontSize: current ? 22 : 15, fontWeight: 800, color: C.ink }}>
+            <div style={{ fontSize: current ? 11.5 : 10.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+            <div style={{ fontSize: current ? 22 : 13, fontWeight: 800, color: C.ink }}>
               {current ? (m.phase === "banking" ? "–" : disp[i]) : ""}
-              <span style={{ fontSize: current ? 11 : 12, opacity: 0.5 }}>{current ? "/" : ""}{raceTo[i]}</span>
+              <span style={{ fontSize: current ? 11 : 11, opacity: 0.5 }}>{current ? "/" : ""}{raceTo[i]}</span>
             </div>
           </div>
         ))}
