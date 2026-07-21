@@ -374,12 +374,14 @@ function MatchScreen({ setupInfo }) {
 
   // ===== 持ち時間タイマー =====
   const deadline = state.startedAt ? state.startedAt + MATCH_MINUTES * 60 * 1000 : null;
-  const msLeft = deadline ? deadline - nowTs : null;
+  // 勝敗が決まったらその時点で停止（finishedAt で固定）
+  const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
   const isTimeUp = msLeft != null && msLeft <= 0;
-  const timeLabel = msLeft == null ? "--:--" : (() => {
+  const timeParts = msLeft == null ? ["--", "--"] : (() => {
     const s = Math.max(0, Math.floor(msLeft / 1000));
-    return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
   })();
+  const timeLabel = `${timeParts[0]}:${timeParts[1]}`;
   // 目標達成率（確定分のみ）
   const rate = (i) => (rt(i) > 0 ? tot[i] / rt(i) : 0);
 
@@ -522,11 +524,24 @@ function MatchScreen({ setupInfo }) {
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <button onClick={() => setShowQR(true)} style={{ background: "none", border: "none", fontSize: 13, color: C.blue, cursor: "pointer", fontWeight: 700 }}>📱 共有</button>
-        <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink }}>
-          {isTimeUp ? "時間切れ" : timeLabel}
-        </span>
+        <div style={{
+          position: "absolute", left: "50%", transform: "translateX(-50%)",
+          display: "flex", alignItems: "center", pointerEvents: "none",
+          fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+          color: matchWinner != null ? C.sub : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
+        }}>
+          {matchWinner == null && isTimeUp ? (
+            <span>時間切れ</span>
+          ) : (
+            <>
+              <span style={{ width: 26, textAlign: "right" }}>{timeParts[0]}</span>
+              <span style={{ width: 8, textAlign: "center" }}>:</span>
+              <span style={{ width: 26, textAlign: "left" }}>{timeParts[1]}</span>
+            </>
+          )}
+        </div>
         <span style={{ fontSize: 12.5, color: C.sub }}>卓{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
       </div>
 
