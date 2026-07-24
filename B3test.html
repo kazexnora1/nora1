@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
 <title>JCL9Match B3 観戦ディスプレイ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,7 +31,7 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const FONT = "'M PLUS Rounded 1c', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif";
 const C = {
@@ -76,6 +76,35 @@ function App() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
   const [isFs, setIsFs] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const gridRef = useRef(null);
+
+  // 2本指ピンチで拡大縮小
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    let startDist = 0, startZoom = 1;
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e) => {
+      if (e.touches.length === 2) { startDist = dist(e.touches); startZoom = zoom; }
+    };
+    const onMove = (e) => {
+      if (e.touches.length === 2 && startDist > 0) {
+        e.preventDefault();
+        const z = startZoom * (dist(e.touches) / startDist);
+        setZoom(Math.min(3, Math.max(0.6, +z.toFixed(2))));
+      }
+    };
+    const onEnd = () => { startDist = 0; };
+    el.addEventListener("touchstart", onStart, { passive: false });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+    };
+  }, [zoom]);
 
   useEffect(() => {
     const onFsChange = () => setIsFs(!!document.fullscreenElement);
@@ -114,14 +143,26 @@ function App() {
     .filter(Boolean);
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative" }}>
-      <button onClick={toggleFullscreen} style={{ position: "absolute", top: 10, right: 14, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 13, fontWeight: 700, padding: "6px 12px", cursor: "pointer", fontFamily: FONT, zIndex: 10 }}>
-        {isFs ? "全画面を終了" : "⛶ 全画面表示"}
-      </button>
-      <div style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-        gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16, height: "calc(100vh - 36px)", maxWidth: 1600, margin: "0 auto",
-      }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative", overflow: zoom > 1 ? "auto" : "hidden" }}>
+      <div style={{ position: "absolute", top: 10, right: 14, display: "flex", gap: 6, zIndex: 10 }}>
+        <button onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))} style={zoomBtn}>−</button>
+        <button onClick={() => setZoom(1)} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(zoom * 100)}%</button>
+        <button onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} style={zoomBtn}>＋</button>
+        <button onClick={toggleFullscreen} style={{ ...zoomBtn, width: "auto", padding: "6px 12px" }}>
+          {isFs ? "全画面を終了" : "⛶ 全画面"}
+        </button>
+      </div>
+      <div
+        ref={gridRef}
+        style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+          gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
+          height: `calc((100vh - 36px) / ${zoom})`, width: `calc(100% / ${zoom})`,
+          maxWidth: 1600, margin: "0 auto",
+          transform: `scale(${zoom})`, transformOrigin: "top center",
+          touchAction: "pinch-zoom",
+        }}
+      >
         <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
         <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
         <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
@@ -131,6 +172,12 @@ function App() {
     </div>
   );
 }
+
+const zoomBtn = {
+  width: 34, height: 30, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8,
+  color: C.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+};
 
 function NextList({ matches }) {
   return (
@@ -206,14 +253,14 @@ function TablePanel({ tableNum, m }) {
           return (
             <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "10px 4px 8px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minHeight: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{names[i]}</div>
-              <div style={{ minHeight: "clamp(58px, 9.5vw, 96px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "clamp(52px, 9vw, 92px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
+              <div style={{ minHeight: "clamp(64px, 10.5vw, 108px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ fontSize: "clamp(58px, 10vw, 100px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
                   {m.phase === "banking" ? "–" : disp[i]}
                   <span style={{ fontSize: "0.42em", opacity: 0.55, WebkitTextStroke: "0px" }}>/{raceTo[i]}</span>
                 </div>
               </div>
               {hi && (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "3px 12px", fontSize: 15, fontWeight: 800, marginTop: 4 }}>
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>
                   {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                 </div>
               )}
