@@ -29,7 +29,7 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
 /* ========= ハンデ計算（App A/B2と共通） ========= */
 function roundHalfToEven(v) {
@@ -153,6 +153,7 @@ function App() {
   const tabs = [
     ["members", "👥 メンバー"],
     ["schedule", "🎱 対戦表"],
+    ["bulk", "🗓️ 試合割り"],
     ["timeline", "📅 タイムライン"],
   ];
 
@@ -161,6 +162,7 @@ function App() {
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {tab === "members" && <MembersTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} />}
         {tab === "schedule" && <ScheduleTab roster={roster} />}
+        {tab === "bulk" && <BulkScheduleTab roster={roster} />}
         {tab === "timeline" && <TimelineTab />}
       </div>
       <div style={{ display: "flex", borderTop: `1px solid ${C.line}`, background: "#fff" }}>
@@ -221,6 +223,282 @@ function MembersTab({ roster, setRoster, onRefresh, loaded }) {
 }
 
 /* ========= 対戦表タブ（対戦作成＝実質のB1本体） ========= */
+/* ========= 試合割りタブ：総当たり風スケジュールを自動生成して一括登録 ========= */
+const BULK_TABLES = 3;
+
+function bulkMakePlan(N, G) {
+  const total = (N * G) / 2;
+  if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
+  const slots = Math.ceil(total / BULK_TABLES);
+  const sizes = [];
+  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? BULK_TABLES : total - BULK_TABLES * (slots - 1));
+  let lower = 0;
+  for (let s = 0; s < slots - 1; s++) {
+    const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
+    const cap = Math.min(sizes[s], sizes[s + 1]);
+    if (need > cap) {
+      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。` };
+    }
+    if (need > 0) lower += need;
+  }
+  return { total, slots, sizes, lower };
+}
+function bulkMulberry(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit) {
+  const { total, slots, sizes } = plan;
+  const pos = [];
+  for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
+
+  const deg = new Int32Array(N + 1);
+  const used = new Set();
+  const seat = Array.from({ length: slots }, () => new Map());
+  const board = [];
+  let cost = 0, nodes = 0, best = null;
+
+  const viable = (s) => {
+    const left = slots - s - 1;
+    for (let x = 1; x <= N; x++) {
+      const need = G - deg[x];
+      if (!need) continue;
+      let room = left;
+      if (seat[s].has(x) && s > 0 && seat[s - 1].has(x)) room -= 1;
+      if (need > room - Math.floor(room / 3)) return false;
+    }
+    if (left > 0) {
+      let free = 0;
+      for (let x = 1; x <= N; x++) {
+        if (deg[x] >= G) continue;
+        if (seat[s].has(x) && s > 0 && seat[s - 1].has(x)) continue;
+        free++;
+      }
+      if (free < sizes[s + 1] * 2) return false;
+    }
+    return true;
+  };
+
+  const walk = (p) => {
+    if (nodes++ > nodeLimit) throw new Error("budget");
+    if (p === total) { best = { board: board.map((m) => ({ ...m })), cost }; return true; }
+    const [s, t] = pos[p];
+    const here = seat[s], prev = s > 0 ? seat[s - 1] : null, back = s > 1 ? seat[s - 2] : null;
+
+    const cands = [];
+    for (let a = 1; a <= N; a++) {
+      if (deg[a] >= G || here.has(a)) continue;
+      for (let b = a + 1; b <= N; b++) {
+        if (deg[b] >= G || here.has(b) || used.has(a * 32 + b)) continue;
+        let carry = 0, ok = true;
+        for (const x of [a, b]) {
+          if (prev && prev.has(x)) {
+            if (prev.get(x) !== t) { ok = false; break; }
+            if (back && back.has(x)) { ok = false; break; }
+            carry++;
+          }
+        }
+        if (!ok || cost + carry >= ceiling) continue;
+        cands.push({ a, b, carry, score: carry * 1000 - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 });
+      }
+    }
+    cands.sort((x, y) => x.score - y.score);
+
+    for (const c of cands) {
+      deg[c.a]++; deg[c.b]++;
+      used.add(c.a * 32 + c.b);
+      here.set(c.a, t); here.set(c.b, t);
+      cost += c.carry;
+      board.push({ slot: s, table: t, a: c.a, b: c.b, carry: c.carry });
+      if (t !== sizes[s] - 1 || viable(s)) { if (walk(p + 1)) return true; }
+      board.pop(); cost -= c.carry;
+      here.delete(c.a); here.delete(c.b);
+      used.delete(c.a * 32 + c.b);
+      deg[c.a]--; deg[c.b]--;
+    }
+    return false;
+  };
+
+  try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
+  return best;
+}
+function bulkGenerate(N, G) {
+  const plan = bulkMakePlan(N, G);
+  if (plan.error) return { error: plan.error };
+  let best = null, ceiling = Infinity;
+  const start = Date.now();
+  for (let r = 0; r < 400; r++) {
+    if (Date.now() - start > 2500) break;
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000);
+    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (best.cost <= plan.lower) break; }
+  }
+  if (!best) return { error: "条件を満たす組み合わせが見つかりませんでした。人数か試合数を変えてください。" };
+  return { plan, board: best.board, cost: best.cost, optimal: best.cost <= plan.lower };
+}
+
+function BulkScheduleTab({ roster }) {
+  const [players, setPlayers] = useState(Math.max(6, Math.min(16, roster.length || 12)));
+  const [games, setGames] = useState(4);
+  const [lenPct, setLenPct] = useState(100);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const run = () => {
+    setBusy(true); setMsg(null);
+    setTimeout(() => { setResult(bulkGenerate(players, games)); setBusy(false); }, 20);
+  };
+
+  const rows = useMemo(() => {
+    if (!result || result.error) return null;
+    const base = Date.now();
+    return result.board.map((m, i) => {
+      const p1 = roster[m.a - 1] || { name: `選手${m.a}`, r: "" };
+      const p2 = roster[m.b - 1] || { name: `選手${m.b}`, r: "" };
+      const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
+      const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
+      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, rt1: race.rt1, rt2: race.rt2 };
+    });
+  }, [result, roster, lenPct]);
+
+  const grid = useMemo(() => {
+    if (!rows) return null;
+    const map = new Map();
+    for (const m of rows) {
+      if (!map.has(m.slot)) map.set(m.slot, [null, null, null]);
+      map.get(m.slot)[m.table] = m;
+    }
+    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  }, [rows]);
+
+  const register = async () => {
+    if (!rows || registering) return;
+    if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦はすべて置き換えられます。よろしいですか？`)) return;
+    setRegistering(true);
+    try {
+      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const now = Date.now();
+      const next = {};
+      rows.forEach((m) => {
+        next[m.matchId] = {
+          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+          balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+          lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
+          names: [m.n1, m.n2], table: m.table + 1,
+          createdAt: m.createdAt, updatedAt: now,
+        };
+      });
+      record.matches = next;
+      await jsonbinWrite(record);
+      setMsg({ ok: true, text: `${rows.length}件をタイムラインに登録しました` });
+    } catch (e) {
+      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
+  const noRatings = rows && rows.some((m) => !m.rt1 && !m.rt2);
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>試合割り</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>空き卓は最終コマのみ／3連続なし／連投は同卓のみ</div>
+      </div>
+
+      {roster.length < players && (
+        <Notice>メンバーが{roster.length}人しかいません。先頭から{players}人分を使うので、メンバータブで人数を確認してください。</Notice>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
+        <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+      </div>
+
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
+          <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+        </div>
+        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+      </div>
+
+      <button onClick={run} disabled={busy}
+        style={{ width: "100%", background: busy ? C.line : C.ink, color: busy ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
+        {busy ? "計算中…" : "組む ▶"}
+      </button>
+
+      {result?.error && <Notice>{result.error}</Notice>}
+
+      {grid && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12.5, color: C.sub, marginBottom: 14, justifyContent: "center" }}>
+            <span>総試合 <b style={{ color: C.ink }}>{result.plan.total}</b></span>
+            <span>コマ <b style={{ color: C.ink }}>{result.plan.slots}</b></span>
+            <span>同卓2連 <b style={{ color: C.ink }}>{result.cost}</b> / 下限 {result.plan.lower}</span>
+            {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
+          </div>
+
+          {noRatings && <Notice>ファーゴレート未設定の選手がいるため、目標点が0のカードがあります。メンバータブで登録しておくと目標点も入ります。</Notice>}
+
+          <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <div />
+            {[1, 2, 3].map((t) => <div key={t} style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub }}>卓{t}</div>)}
+          </div>
+          {grid.map(([slot, cells]) => (
+            <div key={slot} style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6, alignItems: "stretch" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: C.sub }}>{slot + 1}</div>
+              {cells.map((m, i) => m ? <BulkCard key={i} m={m} /> : (
+                <div key={i} style={{ background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, padding: "14px 4px" }}>空き</div>
+              ))}
+            </div>
+          ))}
+
+          <button onClick={register} disabled={registering}
+            style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT, marginTop: 16 }}>
+            {registering ? "登録中…" : "この対戦表をタイムラインに登録する"}
+          </button>
+          {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 8 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+function BulkCard({ m }) {
+  return (
+    <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "8px 5px", position: "relative" }}>
+      {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
+      <div style={{ display: "flex", gap: 3 }}>
+        {[[m.n1, m.rt1, C.blue], [m.n2, m.rt2, C.red]].map(([name, rt, col], i) => (
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{rt > 0 ? rt : "–"}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function BulkStepper({ label, value, min, max, onChange }) {
+  const btn = { width: 38, height: 38, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT };
+  return (
+    <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button style={btn} onClick={() => onChange(Math.max(min, value - 1))}>−</button>
+        <div style={{ flex: 1, textAlign: "center", fontSize: 22, fontWeight: 800 }}>{value}</div>
+        <button style={btn} onClick={() => onChange(Math.min(max, value + 1))}>＋</button>
+      </div>
+    </div>
+  );
+}
+
 function ScheduleTab({ roster }) {
   const [i1, setI1] = useState(0);
   const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
