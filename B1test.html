@@ -379,6 +379,24 @@ function BulkScheduleTab({ roster }) {
     return { matchMin, totalMin, finishTotal, fits, diff: Math.abs(endTotal - finishTotal), finishLabel: fmt(finishTotal) };
   }, [result, startH, startM, endH, endM, changeoverMin, per100Min, lenPct]);
 
+  // 終了時刻ちょうどに収まる「試合の長さ（%）」を逆算
+  const idealLenPct = useMemo(() => {
+    if (!result || result.error) return null;
+    const sH = parseInt(startH, 10), sM = parseInt(startM, 10);
+    const eH = parseInt(endH, 10), eM = parseInt(endM, 10);
+    const chg = parseInt(changeoverMin, 10) || 0;
+    const per100 = parseInt(per100Min, 10) || 0;
+    if ([sH, sM, eH, eM].some((v) => isNaN(v)) || per100 <= 0) return null;
+    const slots = result.plan.slots;
+    const available = (eH * 60 + eM) - (sH * 60 + sM) - (slots - 1) * chg;
+    if (available <= 0) return { pct: 40, clampedLow: true };
+    const raw = (available / slots / per100) * 100;
+    const rounded = Math.round(raw / 5) * 5;
+    if (rounded > 140) return { pct: 140, clampedHigh: true };
+    if (rounded < 40) return { pct: 40, clampedLow: true };
+    return { pct: rounded };
+  }, [result, startH, startM, endH, endM, changeoverMin, per100Min]);
+
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => { setResult(bulkGenerate(players, games)); setBusy(false); }, 20);
@@ -499,9 +517,20 @@ function BulkScheduleTab({ roster }) {
           </div>
 
           {timeEstimate && (
-            <div style={{ textAlign: "center", marginBottom: 14, fontSize: 13, color: timeEstimate.fits ? C.win : C.minus, fontWeight: 700 }}>
+            <div style={{ textAlign: "center", marginBottom: 10, fontSize: 13, color: timeEstimate.fits ? C.win : C.minus, fontWeight: 700 }}>
               終了目安 <b style={{ fontSize: 16 }}>{timeEstimate.finishLabel}</b>
               {timeEstimate.fits ? `（終了予定まで${Math.round(timeEstimate.diff)}分の余裕）` : `（終了予定を${Math.round(timeEstimate.diff)}分オーバー）`}
+            </div>
+          )}
+
+          {idealLenPct && (
+            <div style={{ textAlign: "center", marginBottom: 14 }}>
+              <button onClick={() => setLenPct(idealLenPct.pct)}
+                style={{ background: lenPct === idealLenPct.pct ? C.win : "#fff", color: lenPct === idealLenPct.pct ? "#fff" : C.blue, border: `1.5px solid ${lenPct === idealLenPct.pct ? C.win : C.blue}`, borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+                {lenPct === idealLenPct.pct ? "✓ " : "⏱ "}終了時刻に合わせて{idealLenPct.pct}%にする
+              </button>
+              {idealLenPct.clampedHigh && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>時間に余裕があるので140%（上限）でも収まります</div>}
+              {idealLenPct.clampedLow && <div style={{ fontSize: 11.5, color: C.hill, marginTop: 6 }}>40%（下限）にしても間に合わない可能性があります</div>}
             </div>
           )}
 
