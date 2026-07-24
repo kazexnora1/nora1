@@ -349,6 +349,35 @@ function BulkScheduleTab({ roster }) {
   const [busy, setBusy] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [startH, setStartH] = useState("11");
+  const [startM, setStartM] = useState("00");
+  const [endH, setEndH] = useState("17");
+  const [endM, setEndM] = useState("00");
+  const [changeoverMin, setChangeoverMin] = useState("5");
+  const [per100Min, setPer100Min] = useState("60");
+
+  const timeEstimate = useMemo(() => {
+    if (!result || result.error) return null;
+    const sH = parseInt(startH, 10), sM = parseInt(startM, 10);
+    const eH = parseInt(endH, 10), eM = parseInt(endM, 10);
+    const chg = parseInt(changeoverMin, 10) || 0;
+    const per100 = parseInt(per100Min, 10) || 0;
+    if ([sH, sM, eH, eM].some((v) => isNaN(v))) return null;
+    const matchMin = per100 * (lenPct / 100);
+    const slots = result.plan.slots;
+    const totalMin = slots * matchMin + (slots - 1) * chg;
+    const startTotal = sH * 60 + sM;
+    const endTotal = eH * 60 + eM;
+    const finishTotal = startTotal + totalMin;
+    const fits = finishTotal <= endTotal;
+    const fmt = (mins) => {
+      const m = Math.round(mins);
+      const h = Math.floor(((m % 1440) + 1440) % 1440 / 60);
+      const mm = ((m % 60) + 60) % 60;
+      return `${String(h).padStart(2, "0")}:${String(Math.round(mm)).padStart(2, "0")}`;
+    };
+    return { matchMin, totalMin, finishTotal, fits, diff: Math.abs(endTotal - finishTotal), finishLabel: fmt(finishTotal) };
+  }, [result, startH, startM, endH, endM, changeoverMin, per100Min, lenPct]);
 
   const run = () => {
     setBusy(true); setMsg(null);
@@ -429,6 +458,30 @@ function BulkScheduleTab({ roster }) {
         <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
       </div>
 
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 10 }}>時間割</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>開始</div>
+            <TimeInput h={startH} m={startM} onH={setStartH} onM={setStartM} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>終了</div>
+            <TimeInput h={endH} m={endM} onH={setEndH} onM={setEndM} />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>入替（分）</div>
+            <input inputMode="numeric" value={changeoverMin} onChange={(e) => setChangeoverMin(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>100%の目安（分）</div>
+            <input inputMode="numeric" value={per100Min} onChange={(e) => setPer100Min(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center" }} />
+          </div>
+        </div>
+      </div>
+
       <button onClick={run} disabled={busy}
         style={{ width: "100%", background: busy ? C.line : C.ink, color: busy ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
         {busy ? "計算中…" : "組む ▶"}
@@ -444,6 +497,13 @@ function BulkScheduleTab({ roster }) {
             <span>同卓2連 <b style={{ color: C.ink }}>{result.cost}</b> / 下限 {result.plan.lower}</span>
             {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
           </div>
+
+          {timeEstimate && (
+            <div style={{ textAlign: "center", marginBottom: 14, fontSize: 13, color: timeEstimate.fits ? C.win : C.minus, fontWeight: 700 }}>
+              終了目安 <b style={{ fontSize: 16 }}>{timeEstimate.finishLabel}</b>
+              {timeEstimate.fits ? `（終了予定まで${Math.round(timeEstimate.diff)}分の余裕）` : `（終了予定を${Math.round(timeEstimate.diff)}分オーバー）`}
+            </div>
+          )}
 
           {noRatings && <Notice>ファーゴレート未設定の選手がいるため、目標点が0のカードがあります。メンバータブで登録しておくと目標点も入ります。</Notice>}
 
@@ -482,6 +542,16 @@ function BulkCard({ m }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+const numBoxStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 20, fontWeight: 800, padding: "10px 0", outline: "none", fontFamily: FONT };
+function TimeInput({ h, m, onH, onM }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <input inputMode="numeric" value={h} onChange={(e) => onH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ ...numBoxStyle, textAlign: "center" }} />
+      <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
+      <input inputMode="numeric" value={m} onChange={(e) => onM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ ...numBoxStyle, textAlign: "center" }} />
     </div>
   );
 }
