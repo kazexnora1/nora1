@@ -453,9 +453,10 @@ function BulkScheduleTab({ roster }) {
       const p2 = roster[m.b - 1] || { name: `選手${m.b}`, r: "" };
       const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
       const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
-      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, rt1: race.rt1, rt2: race.rt2 };
+      const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
+      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
     });
-  }, [result, roster, lenPct]);
+  }, [result, roster, lenPct, per100Min]);
 
   const grid = useMemo(() => {
     if (!rows) return null;
@@ -481,6 +482,7 @@ function BulkScheduleTab({ roster }) {
           balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table + 1,
+          r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: now,
         };
       });
@@ -672,6 +674,7 @@ function ScheduleTab({ roster }) {
       balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
+      r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
     };
     await saveMatch(matchId, state).catch(() => {});
     const url = new URL(B2_URL);
@@ -787,7 +790,12 @@ function HomeTab() {
   const [editRt, setEditRt] = useState(null); // [rt1, rt2] 編集中の値
   const [busyAction, setBusyAction] = useState(false);
   const [editingEnd, setEditingEnd] = useState(false);
+  const [showBulkAdjust, setShowBulkAdjust] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState(null);
   const s0 = useMemo(() => loadSettings(), []);
+  const [bulkLenPct, setBulkLenPct] = useState(s0.lenPct || 100);
+  const [bulkMinutes, setBulkMinutes] = useState(Math.round((parseInt(s0.per100Min, 10) || 60) * ((s0.lenPct || 100) / 100)));
   const [endH, setEndH] = useState(s0.endH || "17");
   const [endM, setEndM] = useState(s0.endM || "00");
 
@@ -802,6 +810,32 @@ function HomeTab() {
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
 
   useEffect(() => { saveSettings({ endH, endM }); }, [endH, endM]);
+
+  // 今後の全対戦（未終了）に、試合の長さ・持ち時間をまとめて反映する
+  const applyBulkAdjust = async () => {
+    if (bulkBusy) return;
+    if (!window.confirm(`未終了の対戦すべてに、試合の長さ${bulkLenPct}%・持ち時間${bulkMinutes}分を反映します。よろしいですか？`)) return;
+    setBulkBusy(true);
+    try {
+      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const now = Date.now();
+      let count = 0;
+      for (const id in record.matches) {
+        const m = record.matches[id];
+        if (!m || isMatchFinished(m)) continue;
+        const R1 = m.r1 || 0, R2 = m.r2 || 0;
+        const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, bulkLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+        record.matches[id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: bulkLenPct, matchMinutes: bulkMinutes, version: (m.version || 1) + 1, updatedAt: now };
+        count++;
+      }
+      await jsonbinWrite(record);
+      setBulkMsg({ ok: true, text: `${count}件の対戦に反映しました` });
+      refresh();
+    } catch (e) {
+      setBulkMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setBulkBusy(false);
+  };
 
   // 終了目安：現在登録されている総試合数と設定（100%の目安・入替・試合の長さ）から概算
   const estimate = useMemo(() => {
@@ -858,7 +892,7 @@ function HomeTab() {
 
   return (
     <div style={{ padding: "16px 12px 24px", color: C.ink }}>
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {estimate ? (
           <div onClick={() => setEditingEnd((v) => !v)} style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: estimate.fits ? C.win : C.minus }}>
             終了目安 <b style={{ fontSize: 15 }}>{estimate.finishLabel}</b>
@@ -868,14 +902,40 @@ function HomeTab() {
         ) : (
           <div style={{ fontSize: 13, color: C.sub }}>試合が始まると終了目安を表示します</div>
         )}
+        <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>終了 {finished.length} / 全{totalActive}試合</div>
       </div>
       {editingEnd && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, justifyContent: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, justifyContent: "center" }}>
           <span style={{ fontSize: 12.5, color: C.sub }}>終了時刻</span>
           <input inputMode="numeric" value={endH} onChange={(e) => setEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 50, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 0", fontSize: 15, fontWeight: 800, fontFamily: FONT }} />
           <span>:</span>
           <input inputMode="numeric" value={endM} onChange={(e) => setEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 50, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 0", fontSize: 15, fontWeight: 800, fontFamily: FONT }} />
           <button onClick={() => setEditingEnd(false)} style={{ background: C.ink, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>OK</button>
+        </div>
+      )}
+
+      <button onClick={() => setShowBulkAdjust((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "9px 0", cursor: "pointer", fontFamily: FONT, marginBottom: showBulkAdjust ? 8 : 16 }}>
+        ⚙ 以降の試合をまとめて調整 {showBulkAdjust ? "▲" : "▼"}
+      </button>
+      {showBulkAdjust && (
+        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
+            まだ終わっていない対戦すべて（進行中・待機中）に、試合の長さと参加者の持ち時間を一括で反映します。
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>試合の長さ（%）</div>
+              <input inputMode="numeric" value={bulkLenPct} onChange={(e) => setBulkLenPct(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 17, fontWeight: 800, fontFamily: FONT }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>持ち時間（分）</div>
+              <input inputMode="numeric" value={bulkMinutes} onChange={(e) => setBulkMinutes(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 17, fontWeight: 800, fontFamily: FONT }} />
+            </div>
+          </div>
+          <button onClick={applyBulkAdjust} disabled={bulkBusy} style={{ width: "100%", background: bulkBusy ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 800, cursor: bulkBusy ? "wait" : "pointer", fontFamily: FONT }}>
+            {bulkBusy ? "反映中…" : "未終了の対戦すべてに反映する"}
+          </button>
+          {bulkMsg && <div style={{ marginTop: 8, textAlign: "center", fontSize: 12.5, fontWeight: 700, color: bulkMsg.ok ? C.win : C.minus }}>{bulkMsg.ok ? "✓ " : "✗ "}{bulkMsg.text}</div>}
         </div>
       )}
 
@@ -970,16 +1030,18 @@ function TimelineCard({ m, current, order, onOpen }) {
   const balls = m.balls || [];
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
   const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const statusLabel = !current ? `${order + 1}戦後` : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
+  const awaitingCall = current && !m.startedAt;
+  const statusLabel = !current ? `${order + 1}戦後` : awaitingCall ? "📣 呼び出してください" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
+  const accent = awaitingCall ? C.hill : C.blue;
   return (
     <div onClick={onOpen} style={{
-      background: current ? C.lightBlue : "#fff",
-      border: current ? `3px solid ${C.blue}` : `1px solid ${C.line}`,
+      background: current ? (awaitingCall ? C.hillBg : C.lightBlue) : "#fff",
+      border: current ? `3px solid ${accent}` : `1px solid ${C.line}`,
       boxShadow: current ? `0 2px 10px rgba(46,109,181,0.25)` : "none",
       borderRadius: 14, padding: current ? "10px 6px" : "7px 5px", cursor: "pointer",
       opacity: current ? 1 : 0.85,
     }}>
-      <div style={{ textAlign: "center", fontSize: current ? 11 : 9.5, color: current ? C.blue : C.sub, fontWeight: 800, marginBottom: current ? 6 : 4 }}>{statusLabel}</div>
+      <div style={{ textAlign: "center", fontSize: current ? 11 : 9.5, color: current ? accent : C.sub, fontWeight: 800, marginBottom: current ? 6 : 4 }}>{statusLabel}</div>
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
