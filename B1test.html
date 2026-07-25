@@ -129,6 +129,32 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
+// 現在対戦中の残り時間を確保した上で、次戦以降を指定の終了予定時刻に収める試合の長さ・持ち時間を逆算する
+function computeTableAdjustment(queueForTable, eH, eM, per100) {
+  const cur = queueForTable[0];
+  const future = queueForTable.slice(1);
+  if (!future.length) return null;
+  const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
+  const availableMin = (targetD - Date.now()) / 60000;
+  if (availableMin <= 0) return { error: "すでにその時刻を過ぎています" };
+  let curRemainMin = 0;
+  if (cur) {
+    if (cur.startedAt && cur.matchMinutes) {
+      const elapsed = (Date.now() - cur.startedAt) / 60000;
+      curRemainMin = Math.max(0, cur.matchMinutes - elapsed);
+    } else {
+      curRemainMin = cur.matchMinutes || 30;
+    }
+  }
+  const availableForFuture = availableMin - curRemainMin;
+  if (availableForFuture <= 0) return { error: "現在の対戦の残り時間だけで、指定時刻を超えています" };
+  const perMatchMin = availableForFuture / future.length;
+  const rawPct = Math.round((perMatchMin / per100) * 100 / 5) * 5;
+  const hitFloor = rawPct < 40;
+  const newLenPct = Math.min(140, Math.max(40, rawPct));
+  const newMinutes = Math.max(5, Math.round(per100 * (newLenPct / 100)));
+  return { future, newLenPct, newMinutes, hitFloor, curRemainMin };
+}
 
 let _id = 1;
 const nid = () => _id++;
@@ -815,14 +841,7 @@ function HomeTab() {
     const est = perTableEstimate(ti);
     if (!est) return null;
     const cfg = loadSettings();
-    const saved = cfg[`tableEnd_${ti}`];
-    let eH, eM;
-    if (saved) {
-      const parts = saved.split(":");
-      eH = parseInt(parts[0], 10); eM = parseInt(parts[1], 10);
-    } else {
-      eH = parseInt(cfg.endH, 10); eM = parseInt(cfg.endM, 10);
-    }
+    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
     if (isNaN(eH) || isNaN(eM)) return null;
     const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
     const diffMin = Math.round((targetD - est) / 60000);
@@ -834,59 +853,39 @@ function HomeTab() {
   // 現在対戦中は既に組まれているので対象外。次戦以降だけを、指定した最終試合の終了予定時刻から逆算して調整する
   const applyTableEndTime = async (ti) => {
     if (snapBusy != null) return;
-    const cur = queues[ti][0];
-    const future = queues[ti].slice(1);
-    if (!future.length) { setSnapMsg({ ok: false, text: "次の試合がありません" }); return; }
     const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
     if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
-    const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
-    const availableMin = (targetD - Date.now()) / 60000;
-    if (availableMin <= 0) { setSnapMsg({ ok: false, text: "すでにその時刻を過ぎています" }); return; }
-    // 現在対戦中がまだ使うであろう残り時間を、先に確保しておく
-    let curRemainMin = 0;
-    if (cur) {
-      if (cur.startedAt && cur.matchMinutes) {
-        const elapsed = (Date.now() - cur.startedAt) / 60000;
-        curRemainMin = Math.max(0, cur.matchMinutes - elapsed);
-      } else {
-        curRemainMin = cur.matchMinutes || 30;
-      }
-    }
-    const availableForFuture = availableMin - curRemainMin;
-    if (availableForFuture <= 0) { setSnapMsg({ ok: false, text: "現在の対戦の残り時間だけで、指定時刻を超えています" }); return; }
-    const perMatchMin = availableForFuture / future.length;
     const cfg = loadSettings();
     const per100 = parseInt(cfg.per100Min, 10) || 60;
-    const rawPct = Math.round((perMatchMin / per100) * 100 / 5) * 5;
-    const hitFloor = rawPct < 40;
-    const newLenPct = Math.min(140, Math.max(40, rawPct));
-    const newMinutes = Math.max(5, Math.round(per100 * (newLenPct / 100)));
+    const calc = computeTableAdjustment(queues[ti], eH, eM, per100);
+    if (!calc) { setSnapMsg({ ok: false, text: "次の試合がありません" }); return; }
+    if (calc.error) { setSnapMsg({ ok: false, text: calc.error }); return; }
     setSnapBusy(ti);
     try {
       const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
-      future.forEach((qm) => {
+      calc.future.forEach((qm) => {
         const m = record.matches[qm.id];
         if (!m) return;
         const R1 = m.r1 || 0, R2 = m.r2 || 0;
-        const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-        record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: newLenPct, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
+        const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+        record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
       });
       await jsonbinWrite(record);
-      setTLenPct(newLenPct);
-      setTMinutes(newMinutes);
+      setTLenPct(calc.newLenPct);
+      setTMinutes(calc.newMinutes);
 
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${ti + 1}：次戦以降を${newLenPct}%・${newMinutes}分に設定しました`;
-      if (hitFloor) {
+      let msg = `卓${ti + 1}：次戦以降を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
+      if (calc.hitFloor) {
         // 下限40%でも指定時刻に間に合わないので、最終試合の終了予定時刻自体を現実的な時刻へ更新する
-        const realFinish = new Date(Date.now() + curRemainMin * 60000 + future.length * newMinutes * 60000);
+        const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
         finalEndH = String(realFinish.getHours()).padStart(2, "0");
         finalEndM = String(realFinish.getMinutes()).padStart(2, "0");
         setTEndH(finalEndH); setTEndM(finalEndM);
         msg += `（40%が下限のため終了予定を${finalEndH}:${finalEndM}に更新）`;
       }
-      saveSettings({ [`tableEnd_${ti}`]: `${finalEndH}:${finalEndM}` });
+      saveSettings({ endH: finalEndH, endM: finalEndM });
       setSnapMsg({ ok: true, text: msg });
       refresh();
     } catch (e) {
@@ -905,14 +904,8 @@ function HomeTab() {
     setTLenPct(avgLen);
     setTMinutes(avgMin);
     const cfg = loadSettings();
-    const saved = cfg[`tableEnd_${ti}`];
-    if (saved) {
-      const [h, mm] = saved.split(":");
-      setTEndH(h); setTEndM(mm);
-    } else {
-      setTEndH(cfg.endH || "17");
-      setTEndM(cfg.endM || "00");
-    }
+    setTEndH(cfg.endH || "17");
+    setTEndM(cfg.endM || "00");
     setTableAdjust(ti);
   };
   const applyTableAdjust = async () => {
@@ -940,30 +933,51 @@ function HomeTab() {
     setSnapBusy(null);
   };
 
-  // 今の試合の長さ・持ち時間（tLenPct/tMinutes）を、他の卓の次戦以降にもそのまま反映する
-  const applyToOtherTables = async () => {
+  // 終了予定時刻は全卓共通。この時刻に対して、卓ごとに押し／順調／余裕を見て、それぞれ自動調整する
+  const applyAllTables = async () => {
     if (tableAdjust == null || snapBusy != null) return;
     const ti = tableAdjust;
-    const others = [0, 1, 2].filter((t) => t !== ti);
+    const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
+    if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
     setSnapBusy(ti);
     try {
+      const cfg = loadSettings();
+      const per100 = parseInt(cfg.per100Min, 10) || 60;
       const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
       let count = 0;
-      others.forEach((oi) => {
-        const future = queues[oi].slice(1); // 他卓も現在対戦中は対象外
-        future.forEach((qm) => {
+      const skipped = [];
+      let latestFinish = null; // 40%下限に達した卓の中で、一番遅い現実的な終了時刻
+      [0, 1, 2].forEach((oi) => {
+        const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
+        if (!calc || calc.error) { skipped.push(oi + 1); return; }
+        calc.future.forEach((qm) => {
           const m = record.matches[qm.id];
           if (!m) return;
           const R1 = m.r1 || 0, R2 = m.r2 || 0;
-          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, tLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: tLenPct, matchMinutes: tMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
           count++;
         });
+        if (calc.hitFloor) {
+          const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
+          if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
+        }
+        if (oi === ti) { setTLenPct(calc.newLenPct); setTMinutes(calc.newMinutes); }
       });
-      if (count === 0) { setSnapMsg({ ok: false, text: "他の卓には次戦以降の対戦がありません" }); setSnapBusy(null); return; }
+      if (count === 0) { setSnapMsg({ ok: false, text: "反映できる対戦がありませんでした" }); setSnapBusy(null); return; }
       await jsonbinWrite(record);
-      setSnapMsg({ ok: true, text: `他の卓（${count}試合）にも${tLenPct}%・${tMinutes}分を反映しました` });
+      let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
+      let msg = `全卓（${count}試合）に終了予定 ${tEndH}:${tEndM} を反映し、それぞれ自動調整しました`;
+      if (latestFinish) {
+        finalEndH = String(latestFinish.getHours()).padStart(2, "0");
+        finalEndM = String(latestFinish.getMinutes()).padStart(2, "0");
+        setTEndH(finalEndH); setTEndM(finalEndM);
+        msg += `（40%が下限の卓があるため終了予定を${finalEndH}:${finalEndM}に更新）`;
+      }
+      saveSettings({ endH: finalEndH, endM: finalEndM });
+      if (skipped.length) msg += `（卓${skipped.join("・")}は対象外でした）`;
+      setSnapMsg({ ok: true, text: msg });
       refresh();
     } catch (e) {
       setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
@@ -1076,7 +1090,7 @@ function HomeTab() {
               <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
             ) : (
               <>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>この卓の最終試合、終了予定時刻</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
                   <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
                   <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
@@ -1086,8 +1100,8 @@ function HomeTab() {
                   {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
                 </button>
                 <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 10 }}>次戦以降 全{future.length}試合に、自動計算した長さ・持ち時間を反映します</div>
-                <button onClick={applyToOtherTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
-                  {snapBusy === ti ? "反映中…" : `他の卓にも${tLenPct}%・${tMinutes}分を反映する`}
+                <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
+                  {snapBusy === ti ? "反映中…" : "全卓まとめて自動調整する"}
                 </button>
 
                 <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
