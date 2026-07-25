@@ -1201,7 +1201,13 @@ function TimelineCard({ m, current, order, onOpen }) {
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
   const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const awaitingCall = current && !m.startedAt;
-  const statusLabel = !current ? `${order + 1}戦後` : awaitingCall ? "📣 呼び出してください" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
+  const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && (raceTo[0] - tot[0] <= 14) && (raceTo[1] - tot[1] <= 14);
+  const statusLabel = !current
+    ? `${order + 1}戦後`
+    : awaitingCall ? "📣 呼び出してください"
+    : m.phase === "banking" ? "バンキング待ち"
+    : hillHill ? "🔥 終わりそう"
+    : "試合中";
   const accent = C.blue;
 
   // 参加者の持ち時間の残り（進行バー）。deadline（絶対時刻）を基準に逆算する
