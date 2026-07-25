@@ -109,8 +109,8 @@ async function saveMatchRemote(matchId, state) {
   await jsonbinWrite(record);
 }
 
-/* 試合の持ち時間（分）。バンキング開始からカウントし、切れたら現ラックが最終ラック */
-const MATCH_MINUTES = 30;
+/* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
+const DEFAULT_MATCH_MINUTES = 30;
 
 const initialMatchState = (rt1, rt2, names, table) => ({
   version: 1,
@@ -373,7 +373,8 @@ function MatchScreen({ setupInfo }) {
   const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
 
   // ===== 持ち時間タイマー =====
-  const deadline = state.startedAt ? state.startedAt + MATCH_MINUTES * 60 * 1000 : null;
+  const matchMinutes = state.matchMinutes || DEFAULT_MATCH_MINUTES;
+  const deadline = state.startedAt ? state.startedAt + matchMinutes * 60 * 1000 : null;
   // 勝敗が決まったらその時点で停止（finishedAt で固定）
   const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
   const isTimeUp = msLeft != null && msLeft <= 0;
