@@ -976,7 +976,7 @@ function HomeTab() {
   const adjustTimer = async (matchId, deltaMin) => {
     if (busyAction) return;
     setBusyAction(true);
-    await patchMatch(matchId, (m) => ({ ...m, startedAt: (m.startedAt || Date.now()) + deltaMin * 60000 })).catch(() => {});
+    await patchMatch(matchId, (m) => ({ ...m, deadline: (m.deadline || Date.now()) + deltaMin * 60000 })).catch(() => {});
     setBusyAction(false);
     refresh();
   };
@@ -1194,13 +1194,14 @@ function TimelineCard({ m, current, order, onOpen }) {
   const statusLabel = !current ? `${order + 1}戦後` : awaitingCall ? "📣 呼び出してください" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
   const accent = C.blue;
 
-  // 参加者の持ち時間の残り（進行バー）
+  // 参加者の持ち時間の残り（進行バー）。deadline（絶対時刻）を基準に逆算する
   let timeInfo = null;
-  if (current && m.startedAt && m.matchMinutes && !m.finishedAt) {
-    const elapsedMin = (Date.now() - m.startedAt) / 60000;
-    const remainMin = Math.max(0, m.matchMinutes - elapsedMin);
-    const progress = Math.min(1, elapsedMin / m.matchMinutes);
-    timeInfo = { remainMin, progress, over: elapsedMin >= m.matchMinutes };
+  if (current && m.startedAt && m.deadline && !m.finishedAt) {
+    const totalMs = m.deadline - m.startedAt;
+    const remainMs = m.deadline - Date.now();
+    const remainMin = Math.max(0, remainMs / 60000);
+    const progress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
+    timeInfo = { remainMin, progress, over: remainMs <= 0 };
   }
 
   if (!current) {
