@@ -103,7 +103,7 @@ async function loadMatchRemote(matchId) {
   return record.matches[matchId] || null;
 }
 async function saveMatchRemote(matchId, state) {
-  const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
   record.matches = record.matches || {};
   record.matches[matchId] = { ...state, updatedAt: Date.now() };
   await jsonbinWrite(record);
@@ -125,6 +125,7 @@ const initialMatchState = (rt1, rt2, names, table) => ({
   names,
   table,
   startedAt: null, // バンキング画面を最初に開いた時刻
+  deadline: null, // タイマー開始時に確定させる「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算する
   finishedAt: null, // 決着した時刻
   elapsedMs: null, // 所要時間（ミリ秒）
   winner: null,
@@ -308,21 +309,25 @@ function MatchScreen({ setupInfo }) {
   };
 
   // 初回：既存の共有stateがあれば取り込む。なければ自分の初期stateをそのまま登録
-  // タイマー（startedAt）が未設定なら、この時点で開始する
+  // タイマー（startedAt/deadline）が未設定なら、この時点で確定させる
   useEffect(() => {
     (async () => {
       try {
         const remote = await loadMatchRemote(matchId);
         if (remote) {
           if (!remote.startedAt) {
-            const started = { ...remote, startedAt: Date.now(), version: (remote.version || 1) + 1 };
+            const now = Date.now();
+            const mins = remote.matchMinutes || DEFAULT_MATCH_MINUTES;
+            const started = { ...remote, startedAt: now, deadline: now + mins * 60000, version: (remote.version || 1) + 1 };
             setState(started);
             await saveMatchRemote(matchId, started);
           } else {
             setState(remote);
           }
         } else {
-          const init = { ...stateRef.current, startedAt: Date.now() };
+          const now = Date.now();
+          const mins = stateRef.current.matchMinutes || DEFAULT_MATCH_MINUTES;
+          const init = { ...stateRef.current, startedAt: now, deadline: now + mins * 60000 };
           setState(init);
           await saveMatchRemote(matchId, init);
         }
@@ -373,8 +378,9 @@ function MatchScreen({ setupInfo }) {
   const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
 
   // ===== 持ち時間タイマー =====
-  const matchMinutes = state.matchMinutes || DEFAULT_MATCH_MINUTES;
-  const deadline = state.startedAt ? state.startedAt + matchMinutes * 60 * 1000 : null;
+  // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
+  // matchMinutes を後から変えても既に始まっている試合の残り時間は動かない
+  const deadline = state.deadline || null;
   // 勝敗が決まったらその時点で停止（finishedAt で固定）
   const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
   const isTimeUp = msLeft != null && msLeft <= 0;
@@ -463,7 +469,11 @@ function MatchScreen({ setupInfo }) {
   const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
   const rematch = () => {
     pushUndo();
-    applyLocal((s) => ({ ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: Date.now(), finishedAt: null, elapsedMs: null, winner: null }));
+    applyLocal((s) => {
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: now + mins * 60000, finishedAt: null, elapsedMs: null, winner: null };
+    });
   };
   const backToSetup = () => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); };
   const swapBreak = () => {
@@ -526,7 +536,7 @@ function MatchScreen({ setupInfo }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button onClick={() => setShowQR(true)} style={{ background: "none", border: "none", fontSize: 13, color: C.blue, cursor: "pointer", fontWeight: 700 }}>📱 共有</button>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 8, fontSize: 12.5, color: C.blue, cursor: "pointer", fontWeight: 700, padding: "5px 10px" }}>📱 引き継ぎ用QR</button>
         <div style={{
           position: "absolute", left: "50%", transform: "translateX(-50%)",
           display: "flex", alignItems: "center", pointerEvents: "none",
