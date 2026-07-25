@@ -814,6 +814,20 @@ function HomeTab() {
     return new Date(Date.now() + remain * avgMin * 60000);
   };
 
+  // 終了予定時刻に対して、この卓は順調か・押しているかを判定
+  const tableScheduleStatus = (ti) => {
+    const est = perTableEstimate(ti);
+    if (!est) return null;
+    const cfg = loadSettings();
+    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
+    if (isNaN(eH) || isNaN(eM)) return null;
+    const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
+    const diffMin = Math.round((targetD - est) / 60000);
+    return diffMin >= 0
+      ? { ok: true, text: diffMin === 0 ? "順調" : `順調（余裕${diffMin}分）` }
+      : { ok: false, text: `${Math.abs(diffMin)}分押し` };
+  };
+
   // タップした卓の残り対戦だけ、最初に設定した終了時刻に間に合うよう試合の長さ・持ち時間を自動算出して反映
   const snapTableToTarget = async (ti) => {
     if (snapBusy != null) return;
@@ -946,13 +960,19 @@ function HomeTab() {
           const next = q[1];
           const rest = q.slice(2);
           const est = perTableEstimate(ti);
+          const status = tableScheduleStatus(ti);
           const fmt = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
           return (
             <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
               <div style={{ textAlign: "center", fontSize: 17, fontWeight: 900, color: C.ink, letterSpacing: 1 }}>卓{ti + 1}</div>
-              <div style={{ textAlign: "center", fontSize: 10, color: C.sub, fontWeight: 600, marginBottom: 2 }}>
-                {cur ? `残り${q.length}試合／${est ? fmt(est) : "–"}終了目安` : "予定なし"}
+              <div style={{ textAlign: "center", fontSize: 10, color: C.sub, fontWeight: 600 }}>
+                {cur ? `残り${q.length}試合・終了目安 ${est ? fmt(est) : "–"}` : "予定なし"}
               </div>
+              {status && (
+                <div style={{ textAlign: "center", fontSize: 12, fontWeight: 800, color: status.ok ? C.win : "#fff", background: status.ok ? "transparent" : C.minus, borderRadius: 8, padding: status.ok ? "0" : "3px 0", marginBottom: 2 }}>
+                  {status.ok ? `✓ ${status.text}` : `⚠ ${status.text}`}
+                </div>
+              )}
 
               {cur && <TimelineCard m={cur} current order={0} onOpen={() => toggleExpand(ti)} />}
               {!cur && <EmptySlot label="予定なし" />}
@@ -1082,6 +1102,13 @@ function EmptySlot({ label, small }) {
   );
 }
 function TimelineCard({ m, current, order, onOpen }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!current) return;
+    const iv = setInterval(() => setTick((t) => t + 1), 15000);
+    return () => clearInterval(iv);
+  }, [current]);
+
   const names = m.names || ["P1", "P2"];
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
@@ -1091,6 +1118,15 @@ function TimelineCard({ m, current, order, onOpen }) {
   const awaitingCall = current && !m.startedAt;
   const statusLabel = !current ? `${order + 1}戦後` : awaitingCall ? "📣 呼び出してください" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
   const accent = C.blue;
+
+  // 参加者の持ち時間の残り（進行バー）
+  let timeInfo = null;
+  if (current && m.startedAt && m.matchMinutes && !m.finishedAt) {
+    const elapsedMin = (Date.now() - m.startedAt) / 60000;
+    const remainMin = Math.max(0, m.matchMinutes - elapsedMin);
+    const progress = Math.min(1, elapsedMin / m.matchMinutes);
+    timeInfo = { remainMin, progress, over: elapsedMin >= m.matchMinutes };
+  }
 
   if (!current) {
     return (
@@ -1127,6 +1163,16 @@ function TimelineCard({ m, current, order, onOpen }) {
           </div>
         ))}
       </div>
+      {timeInfo && (
+        <div style={{ marginTop: 9 }}>
+          <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round(timeInfo.progress * 100)}%`, background: timeInfo.over ? C.minus : timeInfo.progress > 0.8 ? C.hill : C.win, borderRadius: 4 }} />
+          </div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: timeInfo.over ? C.minus : C.sub, textAlign: "center", marginTop: 3 }}>
+            {timeInfo.over ? "時間切れ" : `残り時間 約${Math.ceil(timeInfo.remainMin)}分`}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
