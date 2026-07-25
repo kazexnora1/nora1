@@ -790,7 +790,6 @@ function HomeTab() {
   const [totalActive, setTotalActive] = useState(0);
   const [editRt, setEditRt] = useState(null); // [rt1, rt2] 編集中の値
   const [busyAction, setBusyAction] = useState(false);
-  const s0 = useMemo(() => loadSettings(), []);
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
   const [tLenPct, setTLenPct] = useState(100);
   const [tMinutes, setTMinutes] = useState(30);
@@ -820,16 +819,18 @@ function HomeTab() {
     if (snapBusy != null) return;
     const remain = queues[ti].length;
     if (!remain) return;
-    const eH = parseInt(s0.endH, 10), eM = parseInt(s0.endM, 10);
+    const cfg = loadSettings();
+    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
     if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了時刻が未設定です（設定タブの試合割りで指定してください）" }); return; }
     const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
     const availableMin = (targetD - Date.now()) / 60000;
     if (availableMin <= 0) { setSnapMsg({ ok: false, text: "すでに終了予定時刻を過ぎています" }); return; }
     const perMatchMin = availableMin / remain;
-    const per100 = parseInt(s0.per100Min, 10) || 60;
-    let newLenPct = Math.round((perMatchMin / per100) * 100 / 5) * 5;
-    newLenPct = Math.min(140, Math.max(40, newLenPct));
-    const newMinutes = Math.max(5, Math.round(perMatchMin));
+    const per100 = parseInt(cfg.per100Min, 10) || 60;
+    const rawPct = Math.round((perMatchMin / per100) * 100 / 5) * 5;
+    const hitFloor = rawPct < 40;
+    const newLenPct = Math.min(140, Math.max(40, rawPct));
+    const newMinutes = Math.max(5, Math.round(per100 * (newLenPct / 100)));
     setSnapBusy(ti);
     try {
       const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
@@ -842,7 +843,17 @@ function HomeTab() {
         record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: newLenPct, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
       });
       await jsonbinWrite(record);
-      setSnapMsg({ ok: true, text: `卓${ti + 1}：${newLenPct}%・${newMinutes}分に自動調整しました` });
+
+      let msg = `卓${ti + 1}：${newLenPct}%・${newMinutes}分に自動調整しました`;
+      if (hitFloor) {
+        // 下限40%でも終了予定時刻に間に合わないので、終了予定時刻自体を現実的な時刻へ後ろ倒しして更新する
+        const realFinish = new Date(Date.now() + remain * newMinutes * 60000);
+        const newEndH = String(realFinish.getHours()).padStart(2, "0");
+        const newEndM = String(realFinish.getMinutes()).padStart(2, "0");
+        saveSettings({ endH: newEndH, endM: newEndM });
+        msg += `（40%が下限のため終了予定時刻を${newEndH}:${newEndM}に更新しました）`;
+      }
+      setSnapMsg({ ok: true, text: msg });
       refresh();
     } catch (e) {
       setSnapMsg({ ok: false, text: "調整に失敗しました: " + (e && e.message ? e.message : e) });
@@ -932,80 +943,93 @@ function HomeTab() {
         {[0, 1, 2].map((ti) => {
           const q = queues[ti];
           const cur = q[0];
-          const rest = q.slice(1);
+          const next = q[1];
+          const rest = q.slice(2);
           const est = perTableEstimate(ti);
           const fmt = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-          const expanded = tableAdjust === ti;
           return (
             <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ textAlign: "center", fontSize: 13, fontWeight: 800, color: C.sub }}>卓{ti + 1}</div>
-              <div style={{ textAlign: "center", fontSize: 11, color: C.sub, fontWeight: 700 }}>
-                {cur ? `${q.length}試合・終了目安 ${est ? fmt(est) : "–"}` : "予定なし"}
+              <div style={{ textAlign: "center", fontSize: 17, fontWeight: 900, color: C.ink, letterSpacing: 1 }}>卓{ti + 1}</div>
+              <div style={{ textAlign: "center", fontSize: 10, color: C.sub, fontWeight: 600, marginBottom: 2 }}>
+                {cur ? `残り${q.length}試合／${est ? fmt(est) : "–"}終了目安` : "予定なし"}
               </div>
 
               {cur && <TimelineCard m={cur} current order={0} onOpen={() => toggleExpand(ti)} />}
               {!cur && <EmptySlot label="予定なし" />}
 
-              {expanded && cur && (
-                <div style={{ background: C.zone, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: 10 }}>
-                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(urlFor(cur))}`} style={{ width: 120, height: 120, display: "block", margin: "0 auto 10px" }} />
-
-                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 6, fontWeight: 700, textAlign: "center" }}>目標点を編集</div>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 8 }}>
-                    {[0, 1].map((i) => (
-                      <input key={i} inputMode="numeric" value={editRt ? editRt[i] : ""}
-                        onChange={(e) => setEditRt((r) => { const n = [...r]; n[i] = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); return n; })}
-                        style={{ width: 52, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 0", fontSize: 15, fontWeight: 800, fontFamily: FONT, color: i === 0 ? C.blue : C.red }} />
-                    ))}
-                  </div>
-                  <button onClick={() => applyRaceTo(cur.id)} disabled={busyAction} style={{ width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, marginBottom: 10 }}>
-                    この目標点にする
-                  </button>
-
-                  {cur.startedAt && (
-                    <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                      <button onClick={() => adjustTimer(cur.id, -5)} disabled={busyAction} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>タイマー−5分</button>
-                      <button onClick={() => adjustTimer(cur.id, 5)} disabled={busyAction} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>タイマー＋5分</button>
-                    </div>
-                  )}
-
-                  <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
-                    <div style={{ fontSize: 11, color: C.sub, marginBottom: 8, fontWeight: 700, textAlign: "center" }}>卓{ti + 1}の残り{q.length}試合をまとめて調整</div>
-                    <button onClick={() => snapTableToTarget(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 10 }}>
-                      {snapBusy === ti ? "調整中…" : "✓ 終了時刻に合わせて自動調整"}
-                    </button>
-                    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, marginBottom: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 700 }}>試合の長さ</span>
-                        <span style={{ fontSize: 14, fontWeight: 800 }}>{tLenPct}%</span>
-                      </div>
-                      <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 8 }}>
-                      <button onClick={() => setTMinutes((v) => Math.max(5, v - 5))} style={{ ...homeStepBtn, width: 32, height: 32, fontSize: 16 }}>−</button>
-                      <div style={{ flex: 1, textAlign: "center", fontSize: 15, fontWeight: 800 }}>{tMinutes}分</div>
-                      <button onClick={() => setTMinutes((v) => Math.min(120, v + 5))} style={{ ...homeStepBtn, width: 32, height: 32, fontSize: 16 }}>＋</button>
-                    </div>
-                    <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-                      {snapBusy === ti ? "反映中…" : "手動の値で反映する"}
-                    </button>
-                    {snapMsg && <div style={{ marginTop: 6, textAlign: "center", fontSize: 11, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
-                  </div>
-                </div>
-              )}
+              {next && <TimelineCard m={next} current={false} order={1} onOpen={() => setQrMatch(next)} />}
 
               {rest.length > 0 && (
                 <button onClick={() => toggleShowMore(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "4px 0" }}>
-                  {showMore[ti] ? "▲ 閉じる" : `▼ 次の試合を見る（${rest.length}）`}
+                  {showMore[ti] ? "▲ 閉じる" : `▼ さらに次を見る（${rest.length}）`}
                 </button>
               )}
               {showMore[ti] && rest.map((m, k) => (
-                <TimelineCard key={m.id} m={m} current={false} order={k + 1} onOpen={() => setQrMatch(m)} />
+                <TimelineCard key={m.id} m={m} current={false} order={k + 2} onOpen={() => setQrMatch(m)} />
               ))}
             </div>
           );
         })}
       </div>
+
+      {tableAdjust != null && queues[tableAdjust][0] && (() => {
+        const ti = tableAdjust;
+        const cur = queues[ti][0];
+        const q = queues[ti];
+        return (
+          <div style={{ background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, marginTop: 16 }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 2 }}>卓{ti + 1} を調整中</div>
+            <div style={{ fontSize: 12, color: C.sub, textAlign: "center", marginBottom: 16 }}>{cur.names.join(" 対 ")}</div>
+
+            <div style={{ fontSize: 13, color: C.ink, marginBottom: 8, fontWeight: 800, textAlign: "center" }}>🎯 目標点を編集</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 10 }}>
+              {[0, 1].map((i) => (
+                <input key={i} inputMode="numeric" value={editRt ? editRt[i] : ""}
+                  onChange={(e) => setEditRt((r) => { const n = [...r]; n[i] = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); return n; })}
+                  style={{ width: 70, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 0", fontSize: 18, fontWeight: 800, fontFamily: FONT, color: i === 0 ? C.blue : C.red }} />
+              ))}
+            </div>
+            <button onClick={() => applyRaceTo(cur.id)} disabled={busyAction} style={{ width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT, marginBottom: 18 }}>
+              この目標点にする
+            </button>
+
+            {cur.startedAt && (
+              <>
+                <div style={{ fontSize: 13, color: C.ink, marginBottom: 8, fontWeight: 800, textAlign: "center" }}>⏱ 参加者のタイマー</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+                  <button onClick={() => adjustTimer(cur.id, -5)} disabled={busyAction} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>−5分</button>
+                  <button onClick={() => adjustTimer(cur.id, 5)} disabled={busyAction} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>＋5分</button>
+                </div>
+              </>
+            )}
+
+            <div style={{ borderTop: `2px solid ${C.line}`, paddingTop: 16 }}>
+              <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 卓{ti + 1}の残り{q.length}試合をまとめて調整</div>
+              <button onClick={() => snapTableToTarget(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 12 }}>
+                {snapBusy === ti ? "調整中…" : "✓ 終了時刻に合わせて自動調整"}
+              </button>
+              <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
+              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>試合の長さ</span>
+                  <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%</span>
+                </div>
+                <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                <button onClick={() => setTMinutes((v) => Math.max(5, v - 5))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
+                <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tMinutes}分</div>
+                <button onClick={() => setTMinutes((v) => Math.min(120, v + 5))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
+              </div>
+              <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 10 }}>
+                {snapBusy === ti ? "反映中…" : "手動の値で反映する"}
+              </button>
+              {snapMsg && <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus, marginBottom: 8 }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+              <button onClick={() => setTableAdjust(null)} style={{ width: "100%", background: "none", border: "none", color: C.sub, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {qrMatch && (
         <div onClick={() => setQrMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
@@ -1066,23 +1090,39 @@ function TimelineCard({ m, current, order, onOpen }) {
   const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const awaitingCall = current && !m.startedAt;
   const statusLabel = !current ? `${order + 1}戦後` : awaitingCall ? "📣 呼び出してください" : m.phase === "banking" ? "バンキング中" : m.phase === "done" ? "ラック終了" : `第${m.rack}R`;
-  const accent = awaitingCall ? C.hill : C.blue;
+  const accent = C.blue;
+
+  if (!current) {
+    return (
+      <div onClick={onOpen} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "6px 5px", cursor: "pointer", opacity: 0.8 }}>
+        <div style={{ textAlign: "center", fontSize: 9.5, color: C.sub, fontWeight: 700, marginBottom: 3 }}>{statusLabel}</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[0, 1].map((i) => (
+            <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, opacity: 0.6 }}>{raceTo[i]}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div onClick={onOpen} style={{
-      background: current ? (awaitingCall ? C.hillBg : C.lightBlue) : "#fff",
-      border: current ? `3px solid ${accent}` : `1px solid ${C.line}`,
-      boxShadow: current ? `0 2px 10px rgba(46,109,181,0.25)` : "none",
-      borderRadius: 14, padding: current ? "10px 6px" : "7px 5px", cursor: "pointer",
-      opacity: current ? 1 : 0.85,
+      background: C.lightBlue,
+      border: `3px solid ${accent}`,
+      boxShadow: `0 3px 12px rgba(46,109,181,0.28)`,
+      borderRadius: 16, padding: "12px 8px 10px", cursor: "pointer",
     }}>
-      <div style={{ textAlign: "center", fontSize: current ? 11 : 9.5, color: current ? accent : C.sub, fontWeight: 800, marginBottom: current ? 6 : 4 }}>{statusLabel}</div>
+      <div style={{ display: "inline-block", background: accent, color: "#fff", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800, marginBottom: 8 }}>{statusLabel}</div>
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-            <div style={{ fontSize: current ? 11.5 : 10.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-            <div style={{ fontSize: current ? 22 : 13, fontWeight: 800, color: C.ink }}>
-              {current ? (m.phase === "banking" ? "–" : disp[i]) : ""}
-              <span style={{ fontSize: current ? 11 : 11, opacity: 0.5 }}>{current ? "/" : ""}{raceTo[i]}</span>
+            <div style={{ fontSize: 13, fontWeight: 800, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 1 }}>{names[i]}</div>
+            <div style={{ fontSize: 34, fontWeight: 900, color: C.ink, lineHeight: 1.05 }}>
+              {m.phase === "banking" ? "–" : disp[i]}
+              <span style={{ fontSize: 14, fontWeight: 700, opacity: 0.45 }}>/{raceTo[i]}</span>
             </div>
           </div>
         ))}
