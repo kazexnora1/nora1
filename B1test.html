@@ -993,9 +993,11 @@ function HomeTab() {
           const rest = q.slice(2);
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
+          const settingSrc = next || cur;
           const fmt = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
           return (
             <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
+              <div style={{ textAlign: "center", fontSize: 15, fontWeight: 900, color: C.ink, letterSpacing: 1 }}>卓{ti + 1}</div>
               <div onClick={() => toggleExpand(ti)} style={{
                 position: "relative", textAlign: "center", cursor: "pointer",
                 background: tableAdjust === ti ? C.blue : (status && !status.ok ? "#FFF5F4" : "#fff"),
@@ -1003,9 +1005,9 @@ function HomeTab() {
                 borderRadius: 14, padding: "10px 6px 8px",
               }}>
                 <span style={{ position: "absolute", top: 6, right: 8, fontSize: 12, color: tableAdjust === ti ? "#fff" : C.blue, opacity: 0.8 }}>✎</span>
-                <div style={{ fontSize: 13, fontWeight: 800, color: tableAdjust === ti ? "#fff" : C.sub, letterSpacing: 1 }}>卓{ti + 1}</div>
                 {cur ? (
                   <>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.sub, opacity: 0.85 }}>終了目安</div>
                     <div style={{ fontSize: 26, fontWeight: 900, color: tableAdjust === ti ? "#fff" : C.ink, lineHeight: 1.15 }}>{est ? fmt(est) : "–"}</div>
                     {status && (
                       <div style={{
@@ -1014,6 +1016,11 @@ function HomeTab() {
                         background: tableAdjust === ti ? "#fff" : (status.ok ? "transparent" : C.minus),
                       }}>
                         {status.ok ? `✓ ${status.text}` : `⚠ ${status.text}`}
+                      </div>
+                    )}
+                    {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
+                      <div style={{ fontSize: 11, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.sub, opacity: 0.9, marginTop: 4 }}>
+                        設定：{settingSrc.lenPct || 100}%・{settingSrc.matchMinutes || 30}分
                       </div>
                     )}
                   </>
