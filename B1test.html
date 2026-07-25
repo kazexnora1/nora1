@@ -940,6 +940,37 @@ function HomeTab() {
     setSnapBusy(null);
   };
 
+  // 今の試合の長さ・持ち時間（tLenPct/tMinutes）を、他の卓の次戦以降にもそのまま反映する
+  const applyToOtherTables = async () => {
+    if (tableAdjust == null || snapBusy != null) return;
+    const ti = tableAdjust;
+    const others = [0, 1, 2].filter((t) => t !== ti);
+    setSnapBusy(ti);
+    try {
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
+      const now = Date.now();
+      let count = 0;
+      others.forEach((oi) => {
+        const future = queues[oi].slice(1); // 他卓も現在対戦中は対象外
+        future.forEach((qm) => {
+          const m = record.matches[qm.id];
+          if (!m) return;
+          const R1 = m.r1 || 0, R2 = m.r2 || 0;
+          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, tLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: tLenPct, matchMinutes: tMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          count++;
+        });
+      });
+      if (count === 0) { setSnapMsg({ ok: false, text: "他の卓には次戦以降の対戦がありません" }); setSnapBusy(null); return; }
+      await jsonbinWrite(record);
+      setSnapMsg({ ok: true, text: `他の卓（${count}試合）にも${tLenPct}%・${tMinutes}分を反映しました` });
+      refresh();
+    } catch (e) {
+      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setSnapBusy(null);
+  };
+
   const urlFor = (m) => {
     const rt = m.raceTo || [0, 0];
     const url = new URL(B2_URL);
@@ -1054,7 +1085,10 @@ function HomeTab() {
                 <button onClick={() => applyTableEndTime(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
                   {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
                 </button>
-                <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 16 }}>次戦以降 全{future.length}試合に、自動計算した長さ・持ち時間を反映します</div>
+                <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 10 }}>次戦以降 全{future.length}試合に、自動計算した長さ・持ち時間を反映します</div>
+                <button onClick={applyToOtherTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
+                  {snapBusy === ti ? "反映中…" : `他の卓にも${tLenPct}%・${tMinutes}分を反映する`}
+                </button>
 
                 <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
                 <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
