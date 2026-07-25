@@ -98,12 +98,12 @@ async function jsonbinWrite(record) {
   });
 }
 async function saveRoster(roster) {
-  const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
   record.roster = roster;
   await jsonbinWrite(record);
 }
 async function saveMatch(matchId, state) {
-  const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
   record.matches = record.matches || {};
   record.matches[matchId] = { ...state, updatedAt: Date.now() };
   await jsonbinWrite(record);
@@ -147,7 +147,7 @@ function saveSettings(patch) {
 
 /* 対戦1件だけを読み書きする（目標点編集・タイマー調整用） */
 async function patchMatch(matchId, patchFn) {
-  const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
   const m = record.matches && record.matches[matchId];
   if (!m) return false;
   record.matches[matchId] = { ...patchFn(m), version: (m.version || 1) + 1, updatedAt: Date.now() };
@@ -473,7 +473,7 @@ function BulkScheduleTab({ roster }) {
     if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦はすべて置き換えられます。よろしいですか？`)) return;
     setRegistering(true);
     try {
-      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
       const next = {};
       rows.forEach((m) => {
@@ -862,7 +862,7 @@ function HomeTab() {
     const newMinutes = Math.max(5, Math.round(per100 * (newLenPct / 100)));
     setSnapBusy(ti);
     try {
-      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
       future.forEach((qm) => {
         const m = record.matches[qm.id];
@@ -921,7 +921,7 @@ function HomeTab() {
     if (!future.length) { setSnapMsg({ ok: false, text: "次の試合がありません" }); return; }
     setSnapBusy(ti);
     try {
-      const record = await jsonbinRead().catch(() => ({ roster: [], results: [], matches: {} }));
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
       future.forEach((qm) => {
         const m = record.matches[qm.id];
