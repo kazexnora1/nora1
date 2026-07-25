@@ -827,7 +827,14 @@ function HomeTab() {
     const est = perTableEstimate(ti);
     if (!est) return null;
     const cfg = loadSettings();
-    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
+    const saved = cfg[`tableEnd_${ti}`];
+    let eH, eM;
+    if (saved) {
+      const parts = saved.split(":");
+      eH = parseInt(parts[0], 10); eM = parseInt(parts[1], 10);
+    } else {
+      eH = parseInt(cfg.endH, 10); eM = parseInt(cfg.endM, 10);
+    }
     if (isNaN(eH) || isNaN(eM)) return null;
     const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
     const diffMin = Math.round((targetD - est) / 60000);
