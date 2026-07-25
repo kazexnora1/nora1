@@ -806,7 +806,7 @@ function HomeTab() {
   const [totalActive, setTotalActive] = useState(0);
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
   const [tLenPct, setTLenPct] = useState(100);
-  const [tMinutes, setTMinutes] = useState(30);
+  const [tPer100, setTPer100] = useState(60);
 
   const refresh = async () => {
     try {
@@ -874,7 +874,6 @@ function HomeTab() {
       });
       await jsonbinWrite(record);
       setTLenPct(calc.newLenPct);
-      setTMinutes(calc.newMinutes);
 
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
       let msg = `卓${ti + 1}：次戦以降を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
@@ -901,32 +900,36 @@ function HomeTab() {
   const openTableAdjust = (ti) => {
     const future = queues[ti].slice(1); // 現在対戦中は対象外
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
-    const avgMin = future.length ? Math.round(future.reduce((s, m) => s + (m.matchMinutes || 30), 0) / future.length) : 30;
     setTLenPct(avgLen);
-    setTMinutes(avgMin);
     const cfg = loadSettings();
+    setTPer100(parseInt(cfg.per100Min, 10) || 60);
     setTEndH(cfg.endH || "17");
     setTEndM(cfg.endM || "00");
     setTableAdjust(ti);
   };
+  // 100%のときの時間（分）は全卓共通の基準値。ここで変えたら全卓の次戦以降にまとめて反映する
   const applyTableAdjust = async () => {
     if (tableAdjust == null || snapBusy != null) return;
-    const ti = tableAdjust;
-    const future = queues[ti].slice(1);
-    if (!future.length) { setSnapMsg({ ok: false, text: "次の試合がありません" }); return; }
-    setSnapBusy(ti);
+    const newMinutes = Math.max(1, Math.round(tPer100 * (tLenPct / 100)));
+    setSnapBusy(tableAdjust);
     try {
       const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
-      future.forEach((qm) => {
-        const m = record.matches[qm.id];
-        if (!m) return;
-        const R1 = m.r1 || 0, R2 = m.r2 || 0;
-        const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, tLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-        record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: tLenPct, matchMinutes: tMinutes, version: (m.version || 1) + 1, updatedAt: now };
+      let count = 0;
+      [0, 1, 2].forEach((oi) => {
+        queues[oi].slice(1).forEach((qm) => {
+          const m = record.matches[qm.id];
+          if (!m) return;
+          const R1 = m.r1 || 0, R2 = m.r2 || 0;
+          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, tLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: tLenPct, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          count++;
+        });
       });
+      if (count === 0) { setSnapMsg({ ok: false, text: "次の試合がありません" }); setSnapBusy(null); return; }
       await jsonbinWrite(record);
-      setSnapMsg({ ok: true, text: `卓${ti + 1}：次戦以降を${tLenPct}%・${tMinutes}分に反映しました` });
+      saveSettings({ per100Min: String(tPer100) });
+      setSnapMsg({ ok: true, text: `全卓（${count}試合）を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
       refresh();
     } catch (e) {
       setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
@@ -964,7 +967,7 @@ function HomeTab() {
           const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
           if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
         }
-        if (oi === ti) { setTLenPct(calc.newLenPct); setTMinutes(calc.newMinutes); }
+        if (oi === ti) { setTLenPct(calc.newLenPct); }
       });
       if (count === 0) { setSnapMsg({ ok: false, text: "反映できる対戦がありませんでした" }); setSnapBusy(null); return; }
       await jsonbinWrite(record);
@@ -1113,13 +1116,14 @@ function HomeTab() {
                   </div>
                   <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
                 </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%のときの時間（分・全卓共通）</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                  <button onClick={() => setTMinutes((v) => Math.max(1, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
-                  <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tMinutes}分</div>
-                  <button onClick={() => setTMinutes((v) => Math.min(120, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
+                  <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
+                  <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
+                  <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
                 </div>
                 <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
-                  {snapBusy === ti ? "反映中…" : "手動の値で反映する"}
+                  {snapBusy === ti ? "反映中…" : "手動の値で全卓に反映する"}
                 </button>
               </>
             )}
