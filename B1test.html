@@ -812,6 +812,8 @@ function HomeTab() {
   const [refereeOpen, setRefereeOpen] = useState(null); // レフェリーリストを表示中の卓番号(0-2) or null
   const [refereeBusy, setRefereeBusy] = useState(false);
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
+  const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
+  const [globalBusy, setGlobalBusy] = useState(false);
   const [tLenPct, setTLenPct] = useState(100);
   const [tPer100, setTPer100] = useState(60);
 
@@ -831,6 +833,7 @@ function HomeTab() {
   const toggleRefereeList = (ti) => {
     setTableAdjust(null);
     setShowMoreTi(null);
+    setShowGlobalAdjust(false);
     setRefereeOpen((v) => (v === ti ? null : ti));
   };
 
@@ -957,6 +960,7 @@ function HomeTab() {
   const openTableAdjust = (ti) => {
     setRefereeOpen(null);
     setShowMoreTi(null);
+    setShowGlobalAdjust(false);
     const future = queues[ti].slice(1); // 現在対戦中は対象外
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
     setTLenPct(avgLen);
@@ -1048,6 +1052,95 @@ function HomeTab() {
     setSnapBusy(null);
   };
 
+  // 押している卓（1分でも）と、余裕がありすぎる卓（10分超）だけを自動調整する。順調な卓はそのまま
+  const applyConditionalAllTables = async () => {
+    if (globalBusy) return;
+    const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
+    if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
+    setGlobalBusy(true);
+    try {
+      const cfg = loadSettings();
+      const per100 = parseInt(cfg.per100Min, 10) || 60;
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
+      const now = Date.now();
+      let count = 0;
+      const adjustedTables = [];
+      let latestFinish = null;
+      [0, 1, 2].forEach((oi) => {
+        const est = perTableEstimate(oi);
+        if (!est) return; // 予定がない卓は無視
+        const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
+        const diffMin = Math.round((targetD - est) / 60000);
+        const needsAdjust = diffMin < 0 || diffMin > 10;
+        if (!needsAdjust) return; // 順調な範囲は触らない
+        const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
+        if (!calc || calc.error) return;
+        calc.future.forEach((qm) => {
+          const m = record.matches[qm.id];
+          if (!m) return;
+          const R1 = m.r1 || 0, R2 = m.r2 || 0;
+          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
+          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          count++;
+        });
+        adjustedTables.push(oi + 1);
+        if (calc.hitFloor) {
+          const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
+          if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
+        }
+      });
+      if (count === 0) {
+        setSnapMsg({ ok: true, text: "調整が必要な卓はありませんでした" });
+        setGlobalBusy(false);
+        return;
+      }
+      await jsonbinWrite(record);
+      let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
+      let msg = `卓${adjustedTables.join("・")}（${count}試合）を自動調整しました`;
+      if (latestFinish) {
+        finalEndH = String(latestFinish.getHours()).padStart(2, "0");
+        finalEndM = String(latestFinish.getMinutes()).padStart(2, "0");
+        setTEndH(finalEndH); setTEndM(finalEndM);
+        msg += `（40%が下限のため終了予定を${finalEndH}:${finalEndM}に更新）`;
+      }
+      saveSettings({ endH: finalEndH, endM: finalEndM });
+      setSnapMsg({ ok: true, text: msg });
+      refresh();
+    } catch (e) {
+      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setGlobalBusy(false);
+  };
+
+  // 100%のときの時間（基準値）だけを更新し、各対戦の長さ％はそのまま持ち時間だけ再計算する。見積もり自体がずれていた時用
+  const applyPer100ToAll = async () => {
+    if (globalBusy) return;
+    setGlobalBusy(true);
+    try {
+      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
+      const now = Date.now();
+      let count = 0;
+      [0, 1, 2].forEach((oi) => {
+        queues[oi].slice(1).forEach((qm) => {
+          const m = record.matches[qm.id];
+          if (!m) return;
+          const lenPct = m.lenPct || 100;
+          const newMinutes = Math.max(1, Math.round(tPer100 * (lenPct / 100)));
+          record.matches[qm.id] = { ...m, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          count++;
+        });
+      });
+      if (count === 0) { setSnapMsg({ ok: false, text: "対象の対戦がありませんでした" }); setGlobalBusy(false); return; }
+      await jsonbinWrite(record);
+      saveSettings({ per100Min: String(tPer100) });
+      setSnapMsg({ ok: true, text: `100%の時間を${tPer100}分に更新し、全卓${count}試合の持ち時間を再計算しました` });
+      refresh();
+    } catch (e) {
+      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setGlobalBusy(false);
+  };
+
   const urlFor = (m) => {
     const rt = m.raceTo || [0, 0];
     const url = new URL(B2_URL);
@@ -1069,6 +1162,7 @@ function HomeTab() {
     if (showMoreTi === ti) { setShowMoreTi(null); return; }
     setTableAdjust(null);
     setRefereeOpen(null);
+    setShowGlobalAdjust(false);
     setShowMoreTi(ti);
   };
 
@@ -1079,9 +1173,62 @@ function HomeTab() {
     openTableAdjust(ti);
   };
 
+  const toggleGlobalAdjust = () => {
+    if (showGlobalAdjust) { setShowGlobalAdjust(false); return; }
+    setTableAdjust(null);
+    setRefereeOpen(null);
+    setShowMoreTi(null);
+    const cfg = loadSettings();
+    setTEndH(cfg.endH || "17");
+    setTEndM(cfg.endM || "00");
+    setTPer100(parseInt(cfg.per100Min, 10) || 60);
+    setShowGlobalAdjust(true);
+  };
+
   return (
     <div style={{ padding: "16px 12px 24px", color: C.ink }}>
-      <div style={{ textAlign: "center", fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 14 }}>終了 {finished.length} / 全{totalActive}試合</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>終了 {finished.length} / 全{totalActive}試合</div>
+        <button onClick={toggleGlobalAdjust} style={{
+          background: showGlobalAdjust ? C.blue : "#fff", color: showGlobalAdjust ? "#fff" : C.blue,
+          border: `1.5px solid ${C.blue}`, borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>
+          ⚙ 調整する
+        </button>
+      </div>
+
+      {showGlobalAdjust && (
+        <div style={{ background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, marginBottom: 16, position: "relative" }}>
+          <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
+          <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>全卓の調整</div>
+
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
+            <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+            <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
+            <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+          </div>
+          <button onClick={applyConditionalAllTables} disabled={globalBusy} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
+            {globalBusy ? "計算中…" : "✓ 押している卓・余裕がある卓だけ自動調整"}
+          </button>
+          <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 16 }}>1分でも押している卓は間に合うよう短く、10分を超えて余裕がある卓は伸ばします。順調な卓はそのままです</div>
+
+          <div style={{ borderTop: `2px solid ${C.line}`, paddingTop: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 4 }}>100%の時間（全卓共通）</div>
+            <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 8 }}>そもそもの見積もりがずれていると感じたら、ここで調整</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
+              <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
+              <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
+            </div>
+            <button onClick={applyPer100ToAll} disabled={globalBusy} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+              {globalBusy ? "反映中…" : "この基準値を全卓に反映する"}
+            </button>
+          </div>
+
+          {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+        </div>
+      )}
 
       {(() => {
         const tinfo = [0, 1, 2].map((ti) => {
