@@ -831,23 +831,23 @@ function HomeTab() {
   };
 
   const getRefereeCandidates = (ti) => {
-    const cur = queues[ti][0];
-    const thisMatchPlayers = new Set(cur ? cur.names : []);
     const playingNow = new Set();
     queues.forEach((q) => { if (q[0]) q[0].names.forEach((n) => playingNow.add(n)); });
-    const hasNext = new Set();
-    queues.forEach((q) => { if (q[1]) q[1].names.forEach((n) => hasNext.add(n)); });
+    const refereeingNow = new Set();
+    queues.forEach((q) => { if (q[0] && q[0].referee) refereeingNow.add(q[0].referee); });
+    const nextAtThisTable = new Set(queues[ti][1] ? queues[ti][1].names : []);
+    const nextAtOtherTable = new Set();
+    queues.forEach((q, qi) => { if (qi !== ti && q[1]) q[1].names.forEach((n) => nextAtOtherTable.add(n)); });
 
     return roster
-      .filter((p) => p.name && !thisMatchPlayers.has(p.name))
+      .filter((p) => p.name && !playingNow.has(p.name) && !refereeingNow.has(p.name))
       .map((p) => {
-        const playing = playingNow.has(p.name);
-        const upcoming = hasNext.has(p.name);
+        // 0: 次試合なし（優先）／1: 同卓の次試合／2: 別卓の次試合（後回し）
+        const tier = nextAtThisTable.has(p.name) ? 1 : nextAtOtherTable.has(p.name) ? 2 : 0;
         const count = refereeCounts[p.name] || 0;
-        const score = (playing ? 100 : 0) + (upcoming ? 10 : 0) + count;
-        return { ...p, playing, upcoming, count, score };
+        return { ...p, tier, count };
       })
-      .sort((a, b) => a.score - b.score);
+      .sort((a, b) => a.tier - b.tier || a.count - b.count);
   };
 
   const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
@@ -1134,10 +1134,10 @@ function HomeTab() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {getRefereeCandidates(ti).map((p) => (
                         <button key={p.id} onClick={() => assignReferee(ti, p.name)} disabled={refereeBusy}
-                          style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.playing ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
+                          style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.tier > 0 ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
                           {p.name}{p.count ? `（${p.count}）` : ""}
-                          {p.playing && <span style={{ color: C.sub, fontSize: 10 }}>　試合中</span>}
-                          {!p.playing && p.upcoming && <span style={{ color: C.sub, fontSize: 10 }}>　次試合あり</span>}
+                          {p.tier === 1 && <span style={{ color: C.sub, fontSize: 10 }}>　同卓に次試合あり</span>}
+                          {p.tier === 2 && <span style={{ color: C.sub, fontSize: 10 }}>　別卓に次試合あり</span>}
                         </button>
                       ))}
                     </div>
