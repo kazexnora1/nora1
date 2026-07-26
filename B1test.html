@@ -824,9 +824,10 @@ function HomeTab() {
   };
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
 
-  // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストを閉じる
+  // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストと「さらに次を見る」を閉じる
   const toggleRefereeList = (ti) => {
     setTableAdjust(null);
+    setShowMoreTi(null);
     setRefereeOpen((v) => (v === ti ? null : ti));
   };
 
@@ -952,6 +953,7 @@ function HomeTab() {
 
   const openTableAdjust = (ti) => {
     setRefereeOpen(null);
+    setShowMoreTi(null);
     const future = queues[ti].slice(1); // 現在対戦中は対象外
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
     setTLenPct(avgLen);
@@ -1059,12 +1061,18 @@ function HomeTab() {
   };
 
   const [qrMatch, setQrMatch] = useState(null); // 次戦以降のQRのみを表示する軽量モーダル
-  const [showMore, setShowMore] = useState([false, false, false]);
-  const toggleShowMore = (ti) => setShowMore((s) => s.map((v, i) => (i === ti ? !v : v)));
+  const [showMoreTi, setShowMoreTi] = useState(null); // 「さらに次を見る」を展開中の卓番号(0-2) or null
+  const toggleShowMore = (ti) => {
+    if (showMoreTi === ti) { setShowMoreTi(null); return; }
+    setTableAdjust(null);
+    setRefereeOpen(null);
+    setShowMoreTi(ti);
+  };
 
   // 卓のカードをタップ：現在対戦の調整パネルをその場で展開／格納
   const toggleExpand = (ti) => {
     if (tableAdjust === ti) { setTableAdjust(null); return; }
+    setShowMoreTi(null);
     openTableAdjust(ti);
   };
 
@@ -1072,20 +1080,31 @@ function HomeTab() {
     <div style={{ padding: "16px 12px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 14 }}>終了 {finished.length} / 全{totalActive}試合</div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-        {[0, 1, 2].map((ti) => {
+      {(() => {
+        const tinfo = [0, 1, 2].map((ti) => {
           const q = queues[ti];
-          const cur = q[0];
-          const next = q[1];
-          const rest = q.slice(2);
+          const cur = q[0], next = q[1], rest = q.slice(2);
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
           const settingSrc = next || cur;
-          const fmt = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-          return (
-            <div key={ti} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ textAlign: "center", fontSize: 15, fontWeight: 900, color: C.ink, letterSpacing: 1 }}>卓{ti + 1}</div>
-              <div onClick={() => toggleExpand(ti)} style={{
+          return { ti, q, cur, next, rest, est, status, settingSrc };
+        });
+        const fmt = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        const rowLabel = (text) => (
+          <div style={{ writingMode: "vertical-rl", textAlign: "center", fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 1, padding: "4px 0" }}>{text}</div>
+        );
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "20px repeat(3, 1fr)", columnGap: 6, rowGap: 8, alignItems: "start" }}>
+            {/* 見出し行 */}
+            <div />
+            {tinfo.map(({ ti }) => (
+              <div key={ti} style={{ textAlign: "center", fontSize: 15, fontWeight: 900, color: C.ink, letterSpacing: 1 }}>卓{ti + 1}</div>
+            ))}
+
+            {/* 終了目安・押し具合・設定 */}
+            {rowLabel("終了目安")}
+            {tinfo.map(({ ti, cur, est, status, settingSrc }) => (
+              <div key={ti} onClick={() => toggleExpand(ti)} style={{
                 position: "relative", textAlign: "center", cursor: "pointer",
                 background: tableAdjust === ti ? C.blue : (status && !status.ok ? "#FFF5F4" : "#fff"),
                 border: `2px ${tableAdjust === ti ? "solid" : "dashed"} ${tableAdjust === ti ? C.blue : status && !status.ok ? C.minus : C.blue}`,
@@ -1094,7 +1113,6 @@ function HomeTab() {
                 <span style={{ position: "absolute", top: 6, right: 8, fontSize: 12, color: tableAdjust === ti ? "#fff" : C.blue, opacity: 0.8 }}>✎</span>
                 {cur ? (
                   <>
-                    <div style={{ fontSize: 10.5, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.sub, opacity: 0.85 }}>終了目安</div>
                     <div style={{ fontSize: 26, fontWeight: 900, color: tableAdjust === ti ? "#fff" : C.ink, lineHeight: 1.15 }}>{est ? fmt(est) : "–"}</div>
                     <div style={{
                       minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center",
@@ -1114,51 +1132,73 @@ function HomeTab() {
                   <div style={{ fontSize: 13, color: tableAdjust === ti ? "#fff" : C.sub, marginTop: 4 }}>予定なし</div>
                 )}
               </div>
+            ))}
 
-              {cur && <TimelineCard m={cur} current order={0} onOpen={() => (cur.startedAt ? toggleExpand(ti) : setQrMatch(cur))} />}
-              {!cur && <EmptySlot label="予定なし" />}
+            {/* 対戦中 */}
+            {rowLabel("対戦中")}
+            {tinfo.map(({ ti, cur }) => (
+              <div key={ti}>
+                {cur && <TimelineCard m={cur} current order={0} onOpen={() => (cur.startedAt ? toggleExpand(ti) : setQrMatch(cur))} />}
+                {!cur && <EmptySlot label="予定なし" />}
+              </div>
+            ))}
 
-              {cur && (
-                <div style={{ textAlign: "center" }}>
-                  {cur.referee && <div style={{ fontSize: 10, color: C.sub, marginBottom: 2 }}>スコアラー：{cur.referee}</div>}
-                  <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 10.5, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
-                    {refereeOpen === ti ? "▲ 閉じる" : "📝 スコアラー候補"}
+            {/* スコアラー */}
+            <div />
+            {tinfo.map(({ ti, cur }) => (
+              <div key={ti}>
+                {cur && (
+                  <div style={{ textAlign: "center" }}>
+                    {cur.referee && <div style={{ fontSize: 10, color: C.sub, marginBottom: 2 }}>スコアラー：{cur.referee}</div>}
+                    <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 10.5, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
+                      {refereeOpen === ti ? "▲ 閉じる" : "📝 スコアラー候補"}
+                    </button>
+                  </div>
+                )}
+                {refereeOpen === ti && (
+                  <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, marginTop: 4 }}>
+                    {getRefereeCandidates(ti).length === 0 ? (
+                      <div style={{ fontSize: 11, color: C.sub, textAlign: "center" }}>候補なし</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {getRefereeCandidates(ti).map((p) => (
+                          <button key={p.id} onClick={() => assignReferee(ti, p.name)} disabled={refereeBusy}
+                            style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.tier > 0 ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
+                            {p.name}{p.count ? `（${p.count}）` : ""}
+                            {p.tier === 1 && <span style={{ color: C.sub, fontSize: 10 }}>　同卓に次試合あり</span>}
+                            {p.tier === 2 && <span style={{ color: C.sub, fontSize: 10 }}>　別卓に次試合あり</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* 次戦 */}
+            {rowLabel("次戦")}
+            {tinfo.map(({ ti, next }) => (
+              <div key={ti}>{next && <TimelineCard m={next} current={false} order={1} onOpen={() => setQrMatch(next)} />}</div>
+            ))}
+
+            {/* さらに次以降 */}
+            <div />
+            {tinfo.map(({ ti, rest }) => (
+              <div key={ti} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {rest.length > 0 && (
+                  <button onClick={() => toggleShowMore(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "4px 0" }}>
+                    {showMoreTi === ti ? "▲ 閉じる" : `▼ さらに次を見る（${rest.length}）`}
                   </button>
-                </div>
-              )}
-              {refereeOpen === ti && (
-                <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8 }}>
-                  {getRefereeCandidates(ti).length === 0 ? (
-                    <div style={{ fontSize: 11, color: C.sub, textAlign: "center" }}>候補なし</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {getRefereeCandidates(ti).map((p) => (
-                        <button key={p.id} onClick={() => assignReferee(ti, p.name)} disabled={refereeBusy}
-                          style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.tier > 0 ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
-                          {p.name}{p.count ? `（${p.count}）` : ""}
-                          {p.tier === 1 && <span style={{ color: C.sub, fontSize: 10 }}>　同卓に次試合あり</span>}
-                          {p.tier === 2 && <span style={{ color: C.sub, fontSize: 10 }}>　別卓に次試合あり</span>}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {next && <TimelineCard m={next} current={false} order={1} onOpen={() => setQrMatch(next)} />}
-
-              {rest.length > 0 && (
-                <button onClick={() => toggleShowMore(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "4px 0" }}>
-                  {showMore[ti] ? "▲ 閉じる" : `▼ さらに次を見る（${rest.length}）`}
-                </button>
-              )}
-              {showMore[ti] && rest.map((m, k) => (
-                <TimelineCard key={m.id} m={m} current={false} order={k + 2} onOpen={() => setQrMatch(m)} />
-              ))}
-            </div>
-          );
-        })}
-      </div>
+                )}
+                {showMoreTi === ti && rest.map((m, k) => (
+                  <TimelineCard key={m.id} m={m} current={false} order={k + 2} onOpen={() => setQrMatch(m)} />
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {tableAdjust != null && queues[tableAdjust][0] && (() => {
         const ti = tableAdjust;
