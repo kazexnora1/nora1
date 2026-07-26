@@ -830,15 +830,27 @@ function HomeTab() {
     setRefereeOpen((v) => (v === ti ? null : ti));
   };
 
-  const availableReferees = useMemo(() => {
-    const busy = new Set();
-    queues.forEach((q) => {
-      if (q[0]) q[0].names.forEach((n) => busy.add(n));
-      if (q[1]) q[1].names.forEach((n) => busy.add(n));
-    });
-    return roster.filter((p) => p.name && !busy.has(p.name));
-  }, [queues, roster]);
+  const getRefereeCandidates = (ti) => {
+    const cur = queues[ti][0];
+    const thisMatchPlayers = new Set(cur ? cur.names : []);
+    const playingNow = new Set();
+    queues.forEach((q) => { if (q[0]) q[0].names.forEach((n) => playingNow.add(n)); });
+    const hasNext = new Set();
+    queues.forEach((q) => { if (q[1]) q[1].names.forEach((n) => hasNext.add(n)); });
 
+    return roster
+      .filter((p) => p.name && !thisMatchPlayers.has(p.name))
+      .map((p) => {
+        const playing = playingNow.has(p.name);
+        const upcoming = hasNext.has(p.name);
+        const count = refereeCounts[p.name] || 0;
+        const score = (playing ? 100 : 0) + (upcoming ? 10 : 0) + count;
+        return { ...p, playing, upcoming, count, score };
+      })
+      .sort((a, b) => a.score - b.score);
+  };
+
+  const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
   const assignReferee = async (ti, name) => {
     const cur = queues[ti][0];
     if (!cur || refereeBusy) return;
@@ -853,6 +865,7 @@ function HomeTab() {
       record.refereeCounts[name] = (record.refereeCounts[name] || 0) + 1;
       await jsonbinWrite(record);
       setRefereeOpen(null);
+      setRefereeQR({ name, match: cur });
       refresh();
     } catch {}
     setRefereeBusy(false);
@@ -1115,14 +1128,16 @@ function HomeTab() {
               )}
               {refereeOpen === ti && (
                 <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8 }}>
-                  {availableReferees.length === 0 ? (
+                  {getRefereeCandidates(ti).length === 0 ? (
                     <div style={{ fontSize: 11, color: C.sub, textAlign: "center" }}>候補なし</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {availableReferees.map((p) => (
+                      {getRefereeCandidates(ti).map((p) => (
                         <button key={p.id} onClick={() => assignReferee(ti, p.name)} disabled={refereeBusy}
-                          style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
-                          {p.name}{refereeCounts[p.name] ? `（${refereeCounts[p.name]}）` : ""}
+                          style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.playing ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
+                          {p.name}{p.count ? `（${p.count}）` : ""}
+                          {p.playing && <span style={{ color: C.sub, fontSize: 10 }}>　試合中</span>}
+                          {!p.playing && p.upcoming && <span style={{ color: C.sub, fontSize: 10 }}>　次試合あり</span>}
                         </button>
                       ))}
                     </div>
@@ -1208,6 +1223,18 @@ function HomeTab() {
             <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{qrMatch.table}：{qrMatch.names.join(" 対 ")}</div>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(urlFor(qrMatch))}`} style={{ width: 200, height: 200, margin: "0 auto" }} />
             <button onClick={() => setQrMatch(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {refereeQR && (
+        <div onClick={() => setRefereeQR(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　主審呼び出し</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>🧑‍⚖️ {refereeQR.name} さん</div>
+            <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>このQRを読み込んでください</div>
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
+            <button onClick={() => setRefereeQR(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
       )}
