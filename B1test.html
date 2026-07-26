@@ -1115,7 +1115,7 @@ function HomeTab() {
                 )}
               </div>
 
-              {cur && <TimelineCard m={cur} current order={0} onOpen={() => toggleExpand(ti)} />}
+              {cur && <TimelineCard m={cur} current order={0} onOpen={() => (cur.startedAt ? toggleExpand(ti) : setQrMatch(cur))} />}
               {!cur && <EmptySlot label="予定なし" />}
 
               {cur && (
