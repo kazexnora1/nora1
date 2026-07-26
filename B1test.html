@@ -1120,9 +1120,9 @@ function HomeTab() {
 
               {cur && (
                 <div style={{ textAlign: "center" }}>
-                  {cur.referee && <div style={{ fontSize: 10, color: C.sub, marginBottom: 2 }}>主審：{cur.referee}</div>}
+                  {cur.referee && <div style={{ fontSize: 10, color: C.sub, marginBottom: 2 }}>スコアラー：{cur.referee}</div>}
                   <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 10.5, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
-                    {refereeOpen === ti ? "▲ 閉じる" : "🧑\u200d⚖️ レフェリー候補"}
+                    {refereeOpen === ti ? "▲ 閉じる" : "📝 スコアラー候補"}
                   </button>
                 </div>
               )}
@@ -1230,8 +1230,8 @@ function HomeTab() {
       {refereeQR && (
         <div onClick={() => setRefereeQR(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　主審呼び出し</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>🧑‍⚖️ {refereeQR.name} さん</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　スコアラー呼び出し</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>📝 {refereeQR.name} さん</div>
             <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>このQRを読み込んでください</div>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
             <button onClick={() => setRefereeQR(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
@@ -1293,10 +1293,11 @@ function TimelineCard({ m, current, order, onOpen }) {
   const balls = m.balls || [];
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
   const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const awaitingCall = current && !m.startedAt;
+  const hasProgress = (tot[0] > 0 || tot[1] > 0 || (m.rack || 1) > 1 || m.phase === "done");
+  const awaitingCall = current && !m.startedAt && !hasProgress;
   const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && (raceTo[0] - tot[0] <= 14) && (raceTo[1] - tot[1] <= 14);
 
-  // 参加者の持ち時間の残り（進行バー）。deadline（絶対時刻）を基準に逆算する
+  // 参加者の持ち時間の残り。deadline（絶対時刻）を基準に逆算する
   let timeInfo = null;
   if (current && m.startedAt && m.deadline && !m.finishedAt) {
     const totalMs = m.deadline - m.startedAt;
@@ -1306,6 +1307,11 @@ function TimelineCard({ m, current, order, onOpen }) {
     timeInfo = { remainMin, progress, over: remainMs <= 0 };
   }
   const aboutToFinish = current && timeInfo && timeInfo.remainMin <= 3;
+
+  // 終わりそう度＝スコアの達成率と残り時間の進み具合のうち大きい方（数字は出さず、バーだけで見せる）
+  const scoreProgress = raceTo[0] > 0 && raceTo[1] > 0 ? Math.max(disp[0] / raceTo[0], disp[1] / raceTo[1]) : 0;
+  const finishProgress = Math.max(scoreProgress, timeInfo ? timeInfo.progress : 0);
+  const finishColor = finishProgress > 0.85 ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
 
   const statusLabel = !current
     ? `${order + 1}戦後`
@@ -1342,24 +1348,22 @@ function TimelineCard({ m, current, order, onOpen }) {
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 1 }}>{names[i]}</div>
-            <div style={{ fontSize: 34, fontWeight: 900, color: C.ink, lineHeight: 1.05 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 1 }}>{names[i]}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: C.ink, lineHeight: 1.1, whiteSpace: "nowrap" }}>
               {m.phase === "banking" ? "–" : disp[i]}
-              <span style={{ fontSize: 14, fontWeight: 700, opacity: 0.45 }}>/{raceTo[i]}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.45 }}>/{raceTo[i]}</span>
             </div>
           </div>
         ))}
       </div>
-      {timeInfo && (
-        <div style={{ marginTop: 9 }}>
+      {(scoreProgress > 0 || timeInfo) && (
+        <div style={{ marginTop: 8 }}>
           <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.round(timeInfo.progress * 100)}%`, background: timeInfo.over ? C.minus : timeInfo.progress > 0.8 ? C.hill : C.win, borderRadius: 4 }} />
-          </div>
-          <div style={{ fontSize: 10.5, fontWeight: 700, color: timeInfo.over ? C.minus : C.sub, textAlign: "center", marginTop: 3 }}>
-            {timeInfo.over ? "時間切れ" : `残り時間 約${Math.ceil(timeInfo.remainMin)}分`}
+            <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 4, transition: "width 400ms ease" }} />
           </div>
         </div>
       )}
+
     </div>
   );
 }
