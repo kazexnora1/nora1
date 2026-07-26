@@ -1169,8 +1169,7 @@ function HomeTab() {
             <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
             <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
 
-            <div style={{ fontSize: 13, color: C.ink, marginBottom: 4, fontWeight: 800, textAlign: "center" }}>⚙ 次戦以降（残り{future.length}試合）を調整</div>
-            <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 12 }}>現在対戦中はすでに組まれているため対象外です</div>
+            <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 次戦以降（残り{future.length}試合）を調整</div>
 
             {future.length === 0 ? (
               <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
@@ -1185,8 +1184,7 @@ function HomeTab() {
                 <button onClick={() => applyTableEndTime(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
                   {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
                 </button>
-                <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 10 }}>次戦以降 全{future.length}試合に、自動計算した長さ・持ち時間を反映します</div>
-                <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
+                <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 10, marginBottom: 16 }}>
                   {snapBusy === ti ? "反映中…" : "全卓まとめて自動調整する"}
                 </button>
 
@@ -1198,7 +1196,7 @@ function HomeTab() {
                   </div>
                   <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%のときの時間（分・全卓共通）</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%の時間（全卓共通）</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
                   <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
                   <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
