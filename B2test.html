@@ -10,6 +10,8 @@
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -74,39 +76,34 @@ const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E
 const PC = [C.blue, C.red];
 const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
 
-/* ========= 共有バックエンド（jsonbin.io、App Aと同じBinを使い回す） =========
-   Bin の中に matches: { [matchId]: {...試合state} } を追加して使う。   */
-const JSONBIN_ID = "6a59da56da38895dfe69af82";
-const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
+/* ========= 共有バックエンド：Firebase Realtime Database =========
+   ↓ B1・B3 とまったく同じ値を貼ってください */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
+  authDomain: "nora1kaze-247f3.firebaseapp.com",
+  databaseURL: "https://nora1kaze-247f3-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora1kaze-247f3",
+  storageBucket: "nora1kaze-247f3.firebasestorage.app",
+  messagingSenderId: "965985901209",
+  appId: "1:965985901209:web:5f99e023c1492d50a0f608",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
 
-async function jsonbinRead() {
-  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-    headers: { "X-Master-Key": JSONBIN_KEY },
-  });
-  const data = await res.json();
-  const record = data && data.record ? data.record : {};
-  return {
-    roster: Array.isArray(record.roster) ? record.roster : [],
-    results: Array.isArray(record.results) ? record.results : [],
-    matches: record.matches && typeof record.matches === "object" ? record.matches : {},
-  };
-}
-async function jsonbinWrite(record) {
-  await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
-    body: JSON.stringify(record),
-  });
-}
+/* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
 async function loadMatchRemote(matchId) {
-  const record = await jsonbinRead();
-  return record.matches[matchId] || null;
+  const snap = await db.ref("matches/" + matchId).once("value");
+  return snap.val();
 }
 async function saveMatchRemote(matchId, state) {
-  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
-  record.matches = record.matches || {};
-  record.matches[matchId] = { ...state, updatedAt: Date.now() };
-  await jsonbinWrite(record);
+  await db.ref("matches/" + matchId).set({ ...state, updatedAt: Date.now() });
+}
+/* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
+function subscribeMatch(matchId, onValue, onError) {
+  const ref = db.ref("matches/" + matchId);
+  const handler = ref.on("value", (snap) => onValue(snap.val()),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
 }
 
 /* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
@@ -230,21 +227,15 @@ function MatchScreen({ setupInfo }) {
     })();
   }, []);
 
-  // ポーリング：2.5秒ごとに相手の最新状態を確認
+  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）
   useEffect(() => {
     if (!loaded) return;
-    const iv = setInterval(async () => {
-      try {
-        const remote = await loadMatchRemote(matchId);
-        if (remote && remote.version > stateRef.current.version) {
-          setState(remote);
-        }
+    return subscribeMatch(matchId,
+      (remote) => {
+        if (remote && remote.version > stateRef.current.version) setState(remote);
         setSyncStatus({ ok: true });
-      } catch (err) {
-        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
-      }
-    }, 2500);
-    return () => clearInterval(iv);
+      },
+      (err) => setSyncStatus({ ok: false, err }));
   }, [loaded, matchId]);
 
   // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む
