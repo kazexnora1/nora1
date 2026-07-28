@@ -189,23 +189,23 @@ function App() {
   useEffect(() => { (async () => { await refreshRoster(); setRosterLoaded(true); })(); }, []);
 
   const tabs = [
-    ["home", "🏠 ホーム"],
+    ["home", "📊 ダッシュボード"],
     ["settings", "⚙️ 設定"],
   ];
 
   return (
     <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {tab === "home" && <HomeTab />}
-        {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} />}
-      </div>
-      <div style={{ display: "flex", borderTop: `1px solid ${C.line}`, background: "#fff" }}>
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         {tabs.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 13, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {tab === "home" && <HomeTab />}
+        {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} />}
       </div>
     </div>
   );
@@ -214,8 +214,21 @@ function App() {
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
 function SettingsTab({ roster, setRoster, onRefresh, loaded }) {
   const [showSingle, setShowSingle] = useState(false);
+  const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
+
+  const updateTournamentName = (v) => {
+    setTournamentName(v);
+    saveSettings({ tournamentName: v });
+  };
+
   return (
     <div>
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 0", color: C.ink }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>大会名</div>
+        <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
+          placeholder="例：第◯回 身内杯"
+          style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
+      </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
         <BulkScheduleTab roster={roster} />
@@ -1188,8 +1201,6 @@ function HomeTab() {
 
   return (
     <div style={{ padding: "16px 12px 24px", color: C.ink }}>
-      <div style={{ fontSize: 19, fontWeight: 900, color: C.ink, marginBottom: 12 }}>テーブル状況</div>
-
       {showGlobalAdjust && (
         <div style={{ background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, marginBottom: 16, position: "relative" }}>
           <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
@@ -1487,7 +1498,7 @@ function TimelineCard({ m, current, order, onOpen, referee }) {
 
   const statusLabel = !current
     ? `${order + 1}戦後`
-    : awaitingCall ? "📣 呼び出してください"
+    : awaitingCall ? "📣 呼び出し中"
     : m.phase === "banking" ? "バンキング待ち"
     : aboutToFinish ? (hillHill ? "🔥 ヒルヒル！" : "⏰ 終わりそう")
     : "試合中";
