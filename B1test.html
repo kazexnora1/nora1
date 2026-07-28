@@ -79,23 +79,45 @@ const JSONBIN_ID = "6a59da56da38895dfe69af82";
 const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
 
 async function jsonbinRead() {
-  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-    headers: { "X-Master-Key": JSONBIN_KEY },
-  });
+  let res;
+  try {
+    res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+      headers: { "X-Master-Key": JSONBIN_KEY },
+    });
+  } catch (e) {
+    throw new Error("通信できません（オフライン？）");
+  }
+  if (!res.ok) {
+    let detail = "";
+    try { const j = await res.json(); detail = j && j.message ? `：${j.message}` : ""; } catch {}
+    throw new Error(`読み込み失敗 HTTP ${res.status}${detail}`);
+  }
   const data = await res.json();
   const record = data && data.record ? data.record : {};
   return {
     roster: Array.isArray(record.roster) ? record.roster : [],
     results: Array.isArray(record.results) ? record.results : [],
     matches: record.matches && typeof record.matches === "object" ? record.matches : {},
+    refereeCounts: record.refereeCounts && typeof record.refereeCounts === "object" ? record.refereeCounts : {},
   };
 }
 async function jsonbinWrite(record) {
-  await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
-    body: JSON.stringify(record),
-  });
+  let res;
+  try {
+    res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+      body: JSON.stringify(record),
+    });
+  } catch (e) {
+    throw new Error("通信できません（オフライン？）");
+  }
+  if (!res.ok) {
+    let detail = "";
+    try { const j = await res.json(); detail = j && j.message ? `：${j.message}` : ""; } catch {}
+    // 429 はリクエスト数の上限、403 はキー・プラン、413 はデータ量オーバー
+    throw new Error(`保存失敗 HTTP ${res.status}${detail}`);
+  }
 }
 const ROSTER_BACKUP_KEY = "jcl9_b1_roster_backup_v1";
 function backupRoster(roster) {
@@ -333,7 +355,7 @@ function TimelineTab() {
       setErr(null);
     } catch (e) { setErr(String(e && e.message ? e.message : e)); }
   };
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 5000); return () => clearInterval(iv); }, []);
+  useEffect(() => { refresh(); const iv = setInterval(() => { if (!document.hidden) refresh(); }, 6000); return () => clearInterval(iv); }, []);
 
   const slots = Math.max(1, ...cols.map((c) => c.length));
   const total = cols.reduce((s, c) => s + c.length, 0);
@@ -421,7 +443,7 @@ function StandingsTab() {
       setErr(null);
     } catch (e) { setErr(String(e && e.message ? e.message : e)); }
   };
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 5000); return () => clearInterval(iv); }, []);
+  useEffect(() => { refresh(); const iv = setInterval(() => { if (!document.hidden) refresh(); }, 6000); return () => clearInterval(iv); }, []);
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
@@ -790,6 +812,12 @@ function BulkScheduleTab({ roster }) {
       });
       record.matches = next;
       await jsonbinWrite(record);
+      // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
+      const check = await jsonbinRead();
+      const saved = Object.keys(check.matches || {}).filter((id) => next[id]).length;
+      if (saved !== rows.length) {
+        throw new Error(`保存を確認できませんでした（${saved}/${rows.length}件）。もう一度お試しください`);
+      }
       setMsg({ ok: true, text: `${rows.length}件をタイムラインに登録しました` });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
@@ -1101,6 +1129,7 @@ function HomeTab() {
   const [tLenPct, setTLenPct] = useState(100);
   const [tPer100, setTPer100] = useState(60);
 
+  const [loadErr, setLoadErr] = useState(null);
   const refresh = async () => {
     try {
       const r = await jsonbinRead();
@@ -1109,9 +1138,15 @@ function HomeTab() {
       setTotalActive(Object.keys(r.matches || {}).filter((id) => r.matches[id] && Date.now() - (r.matches[id].updatedAt || 0) <= STALE_MS).length);
       setRoster(r.roster || []);
       setRefereeCounts(r.refereeCounts || {});
-    } catch {}
+      setLoadErr(null);
+    } catch (e) { setLoadErr(String(e && e.message ? e.message : e)); }
   };
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, []);
+  useEffect(() => {
+    refresh();
+    // 画面が裏に回っている間は通信しない（APIのリクエスト数を無駄に消費しないため）
+    const iv = setInterval(() => { if (!document.hidden) refresh(); }, 4000);
+    return () => clearInterval(iv);
+  }, []);
 
   // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストと「さらに次を見る」を閉じる
   const toggleRefereeList = (ti) => {
@@ -1474,6 +1509,8 @@ function HomeTab() {
 
   return (
     <div style={{ padding: "16px 12px 24px", color: C.ink }}>
+      {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
+
       {showGlobalAdjust && (
         <div style={{ background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, marginBottom: 16, position: "relative" }}>
           <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
