@@ -97,10 +97,22 @@ async function jsonbinWrite(record) {
     body: JSON.stringify(record),
   });
 }
-async function saveRoster(roster) {
+const ROSTER_BACKUP_KEY = "jcl9_b1_roster_backup_v1";
+function backupRoster(roster) {
+  try { if (roster && roster.length) localStorage.setItem(ROSTER_BACKUP_KEY, JSON.stringify(roster)); } catch {}
+}
+function loadRosterBackup() {
+  try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+async function saveRoster(roster, allowEmpty) {
   const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
+  // 通信失敗などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
+  if (!allowEmpty && (!roster || roster.length === 0) && (record.roster || []).length > 0) {
+    throw new Error("メンバーが空のため保存を中止しました");
+  }
   record.roster = roster;
   await jsonbinWrite(record);
+  backupRoster(roster);
 }
 async function saveMatch(matchId, state) {
   const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
@@ -259,18 +271,28 @@ function saveSettings(patch) {
 function App() {
   const [tab, setTab] = useState("home");
   const [roster, setRoster] = useState([]);
-  const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [rosterLoaded, setRosterLoaded] = useState(false); // 読み込みに成功した時だけ true。false の間は保存しない
+  const [rosterError, setRosterError] = useState(null);
 
-  const refreshRoster = async () => {
-    try {
-      const r = await jsonbinRead();
-      if (r.roster.length) _id = Math.max(..._idsOf(r.roster)) + 1;
-      setRoster(r.roster);
-    } catch {}
-  };
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
+  const refreshRoster = async () => {
+    // 失敗は握り潰さない。握り潰すと「空のまま読み込み完了」になり、空リストで上書きしてしまう
+    const r = await jsonbinRead();
+    if (r.roster.length) {
+      _id = Math.max(..._idsOf(r.roster)) + 1;
+      backupRoster(r.roster);
+    }
+    setRoster(r.roster);
+    setRosterLoaded(true);
+    setRosterError(null);
+  };
 
-  useEffect(() => { (async () => { await refreshRoster(); setRosterLoaded(true); })(); }, []);
+  useEffect(() => {
+    (async () => {
+      try { await refreshRoster(); }
+      catch (e) { setRosterError(String(e && e.message ? e.message : e)); }
+    })();
+  }, []);
 
   const tabs = [
     ["home", "📊 ダッシュボード"],
@@ -293,7 +315,7 @@ function App() {
         {tab === "home" && <HomeTab />}
         {tab === "timeline" && <TimelineTab />}
         {tab === "standings" && <StandingsTab />}
-        {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} />}
+        {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
       </div>
     </div>
   );
@@ -432,7 +454,7 @@ function StandingsTab() {
 }
 
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
-function SettingsTab({ roster, setRoster, onRefresh, loaded }) {
+function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [showSingle, setShowSingle] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
 
@@ -449,7 +471,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded }) {
           placeholder="例：第◯回 身内杯"
           style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
       </div>
-      <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} />
+      <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
         <BulkScheduleTab roster={roster} />
       </div>
@@ -464,34 +486,65 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded }) {
 }
 
 /* ========= メンバータブ ========= */
-function MembersTab({ roster, setRoster, onRefresh, loaded }) {
+function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
   const saveTimer = useRef(null);
   const rosterRef = useRef(roster);
   rosterRef.current = roster;
+  const backup = useRef(loadRosterBackup()).current;
 
-  const update = (id, k, v) => setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
-  const remove = (id) => setRoster((rs) => rs.filter((p) => p.id !== id));
-  const add = () => roster.length < 40 && setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
-
-  const persist = () => {
+  // 保存は「ユーザーが実際に編集した時」だけ走らせる。
+  // 以前は roster の変化を useEffect で監視していたため、読み込みに失敗して空のままこのタブを開くと、
+  // マウント時に空リストで上書き保存されてしまっていた
+  const persist = (allowEmpty) => {
+    if (!loaded) return; // 読み込みに成功していない間は絶対に保存しない
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       setSaving(true);
-      await saveRoster(rosterRef.current).catch(() => {});
+      try {
+        await saveRoster(rosterRef.current, allowEmpty);
+        setSaveMsg(null);
+      } catch (e) {
+        setSaveMsg(String(e && e.message ? e.message : e));
+      }
       setSaving(false);
-    }, 500);
+    }, 600);
   };
 
-  useEffect(() => { if (loaded) persist(); }, [roster]);
+  const update = (id, k, v) => { setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p))); persist(); };
+  const remove = (id) => { setRoster((rs) => rs.filter((p) => p.id !== id)); persist(true); };
+  const add = () => {
+    if (roster.length >= 40) return;
+    setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
+    persist();
+  };
+  const restoreBackup = () => {
+    if (!backup.length) return;
+    if (!window.confirm(`この端末に残っている${backup.length}人分のバックアップで復元します。よろしいですか？`)) return;
+    setRoster(backup);
+    _id = Math.max(...backup.map((p) => p.id || 0)) + 1;
+    persist(true);
+  };
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>メンバーリスト</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : "名前とファーゴレート（共有）"}</div>
-        <button onClick={onRefresh} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
+        <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
+
+      {loadError && (
+        <Notice>メンバーの読み込みに失敗しました。データを守るため編集の保存を停止しています。通信を確認して「🔄 更新」を押してください。（{loadError}）</Notice>
+      )}
+      {saveMsg && <Notice>{saveMsg}</Notice>}
+      {loaded && roster.length === 0 && backup.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Notice>共有リストが空です。この端末に{backup.length}人分のバックアップが残っています。</Notice>
+          <button onClick={restoreBackup} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>↺ バックアップから復元する</button>
+        </div>
+      )}
       {roster.map((p) => (
         <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
