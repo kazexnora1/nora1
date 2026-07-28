@@ -55,6 +55,7 @@ async function jsonbinRead() {
 const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない試合は無視（前日の残骸対策）
 
 function isMatchFinished(m) {
+  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
@@ -225,22 +226,28 @@ function TablePanel({ tableNum, m }) {
   ];
   const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
-  const matchWinner = m.phase === "banking" ? null :
-    (tot[0] >= raceTo[0] && raceTo[0] > 0) ? 0 :
-    (tot[1] >= raceTo[1] && raceTo[1] > 0) ? 1 :
+  const bothLose = !!m.bothLose; // 時間切れでどちらも目標に届かなかった
+  const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
+  const matchWinner = bothLose || m.phase === "banking" ? null :
+    (m.winner === 0 || m.winner === 1) ? m.winner :
+    // ヒルヒルで両者が目標に達した場合は、そのラックで9番を落とした方が勝ち
+    (reached[0] && reached[1]) ? ((m.hist || []).slice(-1)[0] || { w: 0 }).w :
+    reached[0] ? 0 :
+    reached[1] ? 1 :
     (!hillHill && disp[0] >= raceTo[0] && raceTo[0] > 0) ? 0 :
     (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
+  const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "18px 22px", color: C.ink, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 17, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
         <span style={{ fontSize: 15, color: C.sub, fontWeight: 700 }}>
-          {m.phase === "banking" ? "バンキング中" : matchWinner != null ? "試合終了" : ""}
+          {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
       </div>
 
-      {hillHill && matchWinner == null && m.phase === "play" && (
+      {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
         <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "5px 10px", textAlign: "center", fontSize: 15, fontWeight: 800, marginBottom: 8 }}>
           ヒルヒル
         </div>
@@ -259,7 +266,11 @@ function TablePanel({ tableNum, m }) {
                   <span style={{ fontSize: "0.42em", opacity: 0.55, WebkitTextStroke: "0px" }}>/{raceTo[i]}</span>
                 </div>
               </div>
-              {hi && (
+              {bothLose ? (
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>
+                  達成率 {(rate(i) * 100).toFixed(1)}％
+                </div>
+              ) : hi && (
                 <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>
                   {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                 </div>
@@ -270,7 +281,11 @@ function TablePanel({ tableNum, m }) {
         })}
       </div>
 
-      {matchWinner != null && (
+      {bothLose ? (
+        <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.hill }}>
+          時間切れ・両者負け
+        </div>
+      ) : matchWinner != null && (
         <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.win }}>
           🏆 {names[matchWinner]} 勝利
         </div>
