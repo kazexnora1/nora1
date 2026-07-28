@@ -145,6 +145,19 @@ function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
 const STALE_MS = 1000 * 60 * 60 * 6;
+/* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+function normalizeMatch(m) {
+  if (!m) return m;
+  return {
+    ...m,
+    names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
+    tot: Array.isArray(m.tot) ? m.tot : [0, 0],
+    raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
+    balls: Array.isArray(m.balls) ? m.balls : [],
+    hist: Array.isArray(m.hist) ? m.hist : [],
+    rack: m.rack || 1,
+  };
+}
 function isMatchFinished(m) {
   if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
@@ -158,7 +171,7 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
-    list.push({ ...m, id });
+    list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
@@ -197,7 +210,7 @@ function getAllForTable(matches, tableNum) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    list.push({ ...m, id });
+    list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
@@ -364,24 +377,24 @@ function TimelineTab() {
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 16, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
         <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
           <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "24px repeat(3, minmax(0, 1fr))", columnGap: 6, rowGap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
         <div />
         {[1, 2, 3].map((t) => (
-          <div key={t} style={{ textAlign: "center", fontSize: 17, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
         ))}
 
         {Array.from({ length: slots }, (_, s) => (
           <React.Fragment key={s}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
             {[0, 1, 2].map((ti) => {
               const e = cols[ti][s];
-              return <div key={ti}>{e ? <TimelineSlotCard m={e.m} st={e.st} /> : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 13 }}>空き</div>}</div>;
+              return <div key={ti}>{e ? <TimelineSlotCard m={e.m} st={e.st} /> : <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
             })}
           </React.Fragment>
         ))}
@@ -411,7 +424,7 @@ function TimelineSlotCard({ m, st }) {
 
   return (
     <div style={{
-      height: 108, boxSizing: "border-box", background: style.bg,
+      height: 128, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
       opacity: st === "queued" ? 0.7 : 1,
@@ -420,17 +433,17 @@ function TimelineSlotCard({ m, st }) {
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
           border: st === "call" ? `1.5px solid ${C.blue}` : "none",
-          borderRadius: 12, padding: "2px 9px", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
         }}>{style.badge}</span>
       </div>
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: w === i ? 900 : 700, color: w === i ? C.win : (i === 0 ? C.blue : C.red), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.ink, lineHeight: 1.25, fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ fontSize: 15.5, fontWeight: w === i ? 900 : 700, color: w === i ? C.win : (i === 0 ? C.blue : C.red), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+            <div style={{ fontSize: 27, fontWeight: 900, color: C.ink, lineHeight: 1.25, fontVariantNumeric: "tabular-nums" }}>
               {showScore
-                ? <>{tot[i]}<span style={{ fontSize: 12, fontWeight: 700, opacity: 0.45 }}>/{rt[i]}</span></>
-                : <span style={{ fontSize: 19, color: C.sub }}>{rt[i]}</span>}
+                ? <>{tot[i]}<span style={{ fontSize: 14, fontWeight: 700, opacity: 0.45 }}>/{rt[i]}</span></>
+                : <span style={{ fontSize: 23, color: C.sub }}>{rt[i]}</span>}
             </div>
           </div>
         ))}
@@ -450,7 +463,7 @@ function StandingsTab() {
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
-      <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 42px 42px 68px", gap: 6, padding: "0 10px 8px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 12px 8px", fontSize: 14.5, color: C.sub, fontWeight: 800 }}>
         <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
       </div>
       {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 15, color: C.sub, padding: "28px 0" }}>まだ結果がありません</div>}
@@ -458,19 +471,19 @@ function StandingsTab() {
         const top = i < 8 && r.played > 0;
         return (
           <div key={r.name} style={{
-            display: "grid", gridTemplateColumns: "34px 1fr 42px 42px 68px", gap: 6, alignItems: "center",
+            display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
             background: top ? C.lightBlue : "#fff", border: `1.5px solid ${top ? C.blue : C.line}`,
-            borderRadius: 12, padding: "13px 10px", marginBottom: 7,
+            borderRadius: 12, padding: "15px 12px", marginBottom: 8,
           }}>
-            <div style={{ fontSize: 18, fontWeight: 900, color: top ? C.blue : C.sub }}>{i + 1}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-            <div style={{ textAlign: "center", fontSize: 21, fontWeight: 900, color: C.win }}>{r.win}</div>
-            <div style={{ textAlign: "center", fontSize: 21, fontWeight: 800, color: C.sub }}>{r.loss}</div>
-            <div style={{ textAlign: "right", fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
+            <div style={{ fontSize: 21, fontWeight: 900, color: top ? C.blue : C.sub }}>{i + 1}</div>
+            <div style={{ fontSize: 21, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ textAlign: "center", fontSize: 25, fontWeight: 900, color: C.win }}>{r.win}</div>
+            <div style={{ textAlign: "center", fontSize: 25, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+            <div style={{ textAlign: "right", fontSize: 19, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
           </div>
         );
       })}
-      <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, lineHeight: 1.7 }}>
+      <div style={{ fontSize: 13.5, color: C.sub, marginTop: 16, lineHeight: 1.7 }}>
         並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。全勝の選手は達成率「–」で最上位に並びます。
       </div>
       {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
@@ -1160,7 +1173,7 @@ function getFinishedMatches(matches) {
   for (const id in matches) {
     const m = matches[id];
     if (!m || !isMatchFinished(m)) continue;
-    list.push({ ...m, id });
+    list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (b.finishedAt || b.updatedAt || 0) - (a.finishedAt || a.updatedAt || 0));
   return list;
