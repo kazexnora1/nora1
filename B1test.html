@@ -10,6 +10,8 @@
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -74,50 +76,50 @@ const C = {
 /* このB1から発行するQRが指す先（B2アプリのURL）。実際にデプロイしたURLに合わせて調整してください */
 const B2_URL = "https://kazexnora1.github.io/nora1/B2test.html";
 
-/* ========= 共有バックエンド（App A/B2と同じBin） ========= */
-const JSONBIN_ID = "6a59da56da38895dfe69af82";
-const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
+/* ========= 共有バックエンド：Firebase Realtime Database =========
+   ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。
+   B1・B2・B3 の3ファイルすべて同じ値にすること。 */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
+  authDomain: "nora1kaze-247f3.firebaseapp.com",
+  databaseURL: "https://nora1kaze-247f3-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora1kaze-247f3",
+  storageBucket: "nora1kaze-247f3.firebasestorage.app",
+  messagingSenderId: "965985901209",
+  appId: "1:965985901209:web:5f99e023c1492d50a0f608",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
 
-async function jsonbinRead() {
-  let res;
-  try {
-    res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-      headers: { "X-Master-Key": JSONBIN_KEY },
-    });
-  } catch (e) {
-    throw new Error("通信できません（オフライン？）");
-  }
-  if (!res.ok) {
-    let detail = "";
-    try { const j = await res.json(); detail = j && j.message ? `：${j.message}` : ""; } catch {}
-    throw new Error(`読み込み失敗 HTTP ${res.status}${detail}`);
-  }
-  const data = await res.json();
-  const record = data && data.record ? data.record : {};
+/* 1回だけ読む */
+async function dbGet(path) {
+  const snap = await db.ref(path).once("value");
+  return snap.val();
+}
+/* 変更を購読する。ポーリングと違い、変わった瞬間に届く。戻り値を呼ぶと解除 */
+function dbSubscribe(path, onValue, onError) {
+  const ref = db.ref(path);
+  const handler = ref.on("value", (snap) => onValue(snap.val()),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+async function dbSet(path, value) { await db.ref(path).set(value); }
+/* 複数の場所をまとめて更新する。指定した項目だけが変わるので、
+   スコアラーが入力中の値を本部側が上書きしてしまう事故が起きない */
+async function dbUpdate(path, values) { await db.ref(path).update(values); }
+
+function normalizeRecord(rec) {
+  rec = rec || {};
   return {
-    roster: Array.isArray(record.roster) ? record.roster : [],
-    results: Array.isArray(record.results) ? record.results : [],
-    matches: record.matches && typeof record.matches === "object" ? record.matches : {},
-    refereeCounts: record.refereeCounts && typeof record.refereeCounts === "object" ? record.refereeCounts : {},
+    roster: Array.isArray(rec.roster) ? rec.roster : [],
+    results: Array.isArray(rec.results) ? rec.results : [],
+    matches: rec.matches && typeof rec.matches === "object" ? rec.matches : {},
+    refereeCounts: rec.refereeCounts && typeof rec.refereeCounts === "object" ? rec.refereeCounts : {},
   };
 }
-async function jsonbinWrite(record) {
-  let res;
-  try {
-    res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
-      body: JSON.stringify(record),
-    });
-  } catch (e) {
-    throw new Error("通信できません（オフライン？）");
-  }
-  if (!res.ok) {
-    let detail = "";
-    try { const j = await res.json(); detail = j && j.message ? `：${j.message}` : ""; } catch {}
-    // 429 はリクエスト数の上限、403 はキー・プラン、413 はデータ量オーバー
-    throw new Error(`保存失敗 HTTP ${res.status}${detail}`);
-  }
+/* 全体を1回読む（従来のjsonbinReadと同じ形で返す） */
+async function readAll() {
+  return normalizeRecord(await dbGet("/"));
 }
 const ROSTER_BACKUP_KEY = "jcl9_b1_roster_backup_v1";
 function backupRoster(roster) {
@@ -127,20 +129,17 @@ function loadRosterBackup() {
   try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
 }
 async function saveRoster(roster, allowEmpty) {
-  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
-  // 通信失敗などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
-  if (!allowEmpty && (!roster || roster.length === 0) && (record.roster || []).length > 0) {
-    throw new Error("メンバーが空のため保存を中止しました");
+  // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
+  if (!allowEmpty && (!roster || roster.length === 0)) {
+    const cur = await dbGet("roster");
+    if (Array.isArray(cur) && cur.length > 0) throw new Error("メンバーが空のため保存を中止しました");
   }
-  record.roster = roster;
-  await jsonbinWrite(record);
+  await dbSet("roster", roster || []);
   backupRoster(roster);
 }
 async function saveMatch(matchId, state) {
-  const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
-  record.matches = record.matches || {};
-  record.matches[matchId] = { ...state, updatedAt: Date.now() };
-  await jsonbinWrite(record);
+  // その対戦だけを書き換える（他の卓のデータには触れない）
+  await dbSet("matches/" + matchId, { ...state, updatedAt: Date.now() });
 }
 function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
@@ -299,7 +298,7 @@ function App() {
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
   const refreshRoster = async () => {
     // 失敗は握り潰さない。握り潰すと「空のまま読み込み完了」になり、空リストで上書きしてしまう
-    const r = await jsonbinRead();
+    const r = await readAll();
     if (r.roster.length) {
       _id = Math.max(..._idsOf(r.roster)) + 1;
       backupRoster(r.roster);
@@ -348,14 +347,10 @@ function TimelineTab() {
   const [cols, setCols] = useState([[], [], []]);
   const [err, setErr] = useState(null);
 
-  const refresh = async () => {
-    try {
-      const r = await jsonbinRead();
-      setCols([1, 2, 3].map((t) => getAllForTable(r.matches, t)));
-      setErr(null);
-    } catch (e) { setErr(String(e && e.message ? e.message : e)); }
-  };
-  useEffect(() => { refresh(); const iv = setInterval(() => { if (!document.hidden) refresh(); }, 6000); return () => clearInterval(iv); }, []);
+  // ポーリングせず、matches の変更を購読する
+  useEffect(() => dbSubscribe("matches",
+    (matches) => { setCols([1, 2, 3].map((t) => getAllForTable(matches || {}, t))); setErr(null); },
+    (e) => setErr(e)), []);
 
   const slots = Math.max(1, ...cols.map((c) => c.length));
   const total = cols.reduce((s, c) => s + c.length, 0);
@@ -436,14 +431,9 @@ function StandingsTab() {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
 
-  const refresh = async () => {
-    try {
-      const r = await jsonbinRead();
-      setRows(buildStandings(r.matches, r.roster || []));
-      setErr(null);
-    } catch (e) { setErr(String(e && e.message ? e.message : e)); }
-  };
-  useEffect(() => { refresh(); const iv = setInterval(() => { if (!document.hidden) refresh(); }, 6000); return () => clearInterval(iv); }, []);
+  useEffect(() => dbSubscribe("/",
+    (rec) => { const r = normalizeRecord(rec); setRows(buildStandings(r.matches, r.roster)); setErr(null); },
+    (e) => setErr(e)), []);
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
@@ -475,6 +465,50 @@ function StandingsTab() {
   );
 }
 
+/* ========= 接続診断：保存できない原因（通信・上限・データ量）をその場で確認する ========= */
+function ConnectionTest() {
+  const [log, setLog] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    const lines = [];
+    lines.push(`接続先：${FIREBASE_CONFIG.databaseURL}`);
+    try {
+      const t0 = Date.now();
+      const rec = (await dbGet("/")) || {};
+      lines.push(`① 読み込み：成功（${Date.now() - t0}ms）`);
+      lines.push(`   データ量：${(JSON.stringify(rec).length / 1024).toFixed(1)} KB`);
+      lines.push(`   メンバー：${(rec.roster || []).length}人`);
+      lines.push(`   対戦データ：${Object.keys(rec.matches || {}).length}件`);
+      // 実データには触れず、確認用の場所に書き込んで権限をチェックする
+      const t1 = Date.now();
+      await dbSet("_healthcheck", Date.now());
+      lines.push(`② 書き込み：成功（${Date.now() - t1}ms）`);
+      lines.push("→ 読み書きとも正常です");
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      lines.push(`エラー：${msg}`);
+      if (/permission|Permission/.test(msg)) lines.push("→ Realtime Databaseのルールが許可になっていません");
+      else if (/FIREBASE_CONFIG|Invalid|invalid/.test(msg)) lines.push("→ databaseURL の値を確認してください");
+      else lines.push("→ オフライン、または設定値が違う可能性があります");
+    }
+    setLog(lines);
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button onClick={run} disabled={busy} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "11px 0", cursor: "pointer", fontFamily: FONT }}>
+        {busy ? "確認中…" : "🔌 保存できるか接続を確認する"}
+      </button>
+      {log && (
+        <pre style={{ marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 1.7, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "monospace" }}>{log.join("\n")}</pre>
+      )}
+    </div>
+  );
+}
+
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
 function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [showSingle, setShowSingle] = useState(false);
@@ -492,6 +526,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
           placeholder="例：第◯回 身内杯"
           style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
+        <ConnectionTest />
       </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
@@ -797,7 +832,6 @@ function BulkScheduleTab({ roster }) {
     if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦はすべて置き換えられます。よろしいですか？`)) return;
     setRegistering(true);
     try {
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
       const next = {};
       rows.forEach((m) => {
@@ -810,11 +844,10 @@ function BulkScheduleTab({ roster }) {
           createdAt: m.createdAt, updatedAt: now,
         };
       });
-      record.matches = next;
-      await jsonbinWrite(record);
+      await dbSet("matches", next);
       // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
-      const check = await jsonbinRead();
-      const saved = Object.keys(check.matches || {}).filter((id) => next[id]).length;
+      const savedMatches = (await dbGet("matches")) || {};
+      const saved = Object.keys(savedMatches).filter((id) => next[id]).length;
       if (saved !== rows.length) {
         throw new Error(`保存を確認できませんでした（${saved}/${rows.length}件）。もう一度お試しください`);
       }
@@ -884,6 +917,7 @@ function BulkScheduleTab({ roster }) {
 
       {grid && (
         <>
+          <Notice>下書きができました。まだ保存されていません。内容を確認して、一番下の青いボタンで登録してください。</Notice>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12.5, color: C.sub, marginBottom: 14, justifyContent: "center" }}>
             <span>総試合 <b style={{ color: C.ink }}>{result.plan.total}</b></span>
             <span>コマ <b style={{ color: C.ink }}>{result.plan.slots}</b></span>
@@ -924,11 +958,16 @@ function BulkScheduleTab({ roster }) {
             </div>
           ))}
 
-          <button onClick={register} disabled={registering}
-            style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT, marginTop: 16 }}>
-            {registering ? "登録中…" : "この対戦表をタイムラインに登録する"}
-          </button>
-          {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 8 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+          <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(to top, #fff 70%, rgba(255,255,255,0))", paddingTop: 14, paddingBottom: 8, marginTop: 16 }}>
+            <button onClick={register} disabled={registering}
+              style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT, boxShadow: "0 4px 14px rgba(46,109,181,0.35)" }}>
+              {registering ? "登録中…" : "▲ この対戦表をタイムラインに登録する"}
+            </button>
+            <div style={{ textAlign: "center", fontSize: 11, color: C.sub, marginTop: 6 }}>
+              「組む」だけでは保存されません。このボタンで登録するとタイムライン・ダッシュボードに反映されます
+            </div>
+            {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 8 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+          </div>
         </>
       )}
     </div>
@@ -984,11 +1023,13 @@ function ScheduleTab({ roster }) {
 
   const refreshStatus = async () => {
     try {
-      const r = await jsonbinRead();
-      setTableStatus([1, 2, 3].map((t) => getQueueForTable(r.matches, t)[0] || null));
+      const matches = await dbGet("matches");
+      setTableStatus([1, 2, 3].map((t) => getQueueForTable(matches || {}, t)[0] || null));
     } catch {}
   };
-  useEffect(() => { refreshStatus(); const iv = setInterval(refreshStatus, 4000); return () => clearInterval(iv); }, []);
+  useEffect(() => dbSubscribe("matches",
+    (matches) => setTableStatus([1, 2, 3].map((t) => getQueueForTable(matches || {}, t)[0] || null)),
+    () => {}), []);
 
   const p1 = roster[i1], p2 = roster[i2];
   const R1 = p1 ? parseInt(p1.r, 10) : 0, R2 = p2 ? parseInt(p2.r, 10) : 0;
@@ -1113,6 +1154,18 @@ function getFinishedMatches(matches) {
 }
 
 const ICON_POOL = "data:image/png;base64,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";
+// 対戦の「試合の長さ・持ち時間・目標点」だけを部分更新するための組み立て。
+// 対戦データ全体を書き戻さないので、スコアラーが入力中のスコアを消してしまわない
+function planMatchUpdate(updates, qm, lenPct, minutes, now) {
+  const R1 = qm.r1 || 0, R2 = qm.r2 || 0;
+  const base = qm.raceTo || [0, 0];
+  const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: base[0], rt2: base[1] };
+  updates[qm.id + "/raceTo"] = [rt.rt1, rt.rt2];
+  updates[qm.id + "/lenPct"] = lenPct;
+  updates[qm.id + "/matchMinutes"] = minutes;
+  updates[qm.id + "/version"] = (qm.version || 1) + 1;
+  updates[qm.id + "/updatedAt"] = now;
+}
 const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 20, cursor: "pointer", fontFamily: FONT, touchAction: "manipulation" };
 
 function HomeTab() {
@@ -1130,23 +1183,22 @@ function HomeTab() {
   const [tPer100, setTPer100] = useState(60);
 
   const [loadErr, setLoadErr] = useState(null);
-  const refresh = async () => {
-    try {
-      const r = await jsonbinRead();
-      setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
-      setFinished(getFinishedMatches(r.matches));
-      setTotalActive(Object.keys(r.matches || {}).filter((id) => r.matches[id] && Date.now() - (r.matches[id].updatedAt || 0) <= STALE_MS).length);
-      setRoster(r.roster || []);
-      setRefereeCounts(r.refereeCounts || {});
-      setLoadErr(null);
-    } catch (e) { setLoadErr(String(e && e.message ? e.message : e)); }
+  const applyRecord = (rec) => {
+    const r = normalizeRecord(rec);
+    setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
+    setFinished(getFinishedMatches(r.matches));
+    setTotalActive(Object.keys(r.matches).filter((id) => r.matches[id] && Date.now() - (r.matches[id].updatedAt || 0) <= STALE_MS).length);
+    setRoster(r.roster);
+    setRefereeCounts(r.refereeCounts);
+    setLoadErr(null);
   };
-  useEffect(() => {
-    refresh();
-    // 画面が裏に回っている間は通信しない（APIのリクエスト数を無駄に消費しないため）
-    const iv = setInterval(() => { if (!document.hidden) refresh(); }, 4000);
-    return () => clearInterval(iv);
-  }, []);
+  // 手動更新用（購読しているので通常は不要）
+  const refresh = async () => {
+    try { applyRecord(await dbGet("/")); }
+    catch (e) { setLoadErr(String(e && e.message ? e.message : e)); }
+  };
+  // 変更を購読する。ポーリングしないので、開きっぱなしでも通信が積み上がらない
+  useEffect(() => dbSubscribe("/", applyRecord, (e) => setLoadErr(e)), []);
 
   // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストと「さらに次を見る」を閉じる
   const toggleRefereeList = (ti) => {
@@ -1182,14 +1234,12 @@ function HomeTab() {
     if (!cur || refereeBusy) return;
     setRefereeBusy(true);
     try {
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
-      const m = record.matches[cur.id];
-      if (m) {
-        record.matches[cur.id] = { ...m, referee: name, version: (m.version || 1) + 1, updatedAt: Date.now() };
-      }
-      record.refereeCounts = record.refereeCounts || {};
-      record.refereeCounts[name] = (record.refereeCounts[name] || 0) + 1;
-      await jsonbinWrite(record);
+      // 対戦の一部だけを更新する。スコアラーが入力中の値には触れない
+      await dbUpdate("matches/" + cur.id, {
+        referee: name, version: (cur.version || 1) + 1, updatedAt: Date.now(),
+      });
+      const prevCount = (await dbGet("refereeCounts/" + name)) || 0;
+      await dbSet("refereeCounts/" + name, prevCount + 1);
       setRefereeOpen(null);
       setRefereeQR({ name, match: cur });
       refresh();
@@ -1242,16 +1292,10 @@ function HomeTab() {
     if (calc.error) { setSnapMsg({ ok: false, text: calc.error }); return; }
     setSnapBusy(ti);
     try {
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
-      calc.future.forEach((qm) => {
-        const m = record.matches[qm.id];
-        if (!m) return;
-        const R1 = m.r1 || 0, R2 = m.r2 || 0;
-        const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-        record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
-      });
-      await jsonbinWrite(record);
+      const updates = {};
+      calc.future.forEach((qm) => planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now));
+      await dbUpdate("matches", updates);
       setTLenPct(calc.newLenPct);
 
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
@@ -1295,21 +1339,14 @@ function HomeTab() {
     const newMinutes = Math.max(1, Math.round(tPer100 * (tLenPct / 100)));
     setSnapBusy(tableAdjust);
     try {
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
+      const updates = {};
       let count = 0;
       [0, 1, 2].forEach((oi) => {
-        queues[oi].slice(1).forEach((qm) => {
-          const m = record.matches[qm.id];
-          if (!m) return;
-          const R1 = m.r1 || 0, R2 = m.r2 || 0;
-          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, tLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: tLenPct, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
-          count++;
-        });
+        queues[oi].slice(1).forEach((qm) => { planMatchUpdate(updates, qm, tLenPct, newMinutes, now); count++; });
       });
       if (count === 0) { setSnapMsg({ ok: false, text: "次の試合がありません" }); setSnapBusy(null); return; }
-      await jsonbinWrite(record);
+      await dbUpdate("matches", updates);
       saveSettings({ per100Min: String(tPer100) });
       setSnapMsg({ ok: true, text: `全卓（${count}試合）を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
       refresh();
@@ -1329,22 +1366,15 @@ function HomeTab() {
     try {
       const cfg = loadSettings();
       const per100 = parseInt(cfg.per100Min, 10) || 60;
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
+      const updates = {};
       let count = 0;
       const skipped = [];
       let latestFinish = null; // 40%下限に達した卓の中で、一番遅い現実的な終了時刻
       [0, 1, 2].forEach((oi) => {
         const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
         if (!calc || calc.error) { skipped.push(oi + 1); return; }
-        calc.future.forEach((qm) => {
-          const m = record.matches[qm.id];
-          if (!m) return;
-          const R1 = m.r1 || 0, R2 = m.r2 || 0;
-          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
-          count++;
-        });
+        calc.future.forEach((qm) => { planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now); count++; });
         if (calc.hitFloor) {
           const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
           if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
@@ -1352,7 +1382,7 @@ function HomeTab() {
         if (oi === ti) { setTLenPct(calc.newLenPct); }
       });
       if (count === 0) { setSnapMsg({ ok: false, text: "反映できる対戦がありませんでした" }); setSnapBusy(null); return; }
-      await jsonbinWrite(record);
+      await dbUpdate("matches", updates);
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
       let msg = `全卓（${count}試合）に終了予定 ${tEndH}:${tEndM} を反映し、それぞれ自動調整しました`;
       if (latestFinish) {
@@ -1380,8 +1410,8 @@ function HomeTab() {
     try {
       const cfg = loadSettings();
       const per100 = parseInt(cfg.per100Min, 10) || 60;
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
+      const updates = {};
       let count = 0;
       const adjustedTables = [];
       let latestFinish = null;
@@ -1394,14 +1424,7 @@ function HomeTab() {
         if (!needsAdjust) return; // 順調な範囲は触らない
         const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
         if (!calc || calc.error) return;
-        calc.future.forEach((qm) => {
-          const m = record.matches[qm.id];
-          if (!m) return;
-          const R1 = m.r1 || 0, R2 = m.r2 || 0;
-          const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, calc.newLenPct) : { rt1: m.raceTo[0], rt2: m.raceTo[1] };
-          record.matches[qm.id] = { ...m, raceTo: [rt.rt1, rt.rt2], lenPct: calc.newLenPct, matchMinutes: calc.newMinutes, version: (m.version || 1) + 1, updatedAt: now };
-          count++;
-        });
+        calc.future.forEach((qm) => { planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now); count++; });
         adjustedTables.push(oi + 1);
         if (calc.hitFloor) {
           const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
@@ -1413,7 +1436,7 @@ function HomeTab() {
         setGlobalBusy(false);
         return;
       }
-      await jsonbinWrite(record);
+      await dbUpdate("matches", updates);
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
       let msg = `卓${adjustedTables.join("・")}（${count}試合）を自動調整しました`;
       if (latestFinish) {
@@ -1436,21 +1459,20 @@ function HomeTab() {
     if (globalBusy) return;
     setGlobalBusy(true);
     try {
-      const record = await jsonbinRead(); // 読み込みに失敗したら例外を投げさせ、空データで上書きしないようにする
       const now = Date.now();
+      const updates = {};
       let count = 0;
       [0, 1, 2].forEach((oi) => {
         queues[oi].slice(1).forEach((qm) => {
-          const m = record.matches[qm.id];
-          if (!m) return;
-          const lenPct = m.lenPct || 100;
-          const newMinutes = Math.max(1, Math.round(tPer100 * (lenPct / 100)));
-          record.matches[qm.id] = { ...m, matchMinutes: newMinutes, version: (m.version || 1) + 1, updatedAt: now };
+          const lenPct = qm.lenPct || 100;
+          updates[qm.id + "/matchMinutes"] = Math.max(1, Math.round(tPer100 * (lenPct / 100)));
+          updates[qm.id + "/version"] = (qm.version || 1) + 1;
+          updates[qm.id + "/updatedAt"] = now;
           count++;
         });
       });
       if (count === 0) { setSnapMsg({ ok: false, text: "対象の対戦がありませんでした" }); setGlobalBusy(false); return; }
-      await jsonbinWrite(record);
+      await dbUpdate("matches", updates);
       saveSettings({ per100Min: String(tPer100) });
       setSnapMsg({ ok: true, text: `100%の時間を${tPer100}分に更新し、全卓${count}試合の持ち時間を再計算しました` });
       refresh();
