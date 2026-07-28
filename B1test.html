@@ -113,6 +113,7 @@ function randomMatchId() {
 }
 const STALE_MS = 1000 * 60 * 60 * 6;
 function isMatchFinished(m) {
+  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
@@ -156,6 +157,89 @@ function computeTableAdjustment(queueForTable, eH, eM, per100) {
   return { future, newLenPct, newMinutes, hitFloor, curRemainMin };
 }
 
+// 卓ごとの全対戦（終了分も含む）を作成順に並べる。タイムラインの「コマ」順の復元に使う
+function getAllForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    list.push({ ...m, id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+// 対戦の状態：終了／試合中（スコアラーがバンキング勝者を選んだ）／呼び出し中
+function matchPhaseLabel(m) {
+  if (isMatchFinished(m)) return "done";
+  if (m.startedAt) return "live";
+  return "waiting";
+}
+function matchWinnerIndex(m) {
+  if (m.bothLose) return null; // 両者負け
+  if (m.winner === 0 || m.winner === 1) return m.winner;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  const r0 = rt[0] > 0 && tot[0] >= rt[0];
+  const r1 = rt[1] > 0 && tot[1] >= rt[1];
+  // ヒルヒルで両者が目標に達した場合は、そのラックで9番を落とした方（＝最終ラックの勝者）が勝ち
+  if (r0 && r1) {
+    const last = (m.hist || []).slice(-1)[0];
+    return last ? last.w : 0;
+  }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
+// 成績集計
+// ・勝ちがつかなかった試合は、目標点に対する取得点の割合（達成率、上限100%）を記録
+// ・時間切れでどちらも目標に届かなかった試合は両者負け扱いで、双方に達成率を記録
+// ・並び順は 勝ち数 → 達成率の平均 → 得失点差
+function buildStandings(matches, roster) {
+  const stats = {};
+  const ensure = (name) => {
+    if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
+    return stats[name];
+  };
+  roster.forEach((p) => { if (p.name) ensure(p.name); });
+
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || !isMatchFinished(m)) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    const names = m.names || [];
+    const tot = m.tot || [0, 0];
+    const rt = m.raceTo || [0, 0];
+    const w = matchWinnerIndex(m); // null なら両者負け
+    [0, 1].forEach((i) => {
+      if (!names[i]) return;
+      const s = ensure(names[i]);
+      s.pf += tot[i] || 0;
+      s.pa += tot[1 - i] || 0;
+      if (i === w) s.win++;
+      else {
+        s.loss++;
+        if (rt[i] > 0) s.rates.push(Math.min(1, (tot[i] || 0) / rt[i])); // 100%を上限にする
+      }
+    });
+  }
+
+  const rows = Object.values(stats).map((s) => ({
+    ...s,
+    played: s.win + s.loss,
+    avgRate: s.rates.length ? s.rates.reduce((a, b) => a + b, 0) / s.rates.length : null,
+  }));
+  rows.sort((a, b) => {
+    if (b.win !== a.win) return b.win - a.win;
+    // 負け試合がない（＝全勝）方を上に
+    const ar = a.avgRate == null ? 2 : a.avgRate;
+    const br = b.avgRate == null ? 2 : b.avgRate;
+    if (br !== ar) return br - ar;
+    return (b.pf - b.pa) - (a.pf - a.pa);
+  });
+  return rows;
+}
+const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
+
 let _id = 1;
 const nid = () => _id++;
 
@@ -190,6 +274,8 @@ function App() {
 
   const tabs = [
     ["home", "📊 ダッシュボード"],
+    ["timeline", "🗓 タイムライン"],
+    ["standings", "🏅 成績"],
     ["settings", "⚙️ 設定"],
   ];
 
@@ -198,15 +284,149 @@ function App() {
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         {tabs.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 13, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 11.5, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {tab === "home" && <HomeTab />}
+        {tab === "timeline" && <TimelineTab />}
+        {tab === "standings" && <StandingsTab />}
         {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} />}
       </div>
+    </div>
+  );
+}
+
+/* ========= タイムラインタブ：試合割りに、終わった試合のスコアを書き入れて全体の進行を見る ========= */
+function TimelineTab() {
+  const [cols, setCols] = useState([[], [], []]);
+  const [err, setErr] = useState(null);
+
+  const refresh = async () => {
+    try {
+      const r = await jsonbinRead();
+      setCols([1, 2, 3].map((t) => getAllForTable(r.matches, t)));
+      setErr(null);
+    } catch (e) { setErr(String(e && e.message ? e.message : e)); }
+  };
+  useEffect(() => { refresh(); const iv = setInterval(refresh, 5000); return () => clearInterval(iv); }, []);
+
+  const slots = Math.max(1, ...cols.map((c) => c.length));
+  const total = cols.reduce((s, c) => s + c.length, 0);
+  const doneCount = cols.reduce((s, c) => s + c.filter((m) => isMatchFinished(m)).length, 0);
+
+  return (
+    <div style={{ padding: "16px 12px 32px", color: C.ink }}>
+      <div style={{ textAlign: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ height: 6, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
+          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "20px repeat(3, minmax(0, 1fr))", columnGap: 6, rowGap: 6 }}>
+        <div />
+        {[1, 2, 3].map((t) => (
+          <div key={t} style={{ textAlign: "center", fontSize: 13, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
+        ))}
+
+        {Array.from({ length: slots }, (_, s) => (
+          <React.Fragment key={s}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+            {[0, 1, 2].map((ti) => {
+              const m = cols[ti][s];
+              return <div key={ti}>{m ? <TimelineSlotCard m={m} /> : <div style={{ height: 78, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11 }}>空き</div>}</div>;
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+      {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+function TimelineSlotCard({ m }) {
+  const st = matchPhaseLabel(m);
+  const names = m.names || ["", ""];
+  const tot = m.tot || [0, 0];
+  const rt = m.raceTo || [0, 0];
+  const w = st === "done" ? matchWinnerIndex(m) : null;
+
+  const style = st === "done"
+    ? (m.bothLose
+        ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "両者負け" }
+        : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "終了" })
+    : st === "live"
+    ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
+    : { bg: "#fff", border: C.line, badgeBg: "#fff", badgeCol: C.sub, badge: "呼び出し中" };
+
+  return (
+    <div style={{
+      height: 78, boxSizing: "border-box", background: style.bg,
+      border: `${st === "live" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
+      padding: "5px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
+      opacity: st === "waiting" ? 0.75 : 1,
+    }}>
+      <div style={{ textAlign: "center" }}>
+        <span style={{ display: "inline-block", background: style.badgeBg, color: style.badgeCol, border: st === "waiting" ? `1px solid ${C.line}` : "none", borderRadius: 10, padding: "1px 7px", fontSize: 9, fontWeight: 800 }}>{style.badge}</span>
+      </div>
+      <div style={{ display: "flex", gap: 3 }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+            <div style={{ fontSize: 10, fontWeight: w === i ? 800 : 600, color: w === i ? C.win : (i === 0 ? C.blue : C.red), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: C.ink, lineHeight: 1.2, fontVariantNumeric: "tabular-nums" }}>
+              {st === "waiting" ? <span style={{ fontSize: 13, color: C.sub }}>{rt[i]}</span> : (
+                <>{tot[i]}<span style={{ fontSize: 9.5, fontWeight: 700, opacity: 0.45 }}>/{rt[i]}</span></>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========= 成績タブ：勝ち数→負け試合の達成率平均の順に並べる ========= */
+function StandingsTab() {
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState(null);
+
+  const refresh = async () => {
+    try {
+      const r = await jsonbinRead();
+      setRows(buildStandings(r.matches, r.roster || []));
+      setErr(null);
+    } catch (e) { setErr(String(e && e.message ? e.message : e)); }
+  };
+  useEffect(() => { refresh(); const iv = setInterval(refresh, 5000); return () => clearInterval(iv); }, []);
+
+  return (
+    <div style={{ padding: "16px 12px 32px", color: C.ink }}>
+      <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 34px 34px 56px", gap: 4, padding: "0 8px 6px", fontSize: 10.5, color: C.sub, fontWeight: 800 }}>
+        <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+      </div>
+      {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 13, color: C.sub, padding: "24px 0" }}>まだ結果がありません</div>}
+      {rows.map((r, i) => {
+        const top = i < 8 && r.played > 0;
+        return (
+          <div key={r.name} style={{
+            display: "grid", gridTemplateColumns: "28px 1fr 34px 34px 56px", gap: 4, alignItems: "center",
+            background: top ? C.lightBlue : "#fff", border: `1px solid ${top ? C.blue : C.line}`,
+            borderRadius: 10, padding: "9px 8px", marginBottom: 5,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 900, color: top ? C.blue : C.sub }}>{i + 1}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ textAlign: "center", fontSize: 15, fontWeight: 900, color: C.win }}>{r.win}</div>
+            <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+            <div style={{ textAlign: "right", fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
+          </div>
+        );
+      })}
+      <div style={{ fontSize: 10.5, color: C.sub, marginTop: 10, lineHeight: 1.6 }}>
+        並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。全勝の選手は達成率「–」で最上位に並びます。
+      </div>
+      {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
 }
