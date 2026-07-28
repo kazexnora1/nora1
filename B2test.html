@@ -124,7 +124,7 @@ const initialMatchState = (rt1, rt2, names, table) => ({
   raceTo: [rt1, rt2],
   names,
   table,
-  startedAt: null, // バンキング画面を最初に開いた時刻
+  startedAt: null, // スコアラーがバンキング勝者を選び、試合が実際に始まった時刻
   deadline: null, // タイマー開始時に確定させる「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算する
   finishedAt: null, // 決着した時刻
   elapsedMs: null, // 所要時間（ミリ秒）
@@ -140,7 +140,7 @@ function App() {
   const params = new URLSearchParams(window.location.search);
   const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
 
-  const [setupInfo, setSetupInfo] = useState(() => {
+  const [setupInfo] = useState(() => {
     if (hasSetup) {
       return {
         matchId: params.get("m"),
@@ -155,115 +155,18 @@ function App() {
     }
     return null;
   });
-  const [showTestSetup, setShowTestSetup] = useState(false);
 
   if (!setupInfo) {
-    if (showTestSetup) {
-      return <SetupScreen onCreate={(info) => {
-        const url = new URL(window.location.href);
-        url.searchParams.set("m", info.matchId);
-        url.searchParams.set("p1", info.names[0]);
-        url.searchParams.set("p2", info.names[1]);
-        url.searchParams.set("r1", info.ratings[0]);
-        url.searchParams.set("r2", info.ratings[1]);
-        url.searchParams.set("len", info.lenPct);
-        url.searchParams.set("t", info.table);
-        window.history.replaceState({}, "", url.toString());
-        setSetupInfo(info);
-      }} />;
-    }
     return (
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "60px 20px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>対戦QRを読み込んでください</div>
-        <div style={{ fontSize: 14, color: C.sub, marginBottom: 24 }}>本部（B1）で発行されたQRコードをカメラで読み取ると、対戦が表示されます。</div>
-        <button onClick={() => setShowTestSetup(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 13, fontWeight: 700, padding: "8px 14px", cursor: "pointer", fontFamily: FONT }}>
-          テスト用に自分で対戦を作成
-        </button>
+        <div style={{ fontSize: 14, color: C.sub }}>本部（B1）で発行されたQRコードをカメラで読み取ると、対戦が表示されます。</div>
       </div>
     );
   }
 
   return <MatchScreen setupInfo={setupInfo} />;
 }
-
-/* ========= セットアップ画面（本来はB1本部アプリが行う。今回はテスト用に手動作成） ========= */
-function SetupScreen({ onCreate }) {
-  const [p1, setP1] = useState("テストA");
-  const [r1, setR1] = useState("500");
-  const [p2, setP2] = useState("テストB");
-  const [r2, setR2] = useState("400");
-  const [lenPct, setLenPct] = useState(100);
-  const [table, setTable] = useState(1);
-
-  const R1 = parseInt(r1, 10), R2 = parseInt(r2, 10);
-  const valid = p1 && p2 && R1 > 0 && R2 > 0;
-  const res = valid ? computeRace(R1, R2, lenPct) : null;
-
-  const create = () => {
-    if (!valid) return;
-    onCreate({
-      matchId: randomMatchId(),
-      names: [p1, p2],
-      ratings: [R1, R2],
-      lenPct,
-      table,
-    });
-  };
-
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 18 }}>
-        <div style={{ fontSize: 24, fontWeight: 800 }}>テスト対戦を作成</div>
-        <div style={{ fontSize: 13.5, color: C.sub, marginTop: 4 }}>
-          本来は本部アプリ（B1）が卓・対戦者を決めてQRを発行しますが、まだ無いのでここで仮の対戦カードを作ります
-        </div>
-      </div>
-      <Field label="卓番号">
-        <div style={{ display: "flex", gap: 8 }}>
-          {[1, 2, 3].map((t) => (
-            <button key={t} onClick={() => setTable(t)} style={{ flex: 1, border: `2px solid ${table === t ? C.blue : C.line}`, background: table === t ? C.lightBlue : "#fff", borderRadius: 10, padding: "12px 0", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: FONT, color: C.ink }}>卓{t}</button>
-          ))}
-        </div>
-      </Field>
-      <Field label="プレイヤー1">
-        <div style={{ display: "flex", gap: 8 }}>
-          <input value={p1} onChange={(e) => setP1(e.target.value.slice(0, 12))} style={{ ...inputStyle, flex: 1 }} />
-          <input inputMode="numeric" value={r1} onChange={(e) => setR1(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...inputStyle, width: 90, textAlign: "center" }} />
-        </div>
-      </Field>
-      <Field label="プレイヤー2">
-        <div style={{ display: "flex", gap: 8 }}>
-          <input value={p2} onChange={(e) => setP2(e.target.value.slice(0, 12))} style={{ ...inputStyle, flex: 1 }} />
-          <input inputMode="numeric" value={r2} onChange={(e) => setR2(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...inputStyle, width: 90, textAlign: "center" }} />
-        </div>
-      </Field>
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, margin: "16px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>試合の長さ</span>
-          <span style={{ fontSize: 18, fontWeight: 800 }}>{lenPct}%</span>
-        </div>
-        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          {[["ショート", 75], ["ロング", 100], ["長め", 120]].map(([t, v]) => (
-            <button key={t} onClick={() => setLenPct(v)} style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t}</button>
-          ))}
-        </div>
-      </div>
-      {res && (
-        <div style={{ textAlign: "center", marginBottom: 16, fontSize: 15, color: C.sub }}>
-          目標点：<b style={{ color: C.blue }}>{res.rt1}</b> 対 <b style={{ color: C.red }}>{res.rt2}</b>
-        </div>
-      )}
-      <button onClick={create} disabled={!valid} style={{ width: "100%", background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 14, padding: "16px 0", fontSize: 17, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT }}>
-        対戦を開始する ▶
-      </button>
-    </div>
-  );
-}
-function Field({ label, children }) {
-  return <div style={{ marginBottom: 10 }}><div style={{ fontSize: 14, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>{children}</div>;
-}
-const inputStyle = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 16, padding: "12px 14px", outline: "none", fontFamily: FONT, boxSizing: "border-box" };
 
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo }) {
@@ -308,28 +211,16 @@ function MatchScreen({ setupInfo }) {
     dirtyRef.current = true;
   };
 
-  // 初回：既存の共有stateがあれば取り込む。なければ自分の初期stateをそのまま登録
-  // タイマー（startedAt/deadline）が未設定なら、この時点で確定させる
+  // 初回：既存の共有stateがあればそのまま取り込む（ここではタイマーを開始しない。
+  // 試合の開始（startedAt）はスコアラーがバンキング勝者を選んだ瞬間に確定させる）
   useEffect(() => {
     (async () => {
       try {
         const remote = await loadMatchRemote(matchId);
         if (remote) {
-          if (!remote.startedAt) {
-            const now = Date.now();
-            const mins = remote.matchMinutes || DEFAULT_MATCH_MINUTES;
-            const started = { ...remote, startedAt: now, deadline: now + mins * 60000, version: (remote.version || 1) + 1 };
-            setState(started);
-            await saveMatchRemote(matchId, started);
-          } else {
-            setState(remote);
-          }
+          setState(remote);
         } else {
-          const now = Date.now();
-          const mins = stateRef.current.matchMinutes || DEFAULT_MATCH_MINUTES;
-          const init = { ...stateRef.current, startedAt: now, deadline: now + mins * 60000 };
-          setState(init);
-          await saveMatchRemote(matchId, init);
+          await saveMatchRemote(matchId, stateRef.current);
         }
         setSyncStatus({ ok: true });
       } catch (err) {
@@ -480,7 +371,16 @@ function MatchScreen({ setupInfo }) {
     if (phase !== "play") return;
     if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
   };
-  const chooseBreak = (i) => { applyLocal((s) => ({ ...s, brk: i, phase: "play" })); };
+  // バンキング勝者を選んだ瞬間に試合開始を確定する（＝B1へ「試合中」を通知するトリガー）。
+  // 既に他端末で開始済みなら startedAt/deadline は変更しない
+  const chooseBreak = (i) => {
+    applyLocal((s) => {
+      if (s.startedAt) return { ...s, brk: i, phase: "play" };
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, brk: i, phase: "play", startedAt: now, deadline: now + mins * 60000 };
+    });
+  };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
   const gestureImpl = (n, dy) => {
@@ -524,7 +424,7 @@ function MatchScreen({ setupInfo }) {
           目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
         </div>
         <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
-          残り時間 <b style={{ fontSize: 20, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{timeLabel}</b>
+          持ち時間 <b style={{ fontSize: 20, color: C.ink }}>{state.matchMinutes || DEFAULT_MATCH_MINUTES}分</b>（先攻を選んだ時点から計測開始）
         </div>
         <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 700, padding: "10px 16px", cursor: "pointer", fontFamily: FONT }}>📱 相手の端末に共有（QR）</button>
         {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
