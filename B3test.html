@@ -65,6 +65,19 @@ function subscribeMatches(onValue, onError) {
 
 const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない試合は無視（前日の残骸対策）
 
+/* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+function normalizeMatch(m) {
+  if (!m) return m;
+  return {
+    ...m,
+    names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
+    tot: Array.isArray(m.tot) ? m.tot : [0, 0],
+    raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
+    balls: Array.isArray(m.balls) ? m.balls : [],
+    hist: Array.isArray(m.hist) ? m.hist : [],
+    rack: m.rack || 1,
+  };
+}
 function isMatchFinished(m) {
   if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
@@ -78,7 +91,7 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
-    list.push({ ...m, id });
+    list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
