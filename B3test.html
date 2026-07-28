@@ -12,6 +12,8 @@
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -39,17 +41,26 @@ const C = {
   blue: "#2E6DB5", red: "#C6392E", win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0",
 };
 
-/* ========= 共有バックエンド（B2と同じBin、読み取り専用） ========= */
-const JSONBIN_ID = "6a59da56da38895dfe69af82";
-const JSONBIN_KEY = "$2a$10$4387m6BO917eu5kfVN//hOwH0O4g1IHkX5sjqUfgj5Jf2t4VNUnwK";
+/* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用） =========
+   ↓ B1・B2 とまったく同じ値を貼ってください */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
+  authDomain: "nora1kaze-247f3.firebaseapp.com",
+  databaseURL: "https://nora1kaze-247f3-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora1kaze-247f3",
+  storageBucket: "nora1kaze-247f3.firebasestorage.app",
+  messagingSenderId: "965985901209",
+  appId: "1:965985901209:web:5f99e023c1492d50a0f608",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
 
-async function jsonbinRead() {
-  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-    headers: { "X-Master-Key": JSONBIN_KEY },
-  });
-  const data = await res.json();
-  const record = data && data.record ? data.record : {};
-  return record.matches && typeof record.matches === "object" ? record.matches : {};
+/* 対戦データの変更を購読する。ポーリングしないので、スコアが動いた瞬間に画面へ反映される */
+function subscribeMatches(onValue, onError) {
+  const ref = db.ref("matches");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
 }
 
 const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない試合は無視（前日の残骸対策）
@@ -122,22 +133,9 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    let stop = false;
-    const tick = async () => {
-      try {
-        const matches = await jsonbinRead();
-        if (stop) return;
-        setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t)));
-        setErr(null);
-      } catch (e) {
-        if (!stop) setErr(String(e && e.message ? e.message : e));
-      }
-    };
-    tick();
-    const iv = setInterval(tick, 3000);
-    return () => { stop = true; clearInterval(iv); };
-  }, []);
+  useEffect(() => subscribeMatches(
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (e) => setErr(e)), []);
 
   const nextMatches = queues
     .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
