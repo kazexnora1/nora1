@@ -90,10 +90,29 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
+/* Firebaseは空の配列・空のオブジェクトを保存しない（キーごと消える）。
+   読み込んだ直後にここで補っておかないと、hist などが undefined のまま使われて落ちる */
+function normalizeMatch(m) {
+  if (!m) return m;
+  return {
+    ...m,
+    names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
+    tot: Array.isArray(m.tot) ? m.tot : [0, 0],
+    raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
+    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
+    hist: Array.isArray(m.hist) ? m.hist : [],
+    rack: m.rack || 1,
+    version: m.version || 1,
+    phase: m.phase || "banking",
+    brk: m.brk === 0 || m.brk === 1 ? m.brk : null,
+    lastResult: m.lastResult || null,
+  };
+}
+
 /* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
 async function loadMatchRemote(matchId) {
   const snap = await db.ref("matches/" + matchId).once("value");
-  return snap.val();
+  return normalizeMatch(snap.val());
 }
 async function saveMatchRemote(matchId, state) {
   await db.ref("matches/" + matchId).set({ ...state, updatedAt: Date.now() });
@@ -101,7 +120,7 @@ async function saveMatchRemote(matchId, state) {
 /* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
 function subscribeMatch(matchId, onValue, onError) {
   const ref = db.ref("matches/" + matchId);
-  const handler = ref.on("value", (snap) => onValue(snap.val()),
+  const handler = ref.on("value", (snap) => onValue(normalizeMatch(snap.val())),
     (e) => onError && onError(e && e.message ? e.message : String(e)));
   return () => ref.off("value", handler);
 }
