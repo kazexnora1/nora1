@@ -1715,7 +1715,7 @@ function HomeTab() {
                 <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 8 }}>対戦中</div>
                 {tinfo.map(({ ti, cur }) => (
                   <div key={ti}>
-                    {cur && <TimelineCard m={cur} current order={0} onOpen={() => (cur.startedAt ? toggleExpand(ti) : setQrMatch(cur))} referee={cur.referee} />}
+                    {cur && <TimelineCard m={cur} current order={0} onOpen={() => (cur.startedAt ? toggleExpand(ti) : setQrMatch(cur))} referee={cur.referee} onShowQR={() => setQrMatch(cur)} />}
                     {!cur && <EmptySlot label="予定なし" />}
                   </div>
                 ))}
@@ -1838,7 +1838,7 @@ function EmptySlot({ label, small }) {
     </div>
   );
 }
-function TimelineCard({ m, current, order, onOpen, referee }) {
+function TimelineCard({ m, current, order, onOpen, referee, onShowQR }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!current) return;
@@ -1924,6 +1924,13 @@ function TimelineCard({ m, current, order, onOpen, referee }) {
       )}
       {referee && (
         <div style={{ marginTop: 8, textAlign: "center", fontSize: 12, fontWeight: 700, color: C.ink }}>✏️{referee}</div>
+      )}
+      {onShowQR && m.startedAt && (
+        <div style={{ textAlign: "center", marginTop: 6 }}>
+          <button onClick={(e) => { e.stopPropagation(); onShowQR(); }} style={{ background: "none", border: "none", color: C.blue, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
+            📱 引き継ぎ用QR（現在のスコアのまま）
+          </button>
+        </div>
       )}
 
     </div>
