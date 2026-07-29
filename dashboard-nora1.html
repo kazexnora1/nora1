@@ -1192,6 +1192,9 @@ const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px soli
 
 function HomeTab() {
   const [queues, setQueues] = useState([[], [], []]);
+  // スコアの更新が無くても時間経過だけで「そろそろ呼び出し」判定が動くよう、定期的に再描画する
+  const [, forceTick] = useState(0);
+  useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 15000); return () => clearInterval(iv); }, []);
   const [roster, setRoster] = useState([]);
   const [refereeCounts, setRefereeCounts] = useState({});
   const [refereeOpen, setRefereeOpen] = useState(null); // レフェリーリストを表示中の卓番号(0-2) or null
@@ -1690,12 +1693,16 @@ function HomeTab() {
               <>
                 {/* 呼び出し 見出し（全幅）：本部のメインの仕事。次に呼ぶべき対戦をここに出す */}
                 <div style={{ gridColumn: "1 / -1", fontSize: 21, fontWeight: 900, color: C.blue, marginTop: 10 }}>📣 呼び出し</div>
-                {tinfo.map(({ ti, callTarget }) => (
-                  <div key={ti}>
-                    {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => openQr(callTarget)} referee={callTarget.referee} />}
-                    {!callTarget && <EmptySlot label="予定なし" />}
-                  </div>
-                ))}
+                {tinfo.map(({ ti, callTarget, live }) => {
+                  // 対戦中の試合がまだ8割未満なら、次の呼び出しカードはあえて目立たせない
+                  const callProminent = !live || computeFinishProgress(live) >= 0.8;
+                  return (
+                    <div key={ti}>
+                      {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => openQr(callTarget)} referee={callTarget.referee} prominent={callProminent} />}
+                      {!callTarget && <EmptySlot label="予定なし" />}
+                    </div>
+                  );
+                })}
 
                 {/* スコアラー候補：呼び出す対戦にその場で割り当てる */}
                 {tinfo.map(({ ti, callTarget }) => (
@@ -1797,7 +1804,25 @@ function EmptySlot({ label }) {
     </div>
   );
 }
-function TimelineCard({ m, current, order, onOpen, referee }) {
+// 対戦の「終わりそう度」（スコア達成率と残り時間の進み具合のうち大きい方、0〜1）。
+// 呼び出しカードを目立たせるタイミングの判定にも使う
+function computeFinishProgress(m) {
+  const raceTo = m.raceTo || [0, 0];
+  const tot = m.tot || [0, 0];
+  const balls = m.balls || [];
+  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const scoreProgress = raceTo[0] > 0 && raceTo[1] > 0 ? Math.max(disp[0] / raceTo[0], disp[1] / raceTo[1]) : 0;
+  let timeProgress = 0;
+  if (m.startedAt && m.deadline && !m.finishedAt) {
+    const totalMs = m.deadline - m.startedAt;
+    const remainMs = m.deadline - Date.now();
+    timeProgress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
+  }
+  return Math.max(scoreProgress, timeProgress);
+}
+
+function TimelineCard({ m, current, order, onOpen, referee, prominent = true }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!current) return;
@@ -1833,11 +1858,12 @@ function TimelineCard({ m, current, order, onOpen, referee }) {
 
   const statusLabel = !current
     ? `${order + 1}戦後`
-    : awaitingCall ? "📣 呼び出し中"
+    : awaitingCall ? (prominent ? "📣 呼び出し中" : "🕓 次の呼び出し")
     : m.phase === "banking" ? "バンキング待ち"
     : aboutToFinish ? (hillHill ? "🔥 ヒルヒル！" : "⏰ 終わりそう")
     : "試合中";
   const accent = C.blue;
+  const calm = awaitingCall && !prominent; // 対戦中の試合がまだ8割未満：まだ呼び出すタイミングではないので目立たせない
 
   if (!current) {
     return (
@@ -1857,12 +1883,16 @@ function TimelineCard({ m, current, order, onOpen, referee }) {
 
   return (
     <div onClick={onOpen} style={{
-      background: C.lightBlue,
-      border: `3px solid ${accent}`,
-      boxShadow: `0 3px 12px rgba(46,109,181,0.28)`,
+      background: calm ? "#fff" : C.lightBlue,
+      border: `${calm ? 1.5 : 3}px solid ${calm ? C.line : accent}`,
+      boxShadow: calm ? "none" : `0 3px 12px rgba(46,109,181,0.28)`,
       borderRadius: 16, padding: "12px 8px 10px", cursor: "pointer", boxSizing: "border-box", width: "100%",
     }}>
-      <div style={{ display: "inline-block", background: accent, color: "#fff", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800, marginBottom: 8 }}>{statusLabel}</div>
+      <div style={{
+        display: "inline-block", background: calm ? C.zone : accent, color: calm ? C.sub : "#fff",
+        border: calm ? `1px solid ${C.line}` : "none",
+        borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800, marginBottom: 8,
+      }}>{statusLabel}</div>
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
