@@ -101,35 +101,103 @@ function App() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
   const [isFs, setIsFs] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const gridRef = useRef(null);
 
-  // 2本指ピンチで拡大縮小
+  // ===== 自由なピンチズーム・パン =====
+  // scale：拡大率。tx, ty：ステージのずらし量(px)。指の下の点がそのまま拡大の中心になるよう、
+  // タッチ位置から逆算してtx/tyを決める。txRef等はイベントハンドラから最新値を読むための参照
+  const [scale, setScaleState] = useState(1);
+  const [tx, setTxState] = useState(0);
+  const [ty, setTyState] = useState(0);
+  const scaleRef = useRef(1), txRef = useRef(0), tyRef = useRef(0);
+  const setScale = (v) => { scaleRef.current = v; setScaleState(v); };
+  const setTx = (v) => { txRef.current = v; setTxState(v); };
+  const setTy = (v) => { tyRef.current = v; setTyState(v); };
+
+  const viewportRef = useRef(null);
+  const gestureRef = useRef(null); // 現在進行中のジェスチャー（1本指パン／2本指ピンチ）の基準値
+
+  const MIN_SCALE = 1, MAX_SCALE = 8;
+
+  const beginGesture = (touches) => {
+    const rect = viewportRef.current.getBoundingClientRect();
+    if (touches.length === 1) {
+      gestureRef.current = {
+        mode: "pan",
+        startX: touches[0].clientX, startY: touches[0].clientY,
+        startTx: txRef.current, startTy: tyRef.current,
+      };
+    } else if (touches.length >= 2) {
+      const [a, b] = touches;
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const midX = (a.clientX + b.clientX) / 2 - rect.left;
+      const midY = (a.clientY + b.clientY) / 2 - rect.top;
+      // anchor：ピンチの中心が「拡大されていないステージ」上のどこに当たるかを固定しておく
+      gestureRef.current = {
+        mode: "pinch", rect,
+        startDist: dist, startScale: scaleRef.current,
+        anchorX: (midX - txRef.current) / scaleRef.current,
+        anchorY: (midY - tyRef.current) / scaleRef.current,
+      };
+    }
+  };
+
   useEffect(() => {
-    const el = gridRef.current;
+    const el = viewportRef.current;
     if (!el) return;
-    let startDist = 0, startZoom = 1;
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const onStart = (e) => {
-      if (e.touches.length === 2) { startDist = dist(e.touches); startZoom = zoom; }
-    };
+
+    const onStart = (e) => { beginGesture(e.touches); };
+
     const onMove = (e) => {
-      if (e.touches.length === 2 && startDist > 0) {
-        e.preventDefault();
-        const z = startZoom * (dist(e.touches) / startDist);
-        setZoom(Math.min(3, Math.max(0.6, +z.toFixed(2))));
+      const g = gestureRef.current;
+      if (!g) return;
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        if (g.mode !== "pan") { beginGesture(e.touches); return; }
+        setTx(g.startTx + (e.touches[0].clientX - g.startX));
+        setTy(g.startTy + (e.touches[0].clientY - g.startY));
+      } else if (e.touches.length >= 2) {
+        if (g.mode !== "pinch") { beginGesture(e.touches); return; }
+        const [a, b] = e.touches;
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, g.startScale * (dist / g.startDist)));
+        const midX = (a.clientX + b.clientX) / 2 - g.rect.left;
+        const midY = (a.clientY + b.clientY) / 2 - g.rect.top;
+        setScale(newScale);
+        setTx(midX - g.anchorX * newScale);
+        setTy(midY - g.anchorY * newScale);
       }
     };
-    const onEnd = () => { startDist = 0; };
+
+    // 指の本数が変わった（片方だけ離した等）時は、基準値を今の状態から取り直して座標が飛ばないようにする
+    const onEnd = (e) => {
+      if (e.touches.length === 0) gestureRef.current = null;
+      else beginGesture(e.touches);
+    };
+
     el.addEventListener("touchstart", onStart, { passive: false });
     el.addEventListener("touchmove", onMove, { passive: false });
     el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
     return () => {
       el.removeEventListener("touchstart", onStart);
       el.removeEventListener("touchmove", onMove);
       el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
     };
-  }, [zoom]);
+  }, []);
+
+  // ＋／－ボタン：画面中央を中心に拡大縮小する
+  const stepZoom = (delta) => {
+    const rect = viewportRef.current.getBoundingClientRect();
+    const cx = rect.width / 2, cy = rect.height / 2;
+    const anchorX = (cx - txRef.current) / scaleRef.current;
+    const anchorY = (cy - tyRef.current) / scaleRef.current;
+    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, +(scaleRef.current + delta).toFixed(2)));
+    setScale(newScale);
+    setTx(cx - anchorX * newScale);
+    setTy(cy - anchorY * newScale);
+  };
+  const resetZoom = () => { setScale(1); setTx(0); setTy(0); };
 
   useEffect(() => {
     const onFsChange = () => setIsFs(!!document.fullscreenElement);
@@ -155,36 +223,38 @@ function App() {
     .filter(Boolean);
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative", overflow: zoom > 1 ? "auto" : "hidden" }}>
+    <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: 10, right: 14, display: "flex", gap: 6, zIndex: 10 }}>
-        <button onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))} style={zoomBtn}>−</button>
-        <button onClick={() => setZoom(1)} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(zoom * 100)}%</button>
-        <button onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} style={zoomBtn}>＋</button>
+        <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
+        <button onClick={resetZoom} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(scale * 100)}%</button>
+        <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
         <button onClick={toggleFullscreen} style={{ ...zoomBtn, width: "auto", padding: "6px 12px" }}>
           {isFs ? "全画面を終了" : "⛶ 全画面"}
         </button>
       </div>
-      <div
-        ref={gridRef}
-        style={{
-          display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-          gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
-          height: `calc((100vh - 36px) / ${zoom})`, width: `calc(100% / ${zoom})`,
-          maxWidth: 1600, margin: "0 auto",
-          transform: `scale(${zoom})`, transformOrigin: "top center",
-          touchAction: "pinch-zoom",
-        }}
-      >
-        <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-        <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-        <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
-        <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
+
+      {/* ここから下が、好きな場所を好きなだけピンチで拡大・1本指でドラッグして動かせる範囲 */}
+      <div ref={viewportRef} style={{ position: "relative", width: "100%", height: "calc(100vh - 36px)", overflow: "hidden", touchAction: "none" }}>
+        <div style={{
+          position: "absolute", left: 0, top: 0, width: "100%", height: "100%",
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "0 0",
+        }}>
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+            gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
+            height: "100%", maxWidth: 1600, margin: "0 auto",
+          }}>
+            <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
+            <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
+            <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
+            <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
+          </div>
+        </div>
       </div>
-      {err && <div style={{ color: C.red, textAlign: "center", marginTop: 12, fontSize: 13 }}>同期エラー: {err}</div>}
+      {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 8, color: C.red, textAlign: "center", fontSize: 13, zIndex: 10 }}>同期エラー: {err}</div>}
     </div>
   );
 }
-
 const zoomBtn = {
   width: 34, height: 30, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8,
   color: C.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
