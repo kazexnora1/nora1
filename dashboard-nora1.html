@@ -74,7 +74,7 @@ const C = {
 };
 
 /* このB1から発行するQRが指す先（B2アプリのURL）。実際にデプロイしたURLに合わせて調整してください */
-const B2_URL = "https://kazexnora1.github.io/nora1/B2test.html";
+const B2_URL = "https://kazexnora1.github.io/nora1/players-nora1.html";
 
 /* ========= 共有バックエンド：Firebase Realtime Database =========
    ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。
@@ -1277,6 +1277,7 @@ function HomeTab() {
       await dbSet("refereeCounts/" + name, prevCount + 1);
       setRefereeOpen(null);
       setRefereeQR({ name, match: target });
+      publishQr({ url: urlFor(target), heading: `📝 卓${target.table} スコアラー呼び出し`, names: `${name} さん` });
       refresh();
     } catch {}
     setRefereeBusy(false);
@@ -1533,6 +1534,15 @@ function HomeTab() {
   };
 
   const [qrMatch, setQrMatch] = useState(null); // 次戦以降のQRのみを表示する軽量モーダル
+
+  // 別画面（B4: qr-nora1.html）にもQRを表示させる。1つだけ共有し、B4側は1分経つと自動で消す
+  const publishQr = async (payload) => {
+    try { await dbSet("activeCall", { ...payload, publishedAt: Date.now() }); } catch {}
+  };
+  const openQr = (m) => {
+    setQrMatch(m);
+    publishQr({ url: urlFor(m), heading: `📣 卓${m.table} 呼び出し`, names: `${m.names[0]} 対 ${m.names[1]}` });
+  };
   const [showMoreTi, setShowMoreTi] = useState(null); // 「さらに次を見る」を展開中の卓番号(0-2) or null
   const toggleShowMore = (ti) => {
     if (showMoreTi === ti) { setShowMoreTi(null); return; }
@@ -1714,7 +1724,7 @@ function HomeTab() {
                 <div style={{ gridColumn: "1 / -1", fontSize: 21, fontWeight: 900, color: C.blue, marginTop: 10 }}>📣 呼び出し</div>
                 {tinfo.map(({ ti, callTarget }) => (
                   <div key={ti}>
-                    {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => setQrMatch(callTarget)} referee={callTarget.referee} />}
+                    {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => openQr(callTarget)} referee={callTarget.referee} />}
                     {!callTarget && <EmptySlot label="予定なし" />}
                   </div>
                 ))}
@@ -1754,7 +1764,7 @@ function HomeTab() {
                 <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 10 }}>対戦中</div>
                 {tinfo.map(({ ti, live }) => (
                   <div key={ti}>
-                    {live && <TimelineCard m={live} current order={0} onOpen={() => setQrMatch(live)} referee={live.referee} />}
+                    {live && <TimelineCard m={live} current order={0} onOpen={() => openQr(live)} referee={live.referee} />}
                     {!live && <div style={{ minHeight: 48 }} />}
                   </div>
                 ))}
@@ -1768,7 +1778,7 @@ function HomeTab() {
                       </button>
                     )}
                     {showMoreTi === ti && rest.map((m, k) => (
-                      <TimelineCard key={m.id} m={m} current={false} order={k + 1} onOpen={() => setQrMatch(m)} />
+                      <TimelineCard key={m.id} m={m} current={false} order={k + 1} onOpen={() => openQr(m)} />
                     ))}
                   </div>
                 ))}
