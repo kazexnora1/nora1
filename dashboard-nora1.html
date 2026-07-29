@@ -1850,11 +1850,14 @@ function TimelineCard({ m, current, order, onOpen, referee, prominent = true }) 
     timeInfo = { remainMin, progress, over: remainMs <= 0 };
   }
   const aboutToFinish = current && timeInfo && timeInfo.remainMin <= 3;
+  // 片方でもヒル（目標まで14点以内）、または残り3分を切ったら「そろそろ終わる」の赤にする
+  const oneHill = raceTo[0] > 0 && raceTo[1] > 0 && ((raceTo[0] - tot[0] <= 14) || (raceTo[1] - tot[1] <= 14));
+  const urgent = oneHill || aboutToFinish;
 
   // 終わりそう度＝スコアの達成率と残り時間の進み具合のうち大きい方（数字は出さず、バーだけで見せる）
   const scoreProgress = raceTo[0] > 0 && raceTo[1] > 0 ? Math.max(disp[0] / raceTo[0], disp[1] / raceTo[1]) : 0;
   const finishProgress = Math.max(scoreProgress, timeInfo ? timeInfo.progress : 0);
-  const finishColor = finishProgress > 0.85 ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
+  const finishColor = urgent ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
 
   const statusLabel = !current
     ? `${order + 1}戦後`
