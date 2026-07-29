@@ -345,7 +345,7 @@ function App() {
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         {tabs.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "13px 0", background: "none", border: "none", fontSize: 15, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
@@ -1175,22 +1175,6 @@ function Notice({ children }) {
 const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT };
 
 /* ========= QR発行タブ ========= */
-/* ========= タイムラインタブ：対戦カードを作成順（古い→新しい）に縦並び。進行中はリアルタイムスコア、タップでQR ========= */
-function fmtElapsed(ms) {
-  if (!ms || ms < 0) return "";
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}分${String(s % 60).padStart(2, "0")}秒`;
-}
-function getFinishedMatches(matches) {
-  const list = [];
-  for (const id in matches) {
-    const m = matches[id];
-    if (!m || !isMatchFinished(m)) continue;
-    list.push({ ...normalizeMatch(m), id });
-  }
-  list.sort((a, b) => (b.finishedAt || b.updatedAt || 0) - (a.finishedAt || a.updatedAt || 0));
-  return list;
-}
 
 // 対戦の「試合の長さ・持ち時間・目標点」だけを部分更新するための組み立て。
 // 対戦データ全体を書き戻さないので、スコアラーが入力中のスコアを消してしまわない
@@ -1208,7 +1192,6 @@ const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px soli
 
 function HomeTab() {
   const [queues, setQueues] = useState([[], [], []]);
-  const [finished, setFinished] = useState([]);
   const [roster, setRoster] = useState([]);
   const [refereeCounts, setRefereeCounts] = useState({});
   const [refereeOpen, setRefereeOpen] = useState(null); // レフェリーリストを表示中の卓番号(0-2) or null
@@ -1223,7 +1206,6 @@ function HomeTab() {
   const applyRecord = (rec) => {
     const r = normalizeRecord(rec);
     setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
-    setFinished(getFinishedMatches(r.matches));
     setRoster(r.roster);
     setRefereeCounts(r.refereeCounts);
     setLoadErr(null);
@@ -1239,7 +1221,6 @@ function HomeTab() {
   // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストと「さらに次を見る」を閉じる
   const toggleRefereeList = (ti) => {
     setTableAdjust(null);
-    setShowMoreTi(null);
     setShowGlobalAdjust(false);
     setRefereeOpen((v) => (v === ti ? null : ti));
   };
@@ -1358,7 +1339,6 @@ function HomeTab() {
 
   const openTableAdjust = (ti) => {
     setRefereeOpen(null);
-    setShowMoreTi(null);
     setShowGlobalAdjust(false);
     const future = queues[ti].slice(1); // 現在対戦中は対象外
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
@@ -1543,19 +1523,9 @@ function HomeTab() {
     setQrMatch(m);
     publishQr({ url: urlFor(m), heading: `📣 卓${m.table} 呼び出し`, names: `${m.names[0]} 対 ${m.names[1]}` });
   };
-  const [showMoreTi, setShowMoreTi] = useState(null); // 「さらに次を見る」を展開中の卓番号(0-2) or null
-  const toggleShowMore = (ti) => {
-    if (showMoreTi === ti) { setShowMoreTi(null); return; }
-    setTableAdjust(null);
-    setRefereeOpen(null);
-    setShowGlobalAdjust(false);
-    setShowMoreTi(ti);
-  };
-
   // 卓のカードをタップ：現在対戦の調整パネルをその場で展開／格納
   const toggleExpand = (ti) => {
     if (tableAdjust === ti) { setTableAdjust(null); return; }
-    setShowMoreTi(null);
     openTableAdjust(ti);
   };
 
@@ -1563,7 +1533,6 @@ function HomeTab() {
     if (showGlobalAdjust) { setShowGlobalAdjust(false); return; }
     setTableAdjust(null);
     setRefereeOpen(null);
-    setShowMoreTi(null);
     const cfg = loadSettings();
     setTEndH(cfg.endH || "17");
     setTEndM(cfg.endM || "00");
@@ -1617,11 +1586,10 @@ function HomeTab() {
           const cur = q[0];
           const live = cur && cur.startedAt ? cur : null; // 「対戦中」に出す対象：実際に始まっている試合のみ
           const callTarget = cur && !cur.startedAt ? cur : (q[1] || null); // 「呼び出し」に出す対象：次に呼ぶべき試合
-          const rest = q.slice(cur && !cur.startedAt ? 1 : 2);
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
           const settingSrc = callTarget || live;
-          return { ti, q, cur, live, callTarget, rest, est, status, settingSrc };
+          return { ti, q, cur, live, callTarget, est, status, settingSrc };
         });
         return (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", columnGap: 6, rowGap: 8, alignItems: "start" }}>
@@ -1734,25 +1702,47 @@ function HomeTab() {
                   <div key={ti}>
                     {callTarget && (
                       <div style={{ textAlign: "center" }}>
-                        <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
-                          {refereeOpen === ti ? "▲ 閉じる" : "📝 スコアラー候補"}
+                        <button onClick={() => toggleRefereeList(ti)} style={{
+                          background: refereeOpen === ti ? C.blue : "#fff", color: refereeOpen === ti ? "#fff" : C.blue,
+                          border: `1.5px solid ${C.blue}`, borderRadius: 10, fontSize: 13, fontWeight: 800,
+                          padding: "7px 12px", cursor: "pointer", fontFamily: FONT, width: "100%",
+                        }}>
+                          {refereeOpen === ti ? "▲ 閉じる" : callTarget.referee ? "📝 スコアラーを変更" : "📝 スコアラーを選ぶ"}
                         </button>
                       </div>
                     )}
                     {refereeOpen === ti && (
-                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, marginTop: 4 }}>
+                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, marginTop: 6 }}>
                         {getRefereeCandidates(ti).length === 0 ? (
-                          <div style={{ fontSize: 11, color: C.sub, textAlign: "center" }}>候補なし</div>
+                          <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
                         ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            {getRefereeCandidates(ti).map((p) => (
-                              <button key={p.id} onClick={() => assignReferee(ti, p.name, callTarget)} disabled={refereeBusy}
-                                style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.tier > 0 ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
-                                {p.name}{p.count ? `（${p.count}）` : ""}
-                                {p.tier === 1 && <span style={{ color: C.sub, fontSize: 10 }}>　同卓に次試合あり</span>}
-                                {p.tier === 2 && <span style={{ color: C.sub, fontSize: 10 }}>　別卓に次試合あり</span>}
-                              </button>
-                            ))}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            {getRefereeCandidates(ti).map((p) => {
+                              const tierInfo = p.tier === 1
+                                ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
+                                : p.tier === 2
+                                ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
+                                : null;
+                              return (
+                                <button key={p.id} onClick={() => assignReferee(ti, p.name, callTarget)} disabled={refereeBusy}
+                                  style={{
+                                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                                    background: p.tier === 0 ? C.lightBlue : "#fff",
+                                    border: `1.5px solid ${p.tier === 0 ? C.blue : C.line}`,
+                                    borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
+                                  }}>
+                                  <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
+                                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                    {p.count > 0 && <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>担当{p.count}回</span>}
+                                    {tierInfo && (
+                                      <span style={{ background: tierInfo.bg, color: tierInfo.col, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
+                                        {tierInfo.label}
+                                      </span>
+                                    )}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1769,19 +1759,6 @@ function HomeTab() {
                   </div>
                 ))}
 
-                {/* さらに次以降 */}
-                {tinfo.map(({ ti, rest }) => (
-                  <div key={ti} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {rest.length > 0 && (
-                      <button onClick={() => toggleShowMore(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "4px 0" }}>
-                        {showMoreTi === ti ? "▲ 閉じる" : `▼ さらに次を見る（${rest.length}）`}
-                      </button>
-                    )}
-                    {showMoreTi === ti && rest.map((m, k) => (
-                      <TimelineCard key={m.id} m={m} current={false} order={k + 1} onOpen={() => openQr(m)} />
-                    ))}
-                  </div>
-                ))}
               </>
             )}
           </div>
@@ -1810,36 +1787,6 @@ function HomeTab() {
         </div>
       )}
 
-
-      {finished.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>結果（{finished.length}試合）</div>
-          <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 12 }}>
-            {finished.map((m) => {
-              const names = m.names || ["P1", "P2"];
-              const tot = m.tot || [0, 0];
-              const rt = m.raceTo || [0, 0];
-              const w = m.winner != null ? m.winner : (tot[0] >= rt[0] ? 0 : 1);
-              return (
-                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderBottom: `1px solid ${C.line}` }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: C.sub, flexShrink: 0, width: 26 }}>卓{m.table}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    <b style={{ color: w === 0 ? C.win : C.sub, fontWeight: w === 0 ? 800 : 600 }}>{names[0]}</b>
-                    <span style={{ color: C.sub, margin: "0 5px" }}>対</span>
-                    <b style={{ color: w === 1 ? C.win : C.sub, fontWeight: w === 1 ? 800 : 600 }}>{names[1]}</b>
-                  </span>
-                  <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                    <span style={{ color: C.blue }}>{tot[0]}</span>
-                    <span style={{ color: C.sub, margin: "0 2px" }}>-</span>
-                    <span style={{ color: C.red }}>{tot[1]}</span>
-                  </span>
-                  <span style={{ fontSize: 10.5, color: C.sub, flexShrink: 0, width: 52, textAlign: "right" }}>{fmtElapsed(m.elapsedMs)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1927,11 +1874,13 @@ function TimelineCard({ m, current, order, onOpen, referee }) {
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 8 }}>
-        <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 4, transition: "width 400ms ease" }} />
+      {!awaitingCall && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 4, transition: "width 400ms ease" }} />
+          </div>
         </div>
-      </div>
+      )}
       {referee && (
         <div style={{ marginTop: 8, textAlign: "center", fontSize: 12, fontWeight: 700, color: C.ink }}>✏️{referee}</div>
       )}
