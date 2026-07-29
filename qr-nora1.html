@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>JCL9Match B4 呼び出しQR</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; height: 100%; background: #FFFFFF; overscroll-behavior-y: contain; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<script>
+  function showCrash(msg) {
+    const el = document.getElementById("crashlog");
+    el.style.display = "block";
+    el.textContent = "エラーが発生しました:\n\n" + msg;
+  }
+  window.onerror = function (msg, src, line, col, err) {
+    showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
+  };
+  window.addEventListener("unhandledrejection", function (e) {
+    showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+const C = {
+  bg: "#FFFFFF", panel: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB", blue: "#2E6DB5",
+};
+
+/* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用） =========
+   B1・B2・B3 とまったく同じ値を貼ってください */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
+  authDomain: "nora1kaze-247f3.firebaseapp.com",
+  databaseURL: "https://nora1kaze-247f3-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora1kaze-247f3",
+  storageBucket: "nora1kaze-247f3.firebasestorage.app",
+  messagingSenderId: "965985901209",
+  appId: "1:965985901209:web:5f99e023c1492d50a0f608",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+
+// B1がQRを表示するたび（呼び出し・引き継ぎ・スコアラー呼び出し）にここへ書き込む。
+// { url, heading, names, publishedAt } の1件だけを共有する
+function subscribeActiveCall(onValue, onError) {
+  const ref = db.ref("activeCall");
+  const handler = ref.on("value", (snap) => onValue(snap.val()),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+
+const EXPIRE_MS = 60 * 1000; // B1が何もしなければ1分でこの画面から消す（B1側の操作には依存せず、こちらで自動判定）
+
+function App() {
+  const [call, setCall] = useState(null);
+  const [err, setErr] = useState(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => subscribeActiveCall(
+    (v) => { setCall(v); setErr(null); },
+    (e) => setErr(e)), []);
+
+  // 1秒ごとに現在時刻を更新し、公開から1分経っていないか判定する
+  useEffect(() => {
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const visible = call && call.publishedAt && (now - call.publishedAt < EXPIRE_MS);
+
+  return (
+    <div style={{ height: "100vh", width: "100vw", background: C.bg, fontFamily: FONT, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      {visible ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 24 }}>
+          <div style={{
+            display: "inline-block", background: C.blue, color: "#fff", borderRadius: 24, padding: "8px 22px",
+            fontSize: "clamp(16px, 3vw, 22px)", fontWeight: 800, marginBottom: 18,
+          }}>
+            {call.heading || "📣 呼び出し"}
+          </div>
+          <div style={{ fontSize: "clamp(20px, 4vw, 30px)", fontWeight: 900, color: C.ink, textAlign: "center", marginBottom: 22, lineHeight: 1.3 }}>
+            {call.names}
+          </div>
+          <div style={{
+            width: "min(70vw, 70vh, 420px)", aspectRatio: "1 / 1", background: "#fff",
+            border: `1px solid ${C.line}`, borderRadius: 16, padding: 14, boxSizing: "border-box",
+            boxShadow: "0 6px 24px rgba(0,0,0,0.08)",
+          }}>
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=420x420&data=${encodeURIComponent(call.url)}`}
+              alt="QR" style={{ width: "100%", height: "100%", display: "block" }} />
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: "clamp(14px, 2vw, 17px)", color: C.line, fontWeight: 700 }}>
+          呼び出し待ち
+        </div>
+      )}
+      {err && <div style={{ position: "fixed", left: 0, right: 0, bottom: 6, textAlign: "center", color: "#C0392B", fontSize: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (e) {
+  showCrash(e.message + "\n" + (e.stack || ""));
+}
+</script>
+</body>
+</html>
