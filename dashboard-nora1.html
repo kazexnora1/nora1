@@ -74,7 +74,7 @@ const C = {
 };
 
 /* このB1から発行するQRが指す先（B2アプリのURL）。実際にデプロイしたURLに合わせて調整してください */
-const B2_URL = "https://kazexnora1.github.io/nora1/players-nora1.html";
+const B2_URL = "https://kazexnora1.github.io/nora1/B2test.html";
 
 /* ========= 共有バックエンド：Firebase Realtime Database =========
    ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。
@@ -345,7 +345,7 @@ function App() {
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         {tabs.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 11.5, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, padding: "13px 0", background: "none", border: "none", fontSize: 15, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
@@ -1265,19 +1265,18 @@ function HomeTab() {
   };
 
   const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
-  const assignReferee = async (ti, name) => {
-    const cur = queues[ti][0];
-    if (!cur || refereeBusy) return;
+  const assignReferee = async (ti, name, target) => {
+    if (!target || refereeBusy) return;
     setRefereeBusy(true);
     try {
       // 対戦の一部だけを更新する。スコアラーが入力中の値には触れない
-      await dbUpdate("matches/" + cur.id, {
-        referee: name, version: (cur.version || 1) + 1, updatedAt: Date.now(),
+      await dbUpdate("matches/" + target.id, {
+        referee: name, version: (target.version || 1) + 1, updatedAt: Date.now(),
       });
       const prevCount = (await dbGet("refereeCounts/" + name)) || 0;
       await dbSet("refereeCounts/" + name, prevCount + 1);
       setRefereeOpen(null);
-      setRefereeQR({ name, match: cur });
+      setRefereeQR({ name, match: target });
       refresh();
     } catch {}
     setRefereeBusy(false);
@@ -1605,11 +1604,14 @@ function HomeTab() {
       {(() => {
         const tinfo = [0, 1, 2].map((ti) => {
           const q = queues[ti];
-          const cur = q[0], next = q[1], rest = q.slice(2);
+          const cur = q[0];
+          const live = cur && cur.startedAt ? cur : null; // 「対戦中」に出す対象：実際に始まっている試合のみ
+          const callTarget = cur && !cur.startedAt ? cur : (q[1] || null); // 「呼び出し」に出す対象：次に呼ぶべき試合
+          const rest = q.slice(cur && !cur.startedAt ? 1 : 2);
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
-          const settingSrc = next || cur;
-          return { ti, q, cur, next, rest, est, status, settingSrc };
+          const settingSrc = callTarget || live;
+          return { ti, q, cur, live, callTarget, rest, est, status, settingSrc };
         });
         return (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", columnGap: 6, rowGap: 8, alignItems: "start" }}>
@@ -1708,21 +1710,21 @@ function HomeTab() {
 
             {tableAdjust == null && (
               <>
-                {/* 対戦中 見出し（全幅） */}
-                <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 8 }}>対戦中</div>
-                {tinfo.map(({ ti, cur }) => (
+                {/* 呼び出し 見出し（全幅）：本部のメインの仕事。次に呼ぶべき対戦をここに出す */}
+                <div style={{ gridColumn: "1 / -1", fontSize: 21, fontWeight: 900, color: C.blue, marginTop: 10 }}>📣 呼び出し</div>
+                {tinfo.map(({ ti, callTarget }) => (
                   <div key={ti}>
-                    {cur && <TimelineCard m={cur} current order={0} onOpen={() => setQrMatch(cur)} referee={cur.referee} />}
-                    {!cur && <EmptySlot label="予定なし" />}
+                    {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => setQrMatch(callTarget)} referee={callTarget.referee} />}
+                    {!callTarget && <EmptySlot label="予定なし" />}
                   </div>
                 ))}
 
-                {/* スコアラー */}
-                {tinfo.map(({ ti, cur }) => (
+                {/* スコアラー候補：呼び出す対戦にその場で割り当てる */}
+                {tinfo.map(({ ti, callTarget }) => (
                   <div key={ti}>
-                    {cur && (
+                    {callTarget && (
                       <div style={{ textAlign: "center" }}>
-                        <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.sub, fontSize: 10.5, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
+                        <button onClick={() => toggleRefereeList(ti)} style={{ background: "none", border: "none", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "2px 0", textDecoration: "underline" }}>
                           {refereeOpen === ti ? "▲ 閉じる" : "📝 スコアラー候補"}
                         </button>
                       </div>
@@ -1734,7 +1736,7 @@ function HomeTab() {
                         ) : (
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             {getRefereeCandidates(ti).map((p) => (
-                              <button key={p.id} onClick={() => assignReferee(ti, p.name)} disabled={refereeBusy}
+                              <button key={p.id} onClick={() => assignReferee(ti, p.name, callTarget)} disabled={refereeBusy}
                                 style={{ background: C.zone, border: "none", borderRadius: 8, padding: "6px 8px", fontSize: 11.5, color: p.tier > 0 ? C.sub : C.ink, textAlign: "left", cursor: "pointer", fontFamily: FONT }}>
                                 {p.name}{p.count ? `（${p.count}）` : ""}
                                 {p.tier === 1 && <span style={{ color: C.sub, fontSize: 10 }}>　同卓に次試合あり</span>}
@@ -1748,10 +1750,13 @@ function HomeTab() {
                   </div>
                 ))}
 
-                {/* 次戦 見出し（全幅） */}
-                <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 8 }}>次戦</div>
-                {tinfo.map(({ ti, next }) => (
-                  <div key={ti}>{next && <TimelineCard m={next} current={false} order={1} onOpen={() => setQrMatch(next)} />}</div>
+                {/* 対戦中 見出し（全幅）：実際に始まっている試合だけを出す。無ければ空欄にして「呼び出しが必要」を目立たせる */}
+                <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 10 }}>対戦中</div>
+                {tinfo.map(({ ti, live }) => (
+                  <div key={ti}>
+                    {live && <TimelineCard m={live} current order={0} onOpen={() => setQrMatch(live)} referee={live.referee} />}
+                    {!live && <div style={{ minHeight: 48 }} />}
+                  </div>
                 ))}
 
                 {/* さらに次以降 */}
@@ -1763,7 +1768,7 @@ function HomeTab() {
                       </button>
                     )}
                     {showMoreTi === ti && rest.map((m, k) => (
-                      <TimelineCard key={m.id} m={m} current={false} order={k + 2} onOpen={() => setQrMatch(m)} />
+                      <TimelineCard key={m.id} m={m} current={false} order={k + 1} onOpen={() => setQrMatch(m)} />
                     ))}
                   </div>
                 ))}
