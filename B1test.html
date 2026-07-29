@@ -420,14 +420,15 @@ function TimelineSlotCard({ m, st }) {
       ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
       : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
-  const showScore = st === "done" || st === "live";
+  // 終了した試合は勝敗だけを出す。点数は大小で勝敗が決まるわけではないので出さない
+  const won = (i) => !m.bothLose && w === i;
 
   return (
     <div style={{
       height: 128, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      opacity: st === "queued" ? 0.7 : 1,
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
     }}>
       <div style={{ textAlign: "center" }}>
         <span style={{
@@ -439,12 +440,24 @@ function TimelineSlotCard({ m, st }) {
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-            <div style={{ fontSize: 15.5, fontWeight: w === i ? 900 : 700, color: w === i ? C.win : (i === 0 ? C.blue : C.red), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-            <div style={{ fontSize: 27, fontWeight: 900, color: C.ink, lineHeight: 1.25, fontVariantNumeric: "tabular-nums" }}>
-              {showScore
-                ? <>{tot[i]}<span style={{ fontSize: 14, fontWeight: 700, opacity: 0.45 }}>/{rt[i]}</span></>
-                : <span style={{ fontSize: 23, color: C.sub }}>{rt[i]}</span>}
-            </div>
+            <div style={{
+              fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</div>
+
+            {st === "done" ? (
+              <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.3, color: won(i) ? C.win : C.sub }}>
+                {won(i) ? "勝" : "負"}
+              </div>
+            ) : st === "live" ? (
+              <>
+                <div style={{ fontSize: 26, fontWeight: 900, color: C.ink, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" }}>{tot[i]}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 23, fontWeight: 800, color: C.sub, lineHeight: 1.3, fontVariantNumeric: "tabular-nums" }}>{rt[i]}</div>
+            )}
           </div>
         ))}
       </div>
