@@ -100,7 +100,18 @@ function getQueueForTable(matches, tableNum) {
 function App() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
-  const [isFs, setIsFs] = useState(false);
+
+  // 縦画面なら3段（テーブルを縦に積む）、横画面なら従来の2x2レイアウト
+  const [portrait, setPortrait] = useState(() => window.innerHeight >= window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setPortrait(window.innerHeight >= window.innerWidth);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
 
   // ===== 自由なピンチズーム・パン =====
   // scale：拡大率。tx, ty：ステージのずらし量(px)。指の下の点がそのまま拡大の中心になるよう、
@@ -199,21 +210,6 @@ function App() {
   };
   const resetZoom = () => { setScale(1); setTx(0); setTy(0); };
 
-  useEffect(() => {
-    const onFsChange = () => setIsFs(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFsChange);
-    return () => document.removeEventListener("fullscreenchange", onFsChange);
-  }, []);
-
-  const toggleFullscreen = () => {
-    const el = document.documentElement;
-    if (!document.fullscreenElement) {
-      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
-    } else {
-      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-    }
-  };
-
   useEffect(() => subscribeMatches(
     (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
@@ -228,9 +224,6 @@ function App() {
         <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
         <button onClick={resetZoom} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(scale * 100)}%</button>
         <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
-        <button onClick={toggleFullscreen} style={{ ...zoomBtn, width: "auto", padding: "6px 12px" }}>
-          {isFs ? "全画面を終了" : "⛶ 全画面"}
-        </button>
       </div>
 
       {/* ここから下が、好きな場所を好きなだけピンチで拡大・1本指でドラッグして動かせる範囲 */}
@@ -239,16 +232,24 @@ function App() {
           position: "absolute", left: 0, top: 0, width: "100%", height: "100%",
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "0 0",
         }}>
-          <div style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-            gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
-            height: "100%", maxWidth: 1600, margin: "0 auto",
-          }}>
-            <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-            <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-            <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
-            <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
-          </div>
+          {portrait ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", maxWidth: 900, margin: "0 auto" }}>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
+            </div>
+          ) : (
+            <div style={{
+              display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+              gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
+              height: "100%", maxWidth: 1600, margin: "0 auto",
+            }}>
+              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
+              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
+              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
+              <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
+            </div>
+          )}
         </div>
       </div>
       {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 8, color: C.red, textAlign: "center", fontSize: 13, zIndex: 10 }}>同期エラー: {err}</div>}
