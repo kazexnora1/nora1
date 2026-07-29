@@ -148,10 +148,6 @@ const initialMatchState = (rt1, rt2, names, table) => ({
   winner: null,
 });
 
-function randomMatchId() {
-  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-}
-
 /* ========= 「対戦表」「テーブルの様子」タブ用の共通ヘルパー（全卓の対戦を購読） ========= */
 function subscribeAllMatches(onValue, onError) {
   const ref = db.ref("matches");
