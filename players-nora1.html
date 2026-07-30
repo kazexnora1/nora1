@@ -8,12 +8,12 @@
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
 </style>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -631,8 +631,11 @@ function MatchScreen({ setupInfo, onExit }) {
     dirtyRef.current = true;
   };
 
-  // 初回：既存の共有stateがあればそのまま取り込む（ここではタイマーを開始しない。
-  // 試合の開始（startedAt）はスコアラーがバンキング勝者を選んだ瞬間に確定させる）
+  const [resetDetected, setResetDetected] = useState(false); // 本部が対戦表を組み直し、この対戦が無くなった時に立てる
+
+  // 初回：既存の共有stateを取り込む。ここでは絶対に新規作成しない——
+  // 対戦は必ずB1（本部）が先に作成しているので、無ければ「本部が対戦表を組み直した」等でこの対戦が
+  // 無くなったということ。ここで作り直してしまうと、消えたはずの対戦が復活してB1側を汚してしまう
   useEffect(() => {
     (async () => {
       try {
@@ -640,7 +643,7 @@ function MatchScreen({ setupInfo, onExit }) {
         if (remote) {
           setState(remote);
         } else {
-          await saveMatchRemote(matchId, stateRef.current);
+          setResetDetected(true);
         }
         setSyncStatus({ ok: true });
       } catch (err) {
@@ -650,20 +653,22 @@ function MatchScreen({ setupInfo, onExit }) {
     })();
   }, []);
 
-  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）
+  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）。
+  // 本部が対戦表を組み直すと、この対戦IDのデータが丸ごと消えて null が届く——その場合はリセット扱いにする
   useEffect(() => {
     if (!loaded) return;
     return subscribeMatch(matchId,
       (remote) => {
-        if (remote && remote.version > stateRef.current.version) setState(remote);
+        if (!remote) { setResetDetected(true); return; }
+        if (remote.version > stateRef.current.version) setState(remote);
         setSyncStatus({ ok: true });
       },
       (err) => setSyncStatus({ ok: false, err }));
   }, [loaded, matchId]);
 
-  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む
+  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む（リセット後は何も書き込まない）
   useEffect(() => {
-    if (!loaded || !dirtyRef.current) return;
+    if (!loaded || !dirtyRef.current || resetDetected) return;
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
       dirtyRef.current = false;
@@ -674,7 +679,7 @@ function MatchScreen({ setupInfo, onExit }) {
         setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
       }
     }, 500);
-  }, [state, loaded]);
+  }, [state, loaded, resetDetected]);
 
   const rt = (i) => state.raceTo[i] || 0;
   const { tot, rack, brk, balls, phase, lastResult, hist } = state;
@@ -829,6 +834,22 @@ function MatchScreen({ setupInfo, onExit }) {
 
   if (!loaded) {
     return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
+  }
+
+  if (resetDetected) {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>この対戦はリセットされました</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.7 }}>
+          本部が対戦表を組み直したようです。お手数ですが、本部で新しく表示されたQRを読み込み直してください。
+        </div>
+        {onExit && (
+          <button onClick={onExit} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            📷 カメラ画面にもどる
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (phase === "banking") {
