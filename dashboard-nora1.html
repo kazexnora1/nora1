@@ -645,6 +645,15 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
     _id = Math.max(...backup.map((p) => p.id || 0)) + 1;
     persist(true);
   };
+  // 当日の抽選番号順に並び替える。番号未入力の人は元の順序のまま最後にまとめる
+  const sortByDraw = () => {
+    const numbered = roster.filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
+    const unnumbered = roster.filter((p) => !(p.draw !== undefined && p.draw !== "" && p.draw != null));
+    numbered.sort((a, b) => parseInt(a.draw, 10) - parseInt(b.draw, 10));
+    setRoster([...numbered, ...unnumbered]);
+    persist();
+  };
+  const hasAnyDraw = roster.some((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
@@ -664,18 +673,37 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
           <button onClick={restoreBackup} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>↺ バックアップから復元する</button>
         </div>
       )}
+      {roster.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 6, padding: "0 2px" }}>
+          <div style={{ flex: 1, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
+          <div style={{ width: 80, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>レート</div>
+          <div style={{ width: 64, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>抽選番号</div>
+          <div style={{ width: 40 }} />
+        </div>
+      )}
       {roster.map((p) => (
         <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
             style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
           <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
             style={{ width: 80, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+          <input inputMode="numeric" value={p.draw || ""} onChange={(e) => update(p.id, "draw", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+            placeholder="―"
+            style={{ width: 64, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 15, fontWeight: 800, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
           <button onClick={() => remove(p.id)} style={{ width: 40, height: 40, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
         </div>
       ))}
       {roster.length < 40 && (
         <button onClick={add} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>＋ 選手を追加</button>
       )}
+      {hasAnyDraw && (
+        <button onClick={sortByDraw} style={{ width: "100%", marginTop: 10, background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+          🎲 抽選番号順に並び替える
+        </button>
+      )}
+      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
+        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
+      </div>
     </div>
   );
 }
