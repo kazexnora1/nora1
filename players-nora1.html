@@ -2,18 +2,17 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
-<title>JCL9Match B3 観戦ディスプレイ</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>JCL9Match B2テスト</title>
 <style>
-  html, body, #root { margin: 0; padding: 0; height: 100%; background: #FFFFFF; }
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -33,16 +32,53 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-const FONT = "'M PLUS Rounded 1c', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif";
+/* ========= ハンデ計算（App Aと共通） ========= */
+function roundHalfToEven(v) {
+  const w = Math.floor(v);
+  const d = v - w;
+  if (Math.abs(d - 0.5) > 1e-9) return d > 0.5 ? w + 1 : w;
+  return w % 2 === 1 ? w + 1 : w;
+}
+function normalizeRace(rt1, rt2, lowClamp) {
+  const highClamp = 99.0;
+  const p1IsHigh = rt1 >= rt2;
+  const highRace = Math.max(rt1, rt2), lowRace = Math.min(rt1, rt2);
+  let highC = highRace > highClamp ? highClamp : highRace;
+  let lowC = highRace > highClamp ? lowRace - lowRace * ((highRace - highClamp) / highRace) : lowRace;
+  highC = Math.min(lowRace < lowClamp ? highC + highC * ((lowClamp - lowRace) / lowC) : highC, highClamp);
+  lowC = Math.max(lowC < lowClamp ? lowClamp : lowC, lowClamp);
+  return { rt1: p1IsHigh ? highC : lowC, rt2: p1IsHigh ? lowC : highC };
+}
+function computeRace(R1, R2, lenPct) {
+  const dampFactor = lenPct / 100;
+  const avg = (R1 + R2) / 2;
+  const gp = 0.018 * avg - 1.4;
+  const delta = R1 - R2;
+  const p1 = 1 - 1 / (1 + Math.pow(2, delta / 100));
+  const p2 = 1 - p1;
+  const p1AvgPts = p1 * 14.0 + p2 * (7.4 - 0.0062 * R2);
+  const p2AvgPts = p2 * 14.0 + p1 * (7.4 - 0.0062 * R1);
+  const rt1raw = p1AvgPts * gp * dampFactor;
+  const rt2raw = p2AvgPts * gp * dampFactor;
+  const lowClamp = 0.16 * lenPct + 12;
+  const norm = normalizeRace(rt1raw, rt2raw, lowClamp);
+  return { rt1: roundHalfToEven(norm.rt1), rt2: roundHalfToEven(norm.rt2), p1, p2 };
+}
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 const C = {
-  bg: "#FFFFFF", panel: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
-  blue: "#2E6DB5", red: "#C6392E", win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0",
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const PC = [C.blue, C.red];
+const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
 
-/* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用） =========
-   ↓ B1・B2 とまったく同じ値を貼ってください */
+/* ========= 共有バックエンド：Firebase Realtime Database =========
+   ↓ B1・B3 とまったく同じ値を貼ってください */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
   authDomain: "nora1kaze-247f3.firebaseapp.com",
@@ -55,17 +91,8 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
-/* 対戦データの変更を購読する。ポーリングしないので、スコアが動いた瞬間に画面へ反映される */
-function subscribeMatches(onValue, onError) {
-  const ref = db.ref("matches");
-  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
-    (e) => onError && onError(e && e.message ? e.message : String(e)));
-  return () => ref.off("value", handler);
-}
-
-const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない試合は無視（前日の残骸対策）
-
-/* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+/* Firebaseは空の配列・空のオブジェクトを保存しない（キーごと消える）。
+   読み込んだ直後にここで補っておかないと、hist などが undefined のまま使われて落ちる */
 function normalizeMatch(m) {
   if (!m) return m;
   return {
@@ -73,17 +100,90 @@ function normalizeMatch(m) {
     names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
     tot: Array.isArray(m.tot) ? m.tot : [0, 0],
     raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
-    balls: Array.isArray(m.balls) ? m.balls : [],
+    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
     hist: Array.isArray(m.hist) ? m.hist : [],
     rack: m.rack || 1,
+    version: m.version || 1,
+    phase: m.phase || "banking",
+    brk: m.brk === 0 || m.brk === 1 ? m.brk : null,
+    lastResult: m.lastResult || null,
   };
 }
+
+/* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
+async function loadMatchRemote(matchId) {
+  const snap = await db.ref("matches/" + matchId).once("value");
+  return normalizeMatch(snap.val());
+}
+async function saveMatchRemote(matchId, state) {
+  await db.ref("matches/" + matchId).set({ ...state, updatedAt: Date.now() });
+}
+/* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
+function subscribeMatch(matchId, onValue, onError) {
+  const ref = db.ref("matches/" + matchId);
+  const handler = ref.on("value", (snap) => onValue(normalizeMatch(snap.val())),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+
+/* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
+const DEFAULT_MATCH_MINUTES = 30;
+
+const initialMatchState = (rt1, rt2, names, table) => ({
+  version: 1,
+  phase: "banking", // banking | play | done | finished
+  brk: null, // 0 | 1 | null
+  tot: [0, 0],
+  rack: 1,
+  balls: mkBalls(),
+  lastResult: null,
+  hist: [],
+  raceTo: [rt1, rt2],
+  names,
+  table,
+  startedAt: null, // スコアラーがバンキング勝者を選び、試合が実際に始まった時刻
+  deadline: null, // タイマー開始時に確定させる「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算する
+  finishedAt: null, // 決着した時刻
+  elapsedMs: null, // 所要時間（ミリ秒）
+  winner: null,
+});
+
+/* ========= 「対戦表」「テーブルの様子」タブ用の共通ヘルパー（全卓の対戦を購読） ========= */
+function subscribeAllMatches(onValue, onError) {
+  const ref = db.ref("matches");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない対戦は前日の残骸とみなして無視
 function isMatchFinished(m) {
-  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.bothLose) return true; // 時間切れでどちらも目標に届かなかった
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
-// 卓ごとの待機列：未終了の対戦を作成順に並べる。[0]が現在対戦中、[1]が次戦
+function matchWinnerIndex(m) {
+  if (m.bothLose) return null;
+  if (m.winner === 0 || m.winner === 1) return m.winner;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  const r0 = rt[0] > 0 && tot[0] >= rt[0], r1 = rt[1] > 0 && tot[1] >= rt[1];
+  if (r0 && r1) { const last = (m.hist || []).slice(-1)[0]; return last ? last.w : 0; }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
+/* 卓ごとの全対戦を作成順に並べる（「対戦表」タブ用） */
+function getAllForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+/* 卓ごとの待機列：未終了の対戦だけを作成順に並べる。[0]が現在対戦中、[1]が次戦（「テーブルの様子」タブ用） */
 function getQueueForTable(matches, tableNum) {
   const list = [];
   for (const id in matches) {
@@ -96,121 +196,128 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
+/* 試合終了／試合中／呼び出し中（次に始める1試合だけ）／待機中 */
+function annotateColumn(list) {
+  let calledYet = false;
+  return list.map((m) => {
+    if (isMatchFinished(m)) return { m, st: "done" };
+    if (m.startedAt) return { m, st: "live" };
+    if (!calledYet) { calledYet = true; return { m, st: "call" }; }
+    return { m, st: "queued" };
+  });
+}
 
-function App() {
+/* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
+function TimelineTab({ myMatchId }) {
+  const [cols, setCols] = useState([[], [], []]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => subscribeAllMatches(
+    (matches) => { setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t)))); setErr(null); },
+    (e) => setErr(e)), []);
+
+  const slots = Math.max(1, ...cols.map((c) => c.length));
+  const total = cols.reduce((a, c) => a + c.length, 0);
+  const doneCount = cols.reduce((a, c) => a + c.filter((e) => e.st === "done").length, 0);
+
+  return (
+    <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
+          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+        <div />
+        {[1, 2, 3].map((t) => (
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
+        ))}
+        {Array.from({ length: slots }, (_, s) => (
+          <React.Fragment key={s}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+            {[0, 1, 2].map((ti) => {
+              const e = cols[ti][s];
+              return <div key={ti}>{e
+                ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} />
+                : <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+function TimelineSlotCard({ m, st, mine }) {
+  const names = m.names || ["", ""];
+  const tot = m.tot || [0, 0];
+  const rt = m.raceTo || [0, 0];
+  const w = st === "done" ? matchWinnerIndex(m) : null;
+
+  const style =
+    st === "done"
+      ? (m.bothLose
+          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "両者負け" }
+          : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "試合終了" })
+      : st === "live"
+      ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
+      : st === "call"
+      ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
+      : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
+
+  const won = (i) => !m.bothLose && w === i;
+
+  return (
+    <div style={{
+      position: "relative", height: 128, boxSizing: "border-box", background: style.bg,
+      border: `${mine ? 3 : st === "live" || st === "call" ? 2 : 1}px solid ${mine ? C.win : style.border}`,
+      borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
+    }}>
+      {mine && <span style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: C.win, color: "#fff", borderRadius: 10, padding: "1px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>担当中</span>}
+      <div style={{ textAlign: "center" }}>
+        <span style={{
+          display: "inline-block", background: style.badgeBg, color: style.badgeCol,
+          border: st === "call" ? `1.5px solid ${C.blue}` : "none",
+          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
+        }}>{style.badge}</span>
+      </div>
+      <div style={{ display: "flex", gap: 3 }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+            <div style={{
+              fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</div>
+
+            {st === "done" ? (
+              <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.3, color: won(i) ? C.win : C.sub }}>
+                {won(i) ? "勝" : "負"}
+              </div>
+            ) : st === "live" ? (
+              <>
+                <div style={{ fontSize: 26, fontWeight: 900, color: C.ink, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" }}>{tot[i]}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 23, fontWeight: 800, color: C.sub, lineHeight: 1.3, fontVariantNumeric: "tabular-nums" }}>{rt[i]}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
+function TablesTab() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
 
-  // 縦画面なら3段（テーブルを縦に積む）、横画面なら従来の2x2レイアウト
-  const [portrait, setPortrait] = useState(() => window.innerHeight >= window.innerWidth);
-  useEffect(() => {
-    const onResize = () => setPortrait(window.innerHeight >= window.innerWidth);
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
-  }, []);
-
-  // ===== 自由なピンチズーム・パン =====
-  // scale：拡大率。tx, ty：ステージのずらし量(px)。指の下の点がそのまま拡大の中心になるよう、
-  // タッチ位置から逆算してtx/tyを決める。txRef等はイベントハンドラから最新値を読むための参照
-  const [scale, setScaleState] = useState(1);
-  const [tx, setTxState] = useState(0);
-  const [ty, setTyState] = useState(0);
-  const scaleRef = useRef(1), txRef = useRef(0), tyRef = useRef(0);
-  const setScale = (v) => { scaleRef.current = v; setScaleState(v); };
-  const setTx = (v) => { txRef.current = v; setTxState(v); };
-  const setTy = (v) => { tyRef.current = v; setTyState(v); };
-
-  const viewportRef = useRef(null);
-  const gestureRef = useRef(null); // 現在進行中のジェスチャー（1本指パン／2本指ピンチ）の基準値
-
-  const MIN_SCALE = 1, MAX_SCALE = 8;
-
-  const beginGesture = (touches) => {
-    const rect = viewportRef.current.getBoundingClientRect();
-    if (touches.length === 1) {
-      gestureRef.current = {
-        mode: "pan",
-        startX: touches[0].clientX, startY: touches[0].clientY,
-        startTx: txRef.current, startTy: tyRef.current,
-      };
-    } else if (touches.length >= 2) {
-      const [a, b] = touches;
-      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      const midX = (a.clientX + b.clientX) / 2 - rect.left;
-      const midY = (a.clientY + b.clientY) / 2 - rect.top;
-      // anchor：ピンチの中心が「拡大されていないステージ」上のどこに当たるかを固定しておく
-      gestureRef.current = {
-        mode: "pinch", rect,
-        startDist: dist, startScale: scaleRef.current,
-        anchorX: (midX - txRef.current) / scaleRef.current,
-        anchorY: (midY - tyRef.current) / scaleRef.current,
-      };
-    }
-  };
-
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-
-    const onStart = (e) => { beginGesture(e.touches); };
-
-    const onMove = (e) => {
-      const g = gestureRef.current;
-      if (!g) return;
-      e.preventDefault();
-      if (e.touches.length === 1) {
-        if (g.mode !== "pan") { beginGesture(e.touches); return; }
-        setTx(g.startTx + (e.touches[0].clientX - g.startX));
-        setTy(g.startTy + (e.touches[0].clientY - g.startY));
-      } else if (e.touches.length >= 2) {
-        if (g.mode !== "pinch") { beginGesture(e.touches); return; }
-        const [a, b] = e.touches;
-        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, g.startScale * (dist / g.startDist)));
-        const midX = (a.clientX + b.clientX) / 2 - g.rect.left;
-        const midY = (a.clientY + b.clientY) / 2 - g.rect.top;
-        setScale(newScale);
-        setTx(midX - g.anchorX * newScale);
-        setTy(midY - g.anchorY * newScale);
-      }
-    };
-
-    // 指の本数が変わった（片方だけ離した等）時は、基準値を今の状態から取り直して座標が飛ばないようにする
-    const onEnd = (e) => {
-      if (e.touches.length === 0) gestureRef.current = null;
-      else beginGesture(e.touches);
-    };
-
-    el.addEventListener("touchstart", onStart, { passive: false });
-    el.addEventListener("touchmove", onMove, { passive: false });
-    el.addEventListener("touchend", onEnd);
-    el.addEventListener("touchcancel", onEnd);
-    return () => {
-      el.removeEventListener("touchstart", onStart);
-      el.removeEventListener("touchmove", onMove);
-      el.removeEventListener("touchend", onEnd);
-      el.removeEventListener("touchcancel", onEnd);
-    };
-  }, []);
-
-  // ＋／－ボタン：画面中央を中心に拡大縮小する
-  const stepZoom = (delta) => {
-    const rect = viewportRef.current.getBoundingClientRect();
-    const cx = rect.width / 2, cy = rect.height / 2;
-    const anchorX = (cx - txRef.current) / scaleRef.current;
-    const anchorY = (cy - tyRef.current) / scaleRef.current;
-    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, +(scaleRef.current + delta).toFixed(2)));
-    setScale(newScale);
-    setTx(cx - anchorX * newScale);
-    setTy(cy - anchorY * newScale);
-  };
-  const resetZoom = () => { setScale(1); setTx(0); setTy(0); };
-
-  useEffect(() => subscribeMatches(
+  useEffect(() => subscribeAllMatches(
     (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
 
@@ -219,57 +326,25 @@ function App() {
     .filter(Boolean);
 
   return (
-    <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: 10, right: 14, display: "flex", gap: 6, zIndex: 10 }}>
-        <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
-        <button onClick={resetZoom} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(scale * 100)}%</button>
-        <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
-      </div>
-
-      {/* ここから下が、好きな場所を好きなだけピンチで拡大・1本指でドラッグして動かせる範囲 */}
-      <div ref={viewportRef} style={{ position: "relative", width: "100%", height: "calc(100vh - 36px)", overflow: "hidden", touchAction: "none" }}>
-        <div style={{
-          position: "absolute", left: 0, top: 0, width: "100%", height: "100%",
-          transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "0 0",
-        }}>
-          {portrait ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
-            </div>
-          ) : (
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-              gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
-              height: "100%", maxWidth: 1600, margin: "0 auto",
-            }}>
-              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
-              <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
-            </div>
-          )}
+    <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} style={{ height: 230, marginBottom: 14 }}>
+          <TablePanel tableNum={i + 1} m={queues[i][0]} />
         </div>
-      </div>
-      {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 8, color: C.red, textAlign: "center", fontSize: 13, zIndex: 10 }}>同期エラー: {err}</div>}
+      ))}
+      <NextList matches={nextMatches} />
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
 }
-const zoomBtn = {
-  width: 34, height: 30, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8,
-  color: C.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
-};
-
 function NextList({ matches }) {
   return (
-    <div style={{ height: "100%", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", boxSizing: "border-box", overflow: "hidden" }}>
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", boxSizing: "border-box" }}>
       <div style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2, marginBottom: 10 }}>次の試合</div>
       {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, opacity: 0.6, textAlign: "center", marginTop: 20 }}>予定なし</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {matches.map((m, i) => (
-          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.03)", borderRadius: 12, padding: "8px 12px" }}>
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12, padding: "8px 12px" }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, flexShrink: 0 }}>卓{m.tableNum}</span>
             <span style={{ fontSize: 16, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 400 }}>対</span> {(m.names || ["", ""])[1]}
@@ -280,7 +355,6 @@ function NextList({ matches }) {
     </div>
   );
 }
-
 function hillInfo(rt, disp) {
   if (rt <= 0) return null;
   const rem = rt - disp;
@@ -291,9 +365,9 @@ function hillInfo(rt, disp) {
 function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
-      <div style={{ height: "100%", boxSizing: "border-box", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24, letterSpacing: 2 }}>卓 {tableNum}</div>
-        <div style={{ fontSize: 24, opacity: 0.6 }}>待機中</div>
+      <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 16, letterSpacing: 2 }}>卓 {tableNum}</div>
+        <div style={{ fontSize: 20, opacity: 0.6 }}>待機中</div>
       </div>
     );
   }
@@ -308,11 +382,10 @@ function TablePanel({ tableNum, m }) {
   ];
   const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
-  const bothLose = !!m.bothLose; // 時間切れでどちらも目標に届かなかった
+  const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const matchWinner = bothLose || m.phase === "banking" ? null :
     (m.winner === 0 || m.winner === 1) ? m.winner :
-    // ヒルヒルで両者が目標に達した場合は、そのラックで9番を落とした方が勝ち
     (reached[0] && reached[1]) ? ((m.hist || []).slice(-1)[0] || { w: 0 }).w :
     reached[0] ? 0 :
     reached[1] ? 1 :
@@ -321,60 +394,712 @@ function TablePanel({ tableNum, m }) {
   const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
   return (
-    <div style={{ height: "100%", boxSizing: "border-box", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "18px 22px", color: C.ink, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 17, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
-        <span style={{ fontSize: 15, color: C.sub, fontWeight: 700 }}>
+    <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "14px 16px", color: C.ink, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
+        <span style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
       </div>
 
       {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
-        <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "5px 10px", textAlign: "center", fontSize: 15, fontWeight: 800, marginBottom: 8 }}>
+        <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "4px 10px", textAlign: "center", fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
           ヒルヒル
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
           const pc = i === 0 ? C.blue : C.red;
           const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
           return (
-            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "10px 4px 8px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minHeight: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{names[i]}</div>
-              <div style={{ minHeight: "clamp(64px, 10.5vw, 108px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "clamp(58px, 10vw, 100px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
-                  {m.phase === "banking" ? "–" : disp[i]}
-                  <span style={{ fontSize: "0.42em", opacity: 0.55, WebkitTextStroke: "0px" }}>/{raceTo[i]}</span>
-                </div>
+            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 3px ${pc}` : "none", borderRadius: 14, padding: "8px 4px 6px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+              <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink }}>
+                {m.phase === "banking" ? "–" : disp[i]}
+                <span style={{ fontSize: 15, opacity: 0.5 }}>/{raceTo[i]}</span>
               </div>
               {bothLose ? (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
                   達成率 {(rate(i) * 100).toFixed(1)}％
                 </div>
               ) : hi && (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
                   {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                 </div>
               )}
-              {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 4 }}>● ブレイク</div>}
+              {m.brk === i && <div style={{ fontSize: 12, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 2 }}>● ブレイク</div>}
             </div>
           );
         })}
       </div>
 
       {bothLose ? (
-        <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.hill }}>
-          時間切れ・両者負け
-        </div>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.hill }}>時間切れ・両者負け</div>
       ) : matchWinner != null && (
-        <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.win }}>
-          🏆 {names[matchWinner]} 勝利
-        </div>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win }}>🏆 {names[matchWinner]} 勝利</div>
       )}
     </div>
   );
 }
+
+/* ========= カメラでQRを読み取る画面（普段の待機画面） =========
+   iOS/Androidともファイル入力にcapture属性を付けると標準カメラが起動する（これは実際に動作する）。
+   撮った写真はその場でjsQRを使って解析し、対戦情報を取り出す。
+   ※ Safariには「カメラアプリを直接開くリンク」という機能は無いため、写真を1枚撮ってもらう方式にしている */
+function CameraLinkScreen({ onScanned }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const parseMatchUrl = (text) => {
+    const url = new URL(text);
+    const q = url.searchParams;
+    if (!(q.get("m") && q.get("p1") && q.get("p2") && q.get("r1") && q.get("r2") && q.get("len"))) return null;
+    return {
+      matchId: q.get("m"),
+      names: [q.get("p1"), q.get("p2")],
+      ratings: [Number(q.get("r1")), Number(q.get("r2"))],
+      lenPct: Number(q.get("len")),
+      raceToParam: q.get("rt1") && q.get("rt2") ? [Number(q.get("rt1")), Number(q.get("rt2"))] : null,
+      table: Number(q.get("t")) || 1,
+    };
+  };
+
+  const handleFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // 同じ写真でも次回changeが発火するようにリセット
+    if (!file) return;
+    setErr(null);
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = window.jsQR ? window.jsQR(imageData.data, imageData.width, imageData.height) : null;
+          if (!code) { setErr("QRコードを読み取れませんでした。ピントを合わせてもう一度撮影してください"); setBusy(false); return; }
+          const info = parseMatchUrl(code.data);
+          if (!info) { setErr("対戦用のQRコードではないようです"); setBusy(false); return; }
+          setBusy(false);
+          onScanned(info);
+        } catch (err) {
+          setBusy(false);
+          setErr("QRコードの解析に失敗しました：" + (err && err.message ? err.message : err));
+        }
+      };
+      img.onerror = () => { setBusy(false); setErr("写真を読み込めませんでした"); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 10 }}>対戦の準備中です</div>
+      <div style={{ fontSize: 14, color: C.sub, marginBottom: 30, lineHeight: 1.7 }}>
+        本部（B1）の画面に対戦QRが表示されたら、下のボタンでカメラを起動して撮影してください
+      </div>
+      <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy}
+        style={{ background: busy ? C.line : C.blue, color: busy ? C.sub : "#fff", border: "none", borderRadius: 18, padding: "22px 30px", fontSize: 17, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, boxShadow: busy ? "none" : "0 4px 14px rgba(46,109,181,0.3)" }}>
+        {busy ? "読み取り中…" : "📷 カメラでQRを読み取る"}
+      </button>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
+      {err && <div style={{ marginTop: 18, fontSize: 13.5, color: C.minus, lineHeight: 1.6 }}>{err}</div>}
+    </div>
+  );
+}
+
+/* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
+   スコアラーの中身（QR未読込ならカメラ画面、読込済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブルの様子"], ["scorer", "🎯 スコアラー"]];
+function Shell() {
+  const params = new URLSearchParams(window.location.search);
+  const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
+  const [setupInfo, setSetupInfo] = useState(() => {
+    if (!hasSetup) return null;
+    return {
+      matchId: params.get("m"),
+      names: [params.get("p1"), params.get("p2")],
+      ratings: [Number(params.get("r1")), Number(params.get("r2"))],
+      lenPct: Number(params.get("len")),
+      raceToParam: params.get("rt1") && params.get("rt2")
+        ? [Number(params.get("rt1")), Number(params.get("rt2"))]
+        : null,
+      table: Number(params.get("t")) || 1,
+    };
+  });
+  const [tab, setTab] = useState("scorer");
+
+  const handleScanned = (info) => {
+    // 再読み込みしても復元できるよう、URLにも同じ情報を反映しておく
+    const url = new URL(window.location.href);
+    url.searchParams.set("m", info.matchId);
+    url.searchParams.set("p1", info.names[0]);
+    url.searchParams.set("p2", info.names[1]);
+    url.searchParams.set("r1", info.ratings[0]);
+    url.searchParams.set("r2", info.ratings[1]);
+    url.searchParams.set("len", info.lenPct);
+    url.searchParams.set("t", info.table);
+    if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
+    window.history.replaceState({}, "", url.toString());
+    setSetupInfo(info);
+    setTab("scorer");
+  };
+  // 試合が終わって「終了」を押した時に呼ばれる。カメラ待ち受け画面に戻す
+  const handleExit = () => {
+    window.history.replaceState({}, "", window.location.pathname);
+    setSetupInfo(null);
+  };
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+        {TABS.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 13, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
+          <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
+          <TablesTab />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
+          {setupInfo ? <MatchScreen setupInfo={setupInfo} onExit={handleExit} /> : <CameraLinkScreen onScanned={handleScanned} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= ルート ========= */
+function App() {
+  return <Shell />;
+}
+
+/* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
+function MatchScreen({ setupInfo, onExit }) {
+  const { matchId, names, lenPct, table } = setupInfo;
+  const [res] = useState(() => setupInfo.raceToParam
+    ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
+    : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
+  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
+  const [loaded, setLoaded] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // 球エリア内では画面スクロール（スワイプ）を無効化し、球の操作だけ効くようにする
+  const playAreaRef = useRef(null);
+  useEffect(() => {
+    const el = playAreaRef.current;
+    if (!el) return;
+    const block = (e) => e.preventDefault();
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block, { passive: false });
+  });
+  const [pressed, setPressed] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const lastTapRef = useRef({});
+  const dirtyRef = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const pushTimer = useRef(null);
+
+  const pl = [{ name: names[0], raceTo: String(state.raceTo[0]) }, { name: names[1], raceTo: String(state.raceTo[1]) }];
+
+  const applyLocal = (updater) => {
+    setState((s) => {
+      const next = typeof updater === "function" ? updater(s) : updater;
+      return { ...next, version: s.version + 1 };
+    });
+    dirtyRef.current = true;
+  };
+
+  const [resetDetected, setResetDetected] = useState(false); // 本部が対戦表を組み直し、この対戦が無くなった時に立てる
+
+  // 初回：既存の共有stateを取り込む。ここでは絶対に新規作成しない——
+  // 対戦は必ずB1（本部）が先に作成しているので、無ければ「本部が対戦表を組み直した」等でこの対戦が
+  // 無くなったということ。ここで作り直してしまうと、消えたはずの対戦が復活してB1側を汚してしまう
+  useEffect(() => {
+    (async () => {
+      try {
+        const remote = await loadMatchRemote(matchId);
+        if (remote) {
+          setState(remote);
+        } else {
+          setResetDetected(true);
+        }
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）。
+  // 本部が対戦表を組み直すと、この対戦IDのデータが丸ごと消えて null が届く——その場合はリセット扱いにする
+  useEffect(() => {
+    if (!loaded) return;
+    return subscribeMatch(matchId,
+      (remote) => {
+        if (!remote) { setResetDetected(true); return; }
+        if (remote.version > stateRef.current.version) setState(remote);
+        setSyncStatus({ ok: true });
+      },
+      (err) => setSyncStatus({ ok: false, err }));
+  }, [loaded, matchId]);
+
+  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む（リセット後は何も書き込まない）
+  useEffect(() => {
+    if (!loaded || !dirtyRef.current || resetDetected) return;
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      dirtyRef.current = false;
+      try {
+        await saveMatchRemote(matchId, stateRef.current);
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+    }, 500);
+  }, [state, loaded, resetDetected]);
+
+  const rt = (i) => state.raceTo[i] || 0;
+  const { tot, rack, brk, balls, phase, lastResult, hist } = state;
+  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const disp = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
+  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
+
+  // ===== 持ち時間タイマー =====
+  // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
+  // matchMinutes を後から変えても既に始まっている試合の残り時間は動かない
+  const deadline = state.deadline || null;
+  // 勝敗が決まったらその時点で停止（finishedAt で固定）
+  const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
+  const isTimeUp = msLeft != null && msLeft <= 0;
+  const timeParts = msLeft == null ? ["--", "--"] : (() => {
+    const s = Math.max(0, Math.floor(msLeft / 1000));
+    return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
+  })();
+  const timeLabel = `${timeParts[0]}:${timeParts[1]}`;
+  // 目標達成率（確定分のみ）。100%を超えることがあるが、成績では100%を上限とする
+  const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
+
+  // ===== 勝敗判定 =====
+  // ・通常どおり、目標点に到達した方が勝ち
+  // ・ヒルヒルで両者が到達した場合は、そのラックで9番を落とした方（最終ラックの勝者）が勝ち
+  const reached = [rt(0) > 0 && tot[0] >= rt(0), rt(1) > 0 && tot[1] >= rt(1)];
+  let matchWinner = null;
+  if (reached[0] && reached[1]) matchWinner = lastResult ? lastResult.w : 0;
+  else if (reached[0]) matchWinner = 0;
+  else if (reached[1]) matchWinner = 1;
+  else if (phase === "play" && !hillHill) {
+    if (disp[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+    else if (disp[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  }
+  // 時間切れ後は、今やっているラックが最終ラック。
+  // そのラックが終わってもどちらも目標に届かなければ両者負け（それぞれ達成率で評価される）
+  const bothLose = matchWinner == null && isTimeUp && phase === "done";
+  const isFinalRack = isTimeUp && matchWinner == null && !bothLose;
+
+  // 試合が決まった時点で所要時間を記録（画面には出さない）。訂正で決着が戻ったら記録も消す
+  useEffect(() => {
+    if (!loaded) return;
+    if ((matchWinner != null || bothLose) && !state.finishedAt) {
+      const fin = Date.now();
+      applyLocal((s) => ({
+        ...s,
+        finishedAt: fin,
+        elapsedMs: s.startedAt ? fin - s.startedAt : null,
+        winner: matchWinner,
+        bothLose,
+      }));
+    } else if (matchWinner == null && !bothLose && state.finishedAt) {
+      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null, bothLose: false }));
+    }
+  }, [matchWinner, bothLose, loaded, state.finishedAt]);
+
+  const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
+
+  const finish = (nb, w) => {
+    pushUndo();
+    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
+    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
+    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
+    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
+  };
+  const move = (n, dir) => {
+    if (phase !== "play") return;
+    const b = balls.find((x) => x.n === n);
+    let loc = b.loc;
+    if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
+    else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
+    const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
+    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
+    else { pushUndo(); applyLocal((s) => ({ ...s, balls: nb })); }
+  };
+  const toggleDead = (n) => {
+    if (phase !== "play") return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
+  };
+  const correct = () => {
+    if (!lastResult) return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
+  };
+  const nextRack = () => {
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
+  };
+  const undoRack = () => {
+    pushUndo();
+    applyLocal((s) => {
+      if (!s.hist.length) return s;
+      const last = s.hist[s.hist.length - 1];
+      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
+    });
+  };
+  const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
+  const rematch = () => {
+    pushUndo();
+    applyLocal((s) => {
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: now + mins * 60000, finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
+    });
+  };
+  const backToSetup = () => {
+    window.history.replaceState({}, "", window.location.pathname);
+    if (onExit) onExit(); else window.location.reload();
+  };
+  const swapBreak = () => {
+    if (phase !== "play") return;
+    if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
+  };
+  // バンキング勝者を選んだ瞬間に試合開始を確定する（＝B1へ「試合中」を通知するトリガー）。
+  // 既に他端末で開始済みなら startedAt/deadline は変更しない
+  const chooseBreak = (i) => {
+    applyLocal((s) => {
+      if (s.startedAt) return { ...s, brk: i, phase: "play" };
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, brk: i, phase: "play", startedAt: now, deadline: now + mins * 60000 };
+    });
+  };
+
+  const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+  const gestureImpl = (n, dy) => {
+    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
+    const now = Date.now();
+    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
+    else lastTapRef.current[n] = now;
+  };
+  const gestureRef = useRef(gestureImpl);
+  gestureRef.current = gestureImpl;
+  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+
+  const hillInfo = (i) => {
+    if (rt(i) <= 0) return { txt: "", on: false };
+    const rem = rt(i) - disp[i];
+    if (rem <= 0) return { txt: "達成", on: true };
+    const toHill = rem - 14;
+    return toHill > 0 ? { txt: `ヒルまで あと${toHill}`, on: false } : { txt: `残り${rem}`, on: true };
+  };
+  const col = (loc) => balls.filter((b) => b.loc === loc);
+  const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
+  let cum = [0, 0];
+  const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
+
+  const appUrl = window.location.href;
+
+  if (!loaded) {
+    return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
+  }
+
+  if (resetDetected) {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>この対戦はリセットされました</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.7 }}>
+          本部が対戦表を組み直したようです。お手数ですが、本部で新しく表示されたQRを読み込み直してください。
+        </div>
+        {onExit && (
+          <button onClick={onExit} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            📷 カメラ画面にもどる
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (phase === "banking") {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink, textAlign: "center" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>バンキング</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 20 }}>先攻を選んでください（どちらの端末からでもOK）</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[0].name}<br />が先攻</button>
+          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[1].name}<br />が先攻</button>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
+          目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
+          持ち時間 <b style={{ fontSize: 20, color: C.ink }}>{state.matchMinutes || DEFAULT_MATCH_MINUTES}分</b>（先攻を選んだ時点から計測開始）
+        </div>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 700, padding: "10px 16px", cursor: "pointer", fontFamily: FONT }}>📱 相手の端末に共有（QR）</button>
+        {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
+        {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 8, fontSize: 12.5, color: C.blue, cursor: "pointer", fontWeight: 700, padding: "5px 10px" }}>📱 引き継ぎ用QR</button>
+        <div style={{
+          position: "absolute", left: "50%", transform: "translateX(-50%)",
+          display: "flex", alignItems: "center", pointerEvents: "none",
+          fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+          color: matchWinner != null ? C.sub : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
+        }}>
+          {matchWinner == null && isTimeUp ? (
+            <span>時間切れ</span>
+          ) : (
+            <>
+              <span style={{ width: 26, textAlign: "right" }}>{timeParts[0]}</span>
+              <span style={{ width: 8, textAlign: "center" }}>:</span>
+              <span style={{ width: 26, textAlign: "left" }}>{timeParts[1]}</span>
+            </>
+          )}
+        </div>
+        <span style={{ fontSize: 12.5, color: C.sub }}>卓{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
+      </div>
+
+      {isFinalRack && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          時間切れ：このラックが最終ラック（届かなければ両者負け）
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+        {[0, 1].map((i) => {
+          const pc = PC[i]; const hi = hillInfo(i);
+          return (
+            <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
+              <div style={{
+                fontSize: 15, fontWeight: 800, borderRadius: 7, padding: "2px 0", marginBottom: 2,
+                background: `linear-gradient(to right, rgba(255,255,255,0.42) ${Math.min(100, Math.round(rate(i) * 100))}%, rgba(0,0,0,0.14) ${Math.min(100, Math.round(rate(i) * 100))}%)`,
+                textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+              }}>{pl[i].name}</div>
+              <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+              </div>
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
+              <div style={{ minHeight: 18, marginTop: 4 }}>
+                {brk === i && (
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hillHill && matchWinner == null && phase === "play" && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          ヒルヒル：このラックで9番を落とした方が勝ち
+        </div>
+      )}
+
+      {matchWinner != null || bothLose ? (
+        <div style={{ marginBottom: 6 }}>
+          {bothLose ? (
+            <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ・両者負け</div>
+              <div style={{ fontSize: 12.5, marginTop: 2, fontWeight: 700 }}>
+                達成率 {pl[0].name} {(rate(0) * 100).toFixed(1)}％ ／ {pl[1].name} {(rate(1) * 100).toFixed(1)}％
+              </div>
+              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+            </div>
+          ) : (
+            <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
+              <div style={{ fontSize: 12.5, marginTop: 2, color: C.hill, fontWeight: 700 }}>
+                {pl[1 - matchWinner].name} 達成率 {(rate(1 - matchWinner) * 100).toFixed(1)}％
+              </div>
+              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
+            <button onClick={backToSetup} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>終了</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+          {phase === "done" && lastResult ? (
+            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
+          ) : (
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          )}
+          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {phase === "done" && lastResult && (
+              <>
+                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+              </>
+            )}
+          </div>
+          {phase === "done" && lastResult ? (
+            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          ) : (
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          )}
+        </div>
+      )}
+
+      <div ref={playAreaRef} style={{ touchAction: "none" }}>
+        <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+            {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
+            {balls.map((b) => {
+              const moved = b.loc !== "c";
+              return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+            })}
+          </div>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+            {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+          </div>
+        </div>
+
+        <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+      </div>
+
+      {histRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
+          {histRows.slice().reverse().map((h, k) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
+              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
+                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
+                <span style={{ fontSize: 11.5, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+    </div>
+  );
+}
+
+function QRModal({ url, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>相手の端末でこのQRを読む</div>
+        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`} alt="QR" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
+        <div style={{ fontSize: 10.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{url}</div>
+        <button onClick={onClose} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+      </div>
+    </div>
+  );
+}
+
+function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
+  return (
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
+      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
+        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+      </div>
+    </div>
+  );
+}
+function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
+  const size = big ? 52 : 34;
+  const base = BALL[b.n]; const nine = b.n === 9;
+  const ref = useRef(null);
+  const startYRef = useRef(0);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
+    const move = (e) => { e.preventDefault(); };
+    const end = (e) => {
+      e.preventDefault();
+      onPress(b.n, false);
+      const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
+      onGesture(b.n, y - startYRef.current);
+    };
+    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
+    const opts = { passive: false };
+    el.addEventListener("touchstart", start, opts);
+    el.addEventListener("touchmove", move, opts);
+    el.addEventListener("touchend", end, opts);
+    el.addEventListener("touchcancel", cancel, opts);
+    return () => {
+      el.removeEventListener("touchstart", start, opts);
+      el.removeEventListener("touchmove", move, opts);
+      el.removeEventListener("touchend", end, opts);
+      el.removeEventListener("touchcancel", cancel, opts);
+    };
+  }, [b.n, onPress, onGesture]);
+
+  return (
+    <div ref={ref}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
+        background: b.dead ? C.dead : nine ? "#fff" : base,
+        border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
+        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
+        color: nine && !b.dead ? base : "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
+        touchAction: "none", cursor: "pointer", position: "relative",
+        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+        transform: pressed ? "scale(1.25)" : "scale(1)",
+        transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
+        zIndex: pressed ? 10 : 1,
+        ...style }}>
+      {b.n}
+      {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
+      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
+    </div>
+  );
+}
+const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
