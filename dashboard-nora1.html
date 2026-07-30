@@ -1704,6 +1704,7 @@ function HomeTab() {
                       fontSize: 13, fontWeight: 800, borderRadius: 8, padding: "5px 8px", lineHeight: 1.3,
                       color: tableAdjust === ti ? C.blue : (status ? (status.ok ? C.win : "#fff") : C.sub),
                       background: tableAdjust === ti ? "#fff" : (status ? (status.ok ? C.zone : C.minus) : "transparent"),
+                      whiteSpace: "nowrap",
                     }}>
                       {status ? (status.ok ? `☑️${status.text}` : `⚠️${status.text}`) : "–"}
                     </div>
@@ -2021,9 +2022,10 @@ function TimelineCard({ m, current, order, onOpen, referee, prominent = true, on
           display: "inline-block", background: calm ? C.zone : accent, color: calm ? C.sub : "#fff",
           border: calm ? `1px solid ${C.line}` : "none",
           borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800,
+          whiteSpace: "nowrap", flexShrink: 0,
         }}>{statusLabel}</div>
         {m.startedAt && (m.lenPct || m.matchMinutes) && (
-          <span style={{ fontSize: 11, fontWeight: 800, color: C.ink, whiteSpace: "nowrap", flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.ink, whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
             🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分
           </span>
         )}
