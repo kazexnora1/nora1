@@ -1647,7 +1647,8 @@ function HomeTab() {
           const callTarget = cur && !cur.startedAt ? cur : (q[1] || null); // 「呼び出し」に出す対象：次に呼ぶべき試合
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
-          const settingSrc = callTarget || live;
+          // 卓の状態カードに出す設定値：卓調整は q[1] 以降（次戦以降）に適用されるので、その最新値を表示する
+          const settingSrc = q[1] || null;
           return { ti, q, cur, live, callTarget, est, status, settingSrc };
         });
         return (
@@ -1678,8 +1679,8 @@ function HomeTab() {
                     </div>
                     {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
                       <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.ink }}>
-                        <div>🎱{settingSrc.lenPct || 100}%</div>
-                        <div>⏰{settingSrc.matchMinutes || 30}分</div>
+                        <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.7 }}>次戦〜</div>
+                        <div style={{ whiteSpace: "nowrap" }}>🎱{settingSrc.lenPct || 100}% ⏰{settingSrc.matchMinutes || 30}分</div>
                       </div>
                     )}
                   </>
@@ -1985,11 +1986,18 @@ function TimelineCard({ m, current, order, onOpen, referee, prominent = true, on
       boxShadow: calm ? "none" : `0 3px 12px rgba(46,109,181,0.28)`,
       borderRadius: 16, padding: "12px 8px 10px", cursor: "pointer", boxSizing: "border-box", width: "100%",
     }}>
-      <div style={{
-        display: "inline-block", background: calm ? C.zone : accent, color: calm ? C.sub : "#fff",
-        border: calm ? `1px solid ${C.line}` : "none",
-        borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800, marginBottom: 8,
-      }}>{statusLabel}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 8 }}>
+        <div style={{
+          display: "inline-block", background: calm ? C.zone : accent, color: calm ? C.sub : "#fff",
+          border: calm ? `1px solid ${C.line}` : "none",
+          borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800,
+        }}>{statusLabel}</div>
+        {m.startedAt && (m.lenPct || m.matchMinutes) && (
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.ink, whiteSpace: "nowrap", flexShrink: 0 }}>
+            🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分
+          </span>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 4 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
@@ -2001,11 +2009,6 @@ function TimelineCard({ m, current, order, onOpen, referee, prominent = true, on
           </div>
         ))}
       </div>
-      {!awaitingCall && timeInfo && (
-        <div style={{ textAlign: "center", marginTop: 6, fontSize: 12.5, fontWeight: 700, color: C.ink }}>
-          🎱{Math.round(finishProgress * 100)}% ⏰{Math.max(0, Math.round(timeInfo.remainMin))}分
-        </div>
-      )}
       {!awaitingCall && (
         <div style={{ marginTop: 8 }}>
           <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
