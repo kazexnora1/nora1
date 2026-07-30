@@ -1238,15 +1238,30 @@ function HomeTab() {
   };
 
   const getRefereeCandidates = (ti, target) => {
-    // 実際に試合中（ライブ）の選手は除外
-    const playingNow = new Set();
-    queues.forEach((q) => { if (q[0] && q[0].startedAt) q[0].names.forEach((n) => playingNow.add(n)); });
-    // これから呼び出す対戦の当事者2人は、自分の試合のスコアラーにはなれないので必ず除外
-    if (target) target.names.forEach((n) => playingNow.add(n));
+    if (!target) return [];
+    const isLive = !!target.startedAt; // true: 対戦中カードの変更／false: 呼び出しカードの候補
 
-    // 既に別の対戦のスコアラーとして決まっている人も除外（卓に関わらず、未終了の対戦すべてを見る）
+    // 実際に試合中（ライブ）の選手は除外。
+    // ただし「呼び出し」の候補では、同卓で今まさに試合中の選手は除外しない
+    // （この対戦が始まる頃には、その試合はもう終わっているはずだから）
+    const playingNow = new Set();
+    queues.forEach((q, qi) => {
+      if (!(q[0] && q[0].startedAt)) return;
+      if (!isLive && qi === ti) return;
+      q[0].names.forEach((n) => playingNow.add(n));
+    });
+    // これから呼び出す・変更する対戦の当事者2人は、自分の試合のスコアラーにはなれないので必ず除外
+    target.names.forEach((n) => playingNow.add(n));
+
+    // 既にスコアラーとして動いている・決まっている人も除外
+    // （現在試合中の担当、呼び出し中で決まっている担当の両方。卓に関わらず未終了の対戦すべてを見る）
     const refereeingNow = new Set();
     queues.forEach((q) => q.forEach((m) => { if (m && m.referee) refereeingNow.add(m.referee); }));
+
+    // 呼び出し候補限定：同卓で今試合中の選手（終わったら空くのでおすすめ表示にする）
+    const sameTableLiveNames = new Set(
+      !isLive && queues[ti][0] && queues[ti][0].startedAt ? queues[ti][0].names : []
+    );
 
     const nextAtThisTable = new Set(queues[ti][1] ? queues[ti][1].names : []);
     const nextAtOtherTable = new Set();
@@ -1255,11 +1270,13 @@ function HomeTab() {
     return roster
       .filter((p) => p.name && !playingNow.has(p.name) && !refereeingNow.has(p.name))
       .map((p) => {
+        const sameTableLive = sameTableLiveNames.has(p.name);
         // 0: 次試合なし（優先）／1: 同卓の次試合／2: 別卓の次試合（後回し）
         const tier = nextAtThisTable.has(p.name) ? 1 : nextAtOtherTable.has(p.name) ? 2 : 0;
         const count = refereeCounts[p.name] || 0;
-        return { ...p, tier, count };
+        return { ...p, tier, count, sameTableLive };
       })
+      .sort((a, b) => (a.sameTableLive === b.sameTableLive ? 0 : a.sameTableLive ? -1 : 1) || a.tier - b.tier || a.count - b.count);
       .sort((a, b) => a.tier - b.tier || a.count - b.count);
   };
 
@@ -1743,7 +1760,9 @@ function HomeTab() {
                         ) : (
                           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             {getRefereeCandidates(ti, callTarget).map((p) => {
-                              const tierInfo = p.tier === 1
+                              const tierInfo = p.sameTableLive
+                                ? { label: "同卓で試合中（終了次第）", bg: C.lightBlue, col: C.blue }
+                                : p.tier === 1
                                 ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
                                 : p.tier === 2
                                 ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
@@ -1752,8 +1771,8 @@ function HomeTab() {
                                 <button key={p.id} onClick={() => assignReferee(ti, p.name, callTarget)} disabled={refereeBusy}
                                   style={{
                                     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                                    background: p.tier === 0 ? C.lightBlue : "#fff",
-                                    border: `1.5px solid ${p.tier === 0 ? C.blue : C.line}`,
+                                    background: p.tier === 0 || p.sameTableLive ? C.lightBlue : "#fff",
+                                    border: `1.5px solid ${p.tier === 0 || p.sameTableLive ? C.blue : C.line}`,
                                     borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
                                   }}>
                                   <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
