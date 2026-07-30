@@ -1299,7 +1299,6 @@ function HomeTab() {
         return { ...p, tier, count, sameTableLive };
       })
       .sort((a, b) => (a.sameTableLive === b.sameTableLive ? 0 : a.sameTableLive ? -1 : 1) || a.tier - b.tier || a.count - b.count);
-      .sort((a, b) => a.tier - b.tier || a.count - b.count);
   };
 
   const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
