@@ -2001,6 +2001,11 @@ function TimelineCard({ m, current, order, onOpen, referee, prominent = true, on
           </div>
         ))}
       </div>
+      {!awaitingCall && timeInfo && (
+        <div style={{ textAlign: "center", marginTop: 6, fontSize: 12.5, fontWeight: 700, color: C.ink }}>
+          🎱{Math.round(finishProgress * 100)}% ⏰{Math.max(0, Math.round(timeInfo.remainMin))}分
+        </div>
+      )}
       {!awaitingCall && (
         <div style={{ marginTop: 8 }}>
           <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
