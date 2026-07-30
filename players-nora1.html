@@ -420,11 +420,11 @@ function TablePanel({ tableNum, m }) {
                 <span style={{ fontSize: 15, opacity: 0.5 }}>/{raceTo[i]}</span>
               </div>
               {bothLose ? (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2 }}>
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
                   達成率 {(rate(i) * 100).toFixed(1)}％
                 </div>
               ) : hi && (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2 }}>
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
                   {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                 </div>
               )}
@@ -916,7 +916,7 @@ function MatchScreen({ setupInfo, onExit }) {
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
                 {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
               </div>
-              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4 }}>{hi.txt}</div>}
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
                 {brk === i && (
                   <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
