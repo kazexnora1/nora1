@@ -552,10 +552,16 @@ function ConnectionTest() {
 function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [showSingle, setShowSingle] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
+  const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
 
   const updateTournamentName = (v) => {
     setTournamentName(v);
     saveSettings({ tournamentName: v });
+  };
+  const toggleRefereeEnabled = () => {
+    const next = !refereeEnabled;
+    setRefereeEnabled(next);
+    saveSettings({ refereeEnabled: next });
   };
 
   return (
@@ -565,6 +571,21 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
           placeholder="例：第◯回 身内杯"
           style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginTop: 14 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>人数が少ない大会などでオフにできます</div>
+          </div>
+          <button onClick={toggleRefereeEnabled} style={{
+            background: refereeEnabled ? C.win : C.line, color: refereeEnabled ? "#fff" : C.sub,
+            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+            cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+          }}>
+            {refereeEnabled ? "ON" : "OFF"}
+          </button>
+        </div>
+
         <ConnectionTest />
       </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
@@ -1192,6 +1213,7 @@ const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px soli
 
 function HomeTab() {
   const [queues, setQueues] = useState([[], [], []]);
+  const refereeEnabled = loadSettings().refereeEnabled !== false; // 設定タブでオフにできる
   // スコアの更新が無くても時間経過だけで「そろそろ呼び出し」判定が動くよう、定期的に再描画する
   const [, forceTick] = useState(0);
   useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 15000); return () => clearInterval(iv); }, []);
@@ -1739,8 +1761,8 @@ function HomeTab() {
                   );
                 })}
 
-                {/* スコアラー候補：呼び出す対戦にその場で割り当てる */}
-                {tinfo.map(({ ti, callTarget }) => (
+                {/* スコアラー候補：呼び出す対戦にその場で割り当てる（設定でオフにできる） */}
+                {refereeEnabled && tinfo.map(({ ti, callTarget }) => (
                   <div key={ti}>
                     {callTarget && (
                       <div style={{ textAlign: "center" }}>
@@ -1798,9 +1820,9 @@ function HomeTab() {
                 <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 10 }}>対戦中</div>
                 {tinfo.map(({ ti, live }) => (
                   <div key={ti}>
-                    {live && <TimelineCard m={live} current order={0} onOpen={() => openQr(live)} referee={live.referee} onRefereeClick={() => toggleLiveRefereeList(ti)} />}
+                    {live && <TimelineCard m={live} current order={0} onOpen={() => openQr(live)} referee={refereeEnabled ? live.referee : null} onRefereeClick={refereeEnabled ? () => toggleLiveRefereeList(ti) : undefined} />}
                     {!live && <div style={{ minHeight: 48 }} />}
-                    {liveRefereeOpen === ti && live && (
+                    {refereeEnabled && liveRefereeOpen === ti && live && (
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, marginTop: 6 }}>
                         {getRefereeCandidates(ti, live).length === 0 ? (
                           <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
