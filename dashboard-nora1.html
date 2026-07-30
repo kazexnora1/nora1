@@ -176,22 +176,24 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
-// 現在対戦中の残り時間を確保した上で、次戦以降を指定の終了予定時刻に収める試合の長さ・持ち時間を逆算する
+// 調整対象＝未開始の試合すべて。先頭が開始済み（試合中）の時だけ先頭を除く
+function adjustableMatches(q) { return q[0] && q[0].startedAt ? q.slice(1) : q; }
+
+// 実際に開始済みの試合の残り時間だけを確保し、未開始の試合（呼び出し中を含む）すべてを
+// 指定の終了予定時刻に収める試合の長さ・持ち時間を逆算する
 function computeTableAdjustment(queueForTable, eH, eM, per100) {
   const cur = queueForTable[0];
-  const future = queueForTable.slice(1);
+  const curStarted = !!(cur && cur.startedAt);
+  // 先頭が未開始（呼び出し中）なら、それも調整対象に含める。開始済みの試合だけは設定が確定しているので触らない
+  const future = curStarted ? queueForTable.slice(1) : queueForTable.slice(0);
   if (!future.length) return null;
   const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
   const availableMin = (targetD - Date.now()) / 60000;
   if (availableMin <= 0) return { error: "すでにその時刻を過ぎています" };
   let curRemainMin = 0;
-  if (cur) {
-    if (cur.startedAt && cur.matchMinutes) {
-      const elapsed = (Date.now() - cur.startedAt) / 60000;
-      curRemainMin = Math.max(0, cur.matchMinutes - elapsed);
-    } else {
-      curRemainMin = cur.matchMinutes || 30;
-    }
+  if (curStarted && cur.matchMinutes) {
+    const elapsed = (Date.now() - cur.startedAt) / 60000;
+    curRemainMin = Math.max(0, cur.matchMinutes - elapsed);
   }
   const availableForFuture = availableMin - curRemainMin;
   if (availableForFuture <= 0) return { error: "現在の対戦の残り時間だけで、指定時刻を超えています" };
@@ -1354,7 +1356,7 @@ function HomeTab() {
       : { ok: false, text: `押し${Math.abs(diffMin)}分` };
   };
 
-  // 現在対戦中は既に組まれているので対象外。次戦以降だけを、指定した最終試合の終了予定時刻から逆算して調整する
+  // 開始済みの試合は設定確定なので対象外。未開始の試合（呼び出し中を含む）を、指定した最終試合の終了予定時刻から逆算して調整する
   const applyTableEndTime = async (ti) => {
     if (snapBusy != null) return;
     const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
@@ -1373,7 +1375,7 @@ function HomeTab() {
       setTLenPct(calc.newLenPct);
 
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${ti + 1}：次戦以降を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
+      let msg = `卓${ti + 1}：未開始の${calc.future.length}試合を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
       if (calc.hitFloor) {
         // 下限40%でも指定時刻に間に合わないので、最終試合の終了予定時刻自体を現実的な時刻へ更新する
         const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
@@ -1398,7 +1400,7 @@ function HomeTab() {
     setRefereeOpen(null);
     setLiveRefereeOpen(null);
     setShowGlobalAdjust(false);
-    const future = queues[ti].slice(1); // 現在対戦中は対象外
+    const future = adjustableMatches(queues[ti]); // 開始済みの試合だけ対象外（呼び出し中は含む）
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
     setTLenPct(avgLen);
     const cfg = loadSettings();
@@ -1407,7 +1409,7 @@ function HomeTab() {
     setTEndM(cfg.endM || "00");
     setTableAdjust(ti);
   };
-  // 100%のときの時間（分）は全卓共通の基準値。ここで変えたら全卓の次戦以降にまとめて反映する
+  // 100%のときの時間（分）は全卓共通の基準値。ここで変えたら全卓の未開始の試合にまとめて反映する
   const applyTableAdjust = async () => {
     if (tableAdjust == null || snapBusy != null) return;
     const newMinutes = Math.max(1, Math.round(tPer100 * (tLenPct / 100)));
@@ -1417,7 +1419,7 @@ function HomeTab() {
       const updates = {};
       let count = 0;
       [0, 1, 2].forEach((oi) => {
-        queues[oi].slice(1).forEach((qm) => { planMatchUpdate(updates, qm, tLenPct, newMinutes, now); count++; });
+        adjustableMatches(queues[oi]).forEach((qm) => { planMatchUpdate(updates, qm, tLenPct, newMinutes, now); count++; });
       });
       if (count === 0) { setSnapMsg({ ok: false, text: "次の試合がありません" }); setSnapBusy(null); return; }
       await dbUpdate("matches", updates);
@@ -1537,7 +1539,7 @@ function HomeTab() {
       const updates = {};
       let count = 0;
       [0, 1, 2].forEach((oi) => {
-        queues[oi].slice(1).forEach((qm) => {
+        adjustableMatches(queues[oi]).forEach((qm) => {
           const lenPct = qm.lenPct || 100;
           updates[qm.id + "/matchMinutes"] = Math.max(1, Math.round(tPer100 * (lenPct / 100)));
           updates[qm.id + "/version"] = (qm.version || 1) + 1;
@@ -1647,8 +1649,8 @@ function HomeTab() {
           const callTarget = cur && !cur.startedAt ? cur : (q[1] || null); // 「呼び出し」に出す対象：次に呼ぶべき試合
           const est = perTableEstimate(ti);
           const status = tableScheduleStatus(ti);
-          // 卓の状態カードに出す設定値：卓調整は q[1] 以降（次戦以降）に適用されるので、その最新値を表示する
-          const settingSrc = q[1] || null;
+          // 卓の状態カードに出す設定値：卓調整は「未開始の試合」に適用されるので、その先頭（＝次に適用が効く試合）の値を表示する
+          const settingSrc = adjustableMatches(q)[0] || null;
           return { ti, q, cur, live, callTarget, est, status, settingSrc };
         });
         return (
@@ -1679,7 +1681,7 @@ function HomeTab() {
                     </div>
                     {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
                       <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.ink }}>
-                        <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.7 }}>次戦〜</div>
+                        <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.7 }}>未開始の試合〜</div>
                         <div style={{ whiteSpace: "nowrap" }}>🎱{settingSrc.lenPct || 100}% ⏰{settingSrc.matchMinutes || 30}分</div>
                       </div>
                     )}
@@ -1694,13 +1696,13 @@ function HomeTab() {
             {tableAdjust != null && queues[tableAdjust][0] && (() => {
               const ti = tableAdjust;
               const cur = queues[ti][0];
-              const future = queues[ti].slice(1);
+              const future = adjustableMatches(queues[ti]);
               return (
                 <div style={{ gridColumn: "1 / -1", background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, position: "relative" }}>
                   <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
                   <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
 
-                  <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 次戦以降（残り{future.length}試合）を調整</div>
+                  <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 未開始の試合（残り{future.length}試合）を調整</div>
 
                   {future.length === 0 ? (
                     <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
