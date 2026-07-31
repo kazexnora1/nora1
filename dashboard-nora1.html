@@ -610,20 +610,7 @@ function PcTab() {
       {err && <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 10 }}><Notice>データを取得できません：{err}</Notice></div>}
 
       {/* ===== 左：対戦一覧 ===== */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 6, fontSize: 12, flexShrink: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginRight: 4 }}>対戦一覧</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 12, height: 12, background: "#DADDE1", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />終了
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 12, height: 12, background: "#FFF3B0", border: "1px solid #E8C400", borderRadius: 3, display: "inline-block" }} />対戦中
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 12, height: 12, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />未開始
-          </span>
-        </div>
-
+      <div style={{ flex: 1.6, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <div style={{
           flex: 1, minHeight: 0, display: "grid",
           gridTemplateColumns: "40px repeat(3, 1fr)",
@@ -678,8 +665,7 @@ function PcTab() {
       </div>
 
       {/* ===== 右：戦績 ===== */}
-      <div style={{ flex: 1.3, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6, flexShrink: 0 }}>戦績</div>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <div style={{
           flex: 1, minHeight: 0, display: "grid",
           gridTemplateColumns: `36px minmax(70px, 1fr) repeat(${maxGames}, minmax(0, 1fr)) 50px 42px`,
