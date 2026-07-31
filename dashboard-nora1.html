@@ -404,7 +404,8 @@ function App() {
     ["home", "📊 ダッシュボード"],
     ["timeline", "🗓 タイムライン"],
     ["standings", "🏅 成績"],
-    ["pcview", "🖥 PC表示"],
+    ["pcmatch", "🖥 PC対戦表"],
+    ["pcstand", "🖥 PC戦績"],
     ["settings", "⚙️ 設定"],
   ];
 
@@ -421,11 +422,12 @@ function App() {
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ maxWidth: tab === "pcview" ? 1400 : 820, margin: "0 auto" }}>
+        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1200 : 820, margin: "0 auto" }}>
           {tab === "home" && <HomeTab />}
           {tab === "timeline" && <TimelineTab />}
           {tab === "standings" && <StandingsTab />}
-          {tab === "pcview" && <PcViewTab />}
+          {tab === "pcmatch" && <PcMatchGridTab />}
+          {tab === "pcstand" && <PcStandingsTab />}
           {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
         </div>
       </div>
@@ -579,7 +581,94 @@ function StandingsTab() {
 
 /* ========= PC表示タブ：対戦一覧（左）と戦績（右）を1画面に収めて開きっぱなしにする用。
    紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
-function PcViewTab() {
+function PcMatchGridTab() {
+  const [matches, setMatches] = useState({});
+  const [err, setErr] = useState(null);
+
+  useEffect(() => dbSubscribe("matches",
+    (m) => { setMatches(m || {}); setErr(null); },
+    (e) => setErr(e)), []);
+
+  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
+  const tableCount = 3;
+
+  const cellStyle = (m) => {
+    if (!m) return { background: "#fff", border: `1px solid ${C.line}` };
+    const done = isMatchFinished(m);
+    if (done) return { background: "#DADDE1", border: `1px solid ${C.line}` }; // 終了：灰色
+    if (m.startedAt) return { background: "#FFF3B0", border: `1.5px solid #E8C400` }; // 対戦中：黄色
+    return { background: "#fff", border: `1px solid ${C.line}` }; // 未開始：白
+  };
+
+  return (
+    <div style={{ padding: 14, color: C.ink, fontFamily: FONT }}>
+      {err && <Notice>データを取得できません：{err}</Notice>}
+
+      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 14, fontSize: 13 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 16, height: 16, background: "#DADDE1", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />終了
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 16, height: 16, background: "#FFF3B0", border: "1.5px solid #E8C400", borderRadius: 3, display: "inline-block" }} />対戦中
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 16, height: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />未開始
+        </span>
+      </div>
+
+      <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 760 }}>
+        <thead>
+          <tr>
+            <th style={{ width: 44, border: `1px solid ${C.line}`, padding: "8px 6px", background: "#fafafa" }}></th>
+            {Array.from({ length: tableCount }, (_, i) => (
+              <th key={i} style={{ border: `1px solid ${C.line}`, padding: "8px 6px", background: "#fafafa", fontSize: 20, fontWeight: 800 }}>{i + 1}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rounds.map(({ slot, matches: ms }) => (
+            <tr key={slot}>
+              <td style={{ border: `1px solid ${C.line}`, padding: "10px 6px", textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub, background: "#fafafa" }}>{slot + 1}</td>
+              {Array.from({ length: tableCount }, (_, ti) => {
+                const m = ms.find((x) => (x.table || 0) === ti + 1);
+                const names = m ? (m.names || ["", ""]) : null;
+                return (
+                  <td key={ti} style={{ ...cellStyle(m), padding: "14px 8px", textAlign: "center", fontSize: 16, fontWeight: 700 }}>
+                    {names ? `${names[0]}－${names[1]}` : ""}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          {rounds.length === 0 && extra.length === 0 && (
+            <tr><td colSpan={tableCount + 1} style={{ border: `1px solid ${C.line}`, padding: 12, textAlign: "center", color: C.sub }}>対戦がまだ登録されていません</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {extra.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6 }}>個別追加分</div>
+          <table style={{ borderCollapse: "collapse", maxWidth: 480 }}>
+            <tbody>
+              {extra.map((m) => {
+                const names = m.names || ["", ""];
+                return (
+                  <tr key={m.id}>
+                    <td style={{ ...cellStyle(m), padding: "10px 8px", textAlign: "center", fontSize: 15, fontWeight: 700 }}>{names[0]}－{names[1]}（卓{m.table}）</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========= PC戦績タブ：対戦相手つきの戦績を単体で表示（開きっぱなし用） ========= */
+function PcStandingsTab() {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
@@ -588,113 +677,52 @@ function PcViewTab() {
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
     (e) => setErr(e)), []);
 
-  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
   const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster), [matches, roster]);
-
   const pcCell = { border: `1px solid ${C.line}`, padding: "5px 8px", fontSize: 13 };
   const pcTable = { borderCollapse: "collapse", width: "100%", fontFamily: FONT, color: C.ink };
 
   return (
     <div style={{ padding: 14, color: C.ink }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
-      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-
-        {/* ===== 左：対戦一覧 ===== */}
-        <div style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line}`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ background: C.zone, padding: "8px 12px", fontSize: 14, fontWeight: 800, borderBottom: `1px solid ${C.line}` }}>対戦一覧</div>
-          <div style={{ maxHeight: "calc(100vh - 90px)", overflowY: "auto" }}>
-            <table style={pcTable}>
-              <thead>
-                <tr style={{ background: "#fafafa" }}>
-                  <th style={{ ...pcCell, width: 40 }}>回転</th>
-                  <th style={{ ...pcCell, width: 34 }}>卓</th>
-                  <th style={pcCell}>対戦者</th>
-                  <th style={{ ...pcCell, width: 78 }}>状態</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rounds.map(({ slot, matches: ms }) => ms.map((m, k) => {
-                  const names = m.names || ["", ""];
-                  const done = isMatchFinished(m);
-                  const w = done ? matchWinnerIndex(m) : null;
-                  const label = done ? (m.bothLose ? "両者負け" : `${names[w] || ""} 勝ち`) : m.startedAt ? "対戦中" : "未開始";
-                  return (
-                    <tr key={m.id}>
-                      {k === 0 && <td style={{ ...pcCell, textAlign: "center", fontWeight: 700 }} rowSpan={ms.length}>{slot + 1}</td>}
-                      <td style={{ ...pcCell, textAlign: "center" }}>{m.table}</td>
-                      <td style={pcCell}>{names[0]} － {names[1]}</td>
-                      <td style={{ ...pcCell, textAlign: "center", color: done ? (m.bothLose ? C.hill : C.win) : m.startedAt ? C.blue : C.sub }}>{label}</td>
-                    </tr>
-                  );
-                }))}
-                {extra.length > 0 && extra.map((m) => {
-                  const names = m.names || ["", ""];
-                  const done = isMatchFinished(m);
-                  const w = done ? matchWinnerIndex(m) : null;
-                  const label = done ? (m.bothLose ? "両者負け" : `${names[w] || ""} 勝ち`) : m.startedAt ? "対戦中" : "未開始";
-                  return (
-                    <tr key={m.id}>
-                      <td style={{ ...pcCell, textAlign: "center" }}>追加</td>
-                      <td style={{ ...pcCell, textAlign: "center" }}>{m.table}</td>
-                      <td style={pcCell}>{names[0]} － {names[1]}</td>
-                      <td style={{ ...pcCell, textAlign: "center", color: done ? (m.bothLose ? C.hill : C.win) : m.startedAt ? C.blue : C.sub }}>{label}</td>
-                    </tr>
-                  );
-                })}
-                {rounds.length === 0 && extra.length === 0 && (
-                  <tr><td style={pcCell} colSpan={4}>対戦がまだ登録されていません</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ===== 右：戦績 ===== */}
-        <div style={{ flex: 1.3, minWidth: 0, border: `1px solid ${C.line}`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ background: C.zone, padding: "8px 12px", fontSize: 14, fontWeight: 800, borderBottom: `1px solid ${C.line}` }}>戦績</div>
-          <div style={{ maxHeight: "calc(100vh - 90px)", overflowY: "auto" }}>
-            <table style={pcTable}>
-              <thead>
-                <tr style={{ background: "#fafafa" }}>
-                  <th style={{ ...pcCell, width: 30 }}>順位</th>
-                  <th style={pcCell}>名前</th>
-                  {Array.from({ length: maxGames }, (_, i) => (
-                    <th key={i} style={{ ...pcCell, width: 60 }}>{i + 1}</th>
-                  ))}
-                  <th style={{ ...pcCell, width: 46 }}>W-L</th>
-                  <th style={{ ...pcCell, width: 42 }}>率</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stRows.map((r) => (
-                  <tr key={r.name}>
-                    <td style={{ ...pcCell, textAlign: "center", fontWeight: 700 }}>{r.rank}</td>
-                    <td style={{ ...pcCell, fontWeight: 700 }}>{r.name}</td>
-                    {Array.from({ length: maxGames }, (_, i) => {
-                      const g = r.games[i];
-                      return (
-                        <td key={i} style={{ ...pcCell, textAlign: "center" }}>
-                          {g ? (
-                            <>
-                              <div style={{ fontSize: 11, color: C.sub }}>{g.opponent}</div>
-                              <div style={{ fontWeight: g.isWin ? 800 : 600, color: g.pending ? C.sub : g.isWin ? C.win : C.ink }}>
-                                {g.pending ? "―" : g.display}
-                              </div>
-                            </>
-                          ) : "–"}
-                        </td>
-                      );
-                    })}
-                    <td style={{ ...pcCell, textAlign: "center" }}>{r.win}-{r.loss}</td>
-                    <td style={{ ...pcCell, textAlign: "center" }}>{r.avgRate == null ? "–" : Math.round(r.avgRate * 100)}</td>
-                  </tr>
-                ))}
-                {stRows.length === 0 && <tr><td style={pcCell} colSpan={4 + maxGames}>まだ結果がありません</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+      <table style={pcTable}>
+        <thead>
+          <tr style={{ background: "#fafafa" }}>
+            <th style={{ ...pcCell, width: 30 }}>順位</th>
+            <th style={pcCell}>名前</th>
+            {Array.from({ length: maxGames }, (_, i) => (
+              <th key={i} style={{ ...pcCell, width: 60 }}>{i + 1}</th>
+            ))}
+            <th style={{ ...pcCell, width: 46 }}>W-L</th>
+            <th style={{ ...pcCell, width: 42 }}>率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stRows.map((r) => (
+            <tr key={r.name}>
+              <td style={{ ...pcCell, textAlign: "center", fontWeight: 700 }}>{r.rank}</td>
+              <td style={{ ...pcCell, fontWeight: 700 }}>{r.name}</td>
+              {Array.from({ length: maxGames }, (_, i) => {
+                const g = r.games[i];
+                return (
+                  <td key={i} style={{ ...pcCell, textAlign: "center" }}>
+                    {g ? (
+                      <>
+                        <div style={{ fontSize: 11, color: C.sub }}>{g.opponent}</div>
+                        <div style={{ fontWeight: g.isWin ? 800 : 600, color: g.pending ? C.sub : g.isWin ? C.win : C.ink }}>
+                          {g.pending ? "―" : g.display}
+                        </div>
+                      </>
+                    ) : "–"}
+                  </td>
+                );
+              })}
+              <td style={{ ...pcCell, textAlign: "center" }}>{r.win}-{r.loss}</td>
+              <td style={{ ...pcCell, textAlign: "center" }}>{r.avgRate == null ? "–" : Math.round(r.avgRate * 100)}</td>
+            </tr>
+          ))}
+          {stRows.length === 0 && <tr><td style={pcCell} colSpan={4 + maxGames}>まだ結果がありません</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
