@@ -133,14 +133,6 @@ function backupRoster(roster) {
 function loadRosterBackup() {
   try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
 }
-// メンバーリストは大会に出ない人も含めた恒久リストとして持てるようにし、
-// 「抽選番号が入っている人」＝今大会の参加者、という判定にする。並び順はその番号順
-function getParticipants(roster) {
-  return (roster || [])
-    .filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null)
-    .slice()
-    .sort((a, b) => (parseInt(a.draw, 10) || 0) - (parseInt(b.draw, 10) || 0));
-}
 async function saveRoster(roster, allowEmpty) {
   // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
   if (!allowEmpty && (!roster || roster.length === 0)) {
@@ -283,7 +275,7 @@ function buildStandings(matches, roster) {
     if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
     return stats[name];
   };
-  getParticipants(roster).forEach((p) => { if (p.name) ensure(p.name); });
+  roster.forEach((p) => { if (p.name) ensure(p.name); });
 
   for (const id in matches) {
     const m = matches[id];
@@ -673,12 +665,16 @@ function StandingsTab() {
 /* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
 function PcMatchGridTab() {
   const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
-  const [view, setView] = useState("prelim"); // "prelim" | "bracket"
+  const [view, setView] = useState("prelim"); // "prelim" | "matrix" | "bracket"
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("roster",
+    (r) => setRoster(Array.isArray(r) ? r : []),
+    () => {}), []);
 
   const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
@@ -697,6 +693,30 @@ function PcMatchGridTab() {
   };
   const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
 
+  // 総当たり用：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）
+  const matrix = useMemo(() => {
+    const all = Object.values(matches || {}).filter((m) => m && !m.bracket).map((m) => normalizeMatch(m));
+    const names = [];
+    const seen = new Set();
+    roster.forEach((p) => {
+      if (p && p.name && !seen.has(p.name) && all.some((m) => (m.names || []).includes(p.name))) {
+        names.push(p.name); seen.add(p.name);
+      }
+    });
+    all.forEach((m) => (m.names || []).forEach((n) => { if (n && !seen.has(n)) { names.push(n); seen.add(n); } }));
+    const idx = new Map(names.map((n, i) => [n, i]));
+    const grid = names.map(() => names.map(() => null));
+    all.forEach((m) => {
+      const [n1, n2] = m.names || [];
+      if (idx.has(n1) && idx.has(n2)) {
+        const i = idx.get(n1), j = idx.get(n2);
+        grid[i][j] = { m, mine: 0 };
+        grid[j][i] = { m, mine: 1 };
+      }
+    });
+    return { names, grid };
+  }, [matches, roster]);
+
   return (
     <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
@@ -705,7 +725,11 @@ function PcMatchGridTab() {
         <button onClick={() => setView("prelim")} style={{
           background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
           border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-        }}>予選</button>
+        }}>予選（表）</button>
+        <button onClick={() => setView("matrix")} style={{
+          background: view === "matrix" ? C.blue : "#fff", color: view === "matrix" ? "#fff" : C.ink,
+          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>対戦表（総当たり）</button>
         <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
           background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
           border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
@@ -767,6 +791,49 @@ function PcMatchGridTab() {
         </div>
       )}
         </>
+      ) : view === "matrix" ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {matrix.names.length === 0 ? (
+            <div style={{ margin: "auto", color: C.sub, fontSize: 16, textAlign: "center", paddingTop: 40 }}>対戦がまだ登録されていません</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: `84px repeat(${matrix.names.length}, minmax(64px, 1fr))`, border: `1px solid ${C.line}`, boxSizing: "border-box" }}>
+              <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
+              {matrix.names.map((n, j) => (
+                <div key={"h" + j} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub, padding: "6px 2px", textAlign: "center", wordBreak: "break-all" }}>
+                  {n}
+                </div>
+              ))}
+              {matrix.names.map((rowName, i) => (
+                <React.Fragment key={"r" + i}>
+                  <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub, padding: "6px 4px", textAlign: "center", wordBreak: "break-all" }}>
+                    {rowName}
+                  </div>
+                  {matrix.names.map((colName, j) => {
+                    if (i === j) {
+                      return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#EEF0F2" }} />;
+                    }
+                    const cell = matrix.grid[i][j];
+                    if (!cell) {
+                      return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#fff" }} />;
+                    }
+                    const { m, mine } = cell;
+                    const done = isMatchFinished(m);
+                    const live = !done && !!m.startedAt;
+                    const bg = done ? "#DADDE1" : live ? "#FFF3B0" : "#fff";
+                    const tot = m.tot || [0, 0];
+                    const w = done ? matchWinnerIndex(m) : null;
+                    const win = w != null && w === mine;
+                    return (
+                      <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: win ? 900 : 600, color: win ? C.win : C.ink, minHeight: 40 }}>
+                        {done ? `${tot[mine]}-${tot[1 - mine]}` : live ? "●" : ""}
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
           {Array.from({ length: bracketTotal }, (_, ri) => ri + 1).map((r) => {
@@ -1155,19 +1222,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
-        <BulkScheduleTab roster={getParticipants(roster)} />
+        <BulkScheduleTab roster={roster} />
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🏆 決勝トーナメント {showBracket ? "▲" : "▼"}
         </button>
-        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={getParticipants(roster)} /></div>}
+        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={roster} /></div>}
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowSingle((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🎱 個別に対戦を追加する {showSingle ? "▲" : "▼"}
         </button>
-        {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={getParticipants(roster)} /></div>}
+        {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={roster} /></div>}
       </div>
     </div>
   );
@@ -1216,22 +1283,19 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   };
   // 当日の抽選番号順に並び替える。番号未入力の人は元の順序のまま最後にまとめる
   const sortByDraw = () => {
-    const numbered = getParticipants(roster);
+    const numbered = roster.filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
     const unnumbered = roster.filter((p) => !(p.draw !== undefined && p.draw !== "" && p.draw != null));
+    numbered.sort((a, b) => parseInt(a.draw, 10) - parseInt(b.draw, 10));
     setRoster([...numbered, ...unnumbered]);
     persist();
   };
   const hasAnyDraw = roster.some((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
-  const participantCount = getParticipants(roster).length;
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>メンバーリスト</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : "名前とファーゴレート（共有）"}</div>
-        <div style={{ fontSize: 12.5, color: C.blue, fontWeight: 700, marginTop: 6 }}>
-          今大会の参加者（抽選番号あり）：{participantCount}人 / 全メンバー{roster.length}人
-        </div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
 
@@ -1274,7 +1338,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         </button>
       )}
       <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
-        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。抽選番号が入っている人だけが今大会の参加者として扱われるので、大会に出ない人は番号を空にしたままでリストに残しておけます。
+        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
       </div>
     </div>
   );
@@ -1287,11 +1351,9 @@ const BULK_TABLES = 3;
 function bulkMakePlan(N, G, relaxed) {
   const total = (N * G) / 2;
   if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
-  // 少人数だと同時に3卓を埋められない（1試合に2人必要なので）。1コマあたりの卓数を人数に応じて制限する
-  const tablesPerSlot = Math.max(1, Math.min(BULK_TABLES, Math.floor(N / 2)));
-  const slots = Math.ceil(total / tablesPerSlot);
+  const slots = Math.ceil(total / BULK_TABLES);
   const sizes = [];
-  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? tablesPerSlot : total - tablesPerSlot * (slots - 1));
+  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? BULK_TABLES : total - BULK_TABLES * (slots - 1));
   let lower = 0;
   for (let s = 0; s < slots - 1; s++) {
     const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
@@ -1324,8 +1386,6 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
   let cost = 0, nodes = 0, best = null;
 
   const viable = (s) => {
-    // 緩和モードでは「3連投禁止」を前提にした事前見積り自体が矛盾するので、枝刈りをせず素直に探索する
-    if (relaxed) return true;
     const left = slots - s - 1;
     for (let x = 1; x <= N; x++) {
       const need = G - deg[x];
@@ -1544,7 +1604,7 @@ function BulkScheduleTab({ roster }) {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
+        <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
         {relaxed ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
