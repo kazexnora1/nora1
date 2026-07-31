@@ -2017,8 +2017,8 @@ function HomeTab() {
                   <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
                   <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700 }}>試合の長さ</span>
-                      <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%</span>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>ボールハンデ</span>
+                      <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%（{Math.round(tPer100 * (tLenPct / 100))}分）</span>
                     </div>
                     <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
                   </div>
