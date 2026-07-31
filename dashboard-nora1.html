@@ -412,8 +412,7 @@ function App() {
   }, []);
 
   const tabs = [
-    ["home", "📊 ダッシュボード"],
-    ["timeline", "🗓 タイムライン"],
+    ["home", "🗓 タイムライン"],
     ["standings", "🏅 成績"],
     ["pcmatch", "🖥 PC対戦表"],
     ["pcstand", "🖥 PC戦績"],
@@ -432,10 +431,9 @@ function App() {
           ))}
         </div>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1600 : 820, margin: "0 auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: tab === "home" ? "hidden" : "auto" }}>
+        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1600 : 820, margin: "0 auto", height: tab === "home" ? "100%" : "auto" }}>
           {tab === "home" && <HomeTab />}
-          {tab === "timeline" && <TimelineTab />}
           {tab === "standings" && <StandingsTab />}
           {tab === "pcmatch" && <PcMatchGridTab />}
           {tab === "pcstand" && <PcStandingsTab />}
@@ -446,50 +444,7 @@ function App() {
   );
 }
 
-/* ========= タイムラインタブ：試合割りに、終わった試合のスコアを書き入れて全体の進行を見る ========= */
-function TimelineTab() {
-  const [cols, setCols] = useState([[], [], []]);
-  const [err, setErr] = useState(null);
-
-  // ポーリングせず、matches の変更を購読する
-  useEffect(() => dbSubscribe("matches",
-    (matches) => { setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches || {}, t)))); setErr(null); },
-    (e) => setErr(e)), []);
-
-  const slots = Math.max(1, ...cols.map((c) => c.length));
-  const total = cols.reduce((s, c) => s + c.length, 0);
-  const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
-
-  return (
-    <div style={{ padding: "16px 12px 32px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
-        <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
-          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
-        <div />
-        {[1, 2, 3].map((t) => (
-          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
-        ))}
-
-        {Array.from({ length: slots }, (_, s) => (
-          <React.Fragment key={s}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
-            {[0, 1, 2].map((ti) => {
-              const e = cols[ti][s];
-              return <div key={ti}>{e ? <TimelineSlotCard m={e.m} st={e.st} /> : <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
-            })}
-          </React.Fragment>
-        ))}
-      </div>
-      {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
-    </div>
-  );
-}
-function TimelineSlotCard({ m, st }) {
+function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
@@ -529,14 +484,26 @@ function TimelineSlotCard({ m, st }) {
 
   // 終了した試合は勝敗だけを出す。点数は大小で勝敗が決まるわけではないので出さない
   const won = (i) => !m.bothLose && w === i;
+  const clickable = st === "done" || st === "call" || st === "live";
+  const handleClick = () => {
+    if (st === "done") openEdit();
+    else if ((st === "call" || st === "live") && onOpenQr) onOpenQr(m);
+  };
 
   return (
-    <div onClick={st === "done" ? openEdit : undefined} style={{
-      height: 128, boxSizing: "border-box", background: style.bg,
+    <div onClick={clickable ? handleClick : undefined} style={{
+      position: "relative", height: 128, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: st === "done" ? "pointer" : "default",
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
     }}>
+      {refereeEnabled && (st === "call" || st === "live") && (
+        <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
+          position: "absolute", top: 3, right: 3, zIndex: 2, background: "rgba(255,255,255,0.9)",
+          border: `1px solid ${C.line}`, borderRadius: 20, width: 22, height: 22, fontSize: 12,
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0,
+        }} title={m.referee ? `スコアラー：${m.referee}` : "スコアラーを選ぶ"}>✏️</button>
+      )}
       <div style={{ textAlign: "center" }}>
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
@@ -1533,8 +1500,7 @@ function HomeTab() {
   useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 15000); return () => clearInterval(iv); }, []);
   const [roster, setRoster] = useState([]);
   const [refereeCounts, setRefereeCounts] = useState({});
-  const [refereeOpen, setRefereeOpen] = useState(null); // レフェリーリストを表示中の卓番号(0-2) or null（呼び出しカード側）
-  const [liveRefereeOpen, setLiveRefereeOpen] = useState(null); // 同上（対戦中カード側）
+  const [refModalMatch, setRefModalMatch] = useState(null); // ✏️で開くスコアラー候補モーダルの対象試合
   const [refereeBusy, setRefereeBusy] = useState(false);
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
   const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
@@ -1543,9 +1509,11 @@ function HomeTab() {
   const [tPer100, setTPer100] = useState(60);
 
   const [loadErr, setLoadErr] = useState(null);
+  const [cols, setCols] = useState([[], [], []]); // 終了分も含む全対戦（タイムライン表示用）
   const applyRecord = (rec) => {
     const r = normalizeRecord(rec);
     setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
+    setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(r.matches, t))));
     setRoster(r.roster);
     setRefereeCounts(r.refereeCounts);
     setLoadErr(null);
@@ -1557,21 +1525,6 @@ function HomeTab() {
   };
   // 変更を購読する。ポーリングしないので、開きっぱなしでも通信が積み上がらない
   useEffect(() => dbSubscribe("/", applyRecord, (e) => setLoadErr(e)), []);
-
-  // 卓のカードをタップして卓調整を開く時は、開いているレフェリーリストと「さらに次を見る」を閉じる
-  const toggleRefereeList = (ti) => {
-    setTableAdjust(null);
-    setShowGlobalAdjust(false);
-    setLiveRefereeOpen(null);
-    setRefereeOpen((v) => (v === ti ? null : ti));
-  };
-  // 対戦中カード側のスコアラー選択（変更）を開閉する
-  const toggleLiveRefereeList = (ti) => {
-    setTableAdjust(null);
-    setShowGlobalAdjust(false);
-    setRefereeOpen(null);
-    setLiveRefereeOpen((v) => (v === ti ? null : ti));
-  };
 
   const getRefereeCandidates = (ti, target) => {
     if (!target) return [];
@@ -1626,8 +1579,7 @@ function HomeTab() {
       });
       const prevCount = (await dbGet("refereeCounts/" + name)) || 0;
       await dbSet("refereeCounts/" + name, prevCount + 1);
-      setRefereeOpen(null);
-      setLiveRefereeOpen(null);
+      setRefModalMatch(null);
       setRefereeQR({ name, match: target });
       publishQr({ url: urlFor(target), heading: `📝 卓${target.table} スコアラー呼び出し`, names: `${name} さん` });
       refresh();
@@ -1709,8 +1661,7 @@ function HomeTab() {
   const [tEndM, setTEndM] = useState("00");
 
   const openTableAdjust = (ti) => {
-    setRefereeOpen(null);
-    setLiveRefereeOpen(null);
+    setRefModalMatch(null);
     setShowGlobalAdjust(false);
     const future = adjustableMatches(queues[ti]); // 開始済みの試合だけ対象外（呼び出し中は含む）
     const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
@@ -1904,8 +1855,7 @@ function HomeTab() {
   const toggleGlobalAdjust = () => {
     if (showGlobalAdjust) { setShowGlobalAdjust(false); return; }
     setTableAdjust(null);
-    setRefereeOpen(null);
-    setLiveRefereeOpen(null);
+    setRefModalMatch(null);
     const cfg = loadSettings();
     setTEndH(cfg.endH || "17");
     setTEndM(cfg.endM || "00");
@@ -1916,272 +1866,184 @@ function HomeTab() {
   const _cfg = loadSettings();
   const sharedEnd = (_cfg.endH && _cfg.endM) ? `${_cfg.endH}:${_cfg.endM}` : "未設定";
 
+  const slots = Math.max(0, ...cols.map((c) => c.length));
+  const totalMatches = cols.reduce((s, c) => s + c.length, 0);
+  const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
+  const tinfo = [0, 1, 2].map((ti) => {
+    const q = queues[ti];
+    const cur = q[0];
+    const status = tableScheduleStatus(ti);
+    const settingSrc = adjustableMatches(q)[0] || null;
+    return { ti, cur, status, settingSrc };
+  });
+
   return (
-    <div style={{ padding: "16px 12px 24px", color: C.ink }}>
-      {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
-
-      {showGlobalAdjust && (
-        <div style={{ background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, marginBottom: 16, position: "relative" }}>
-          <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
-          <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>全卓の調整</div>
-
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
-            <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-            <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
-            <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-          </div>
-          <button onClick={applyConditionalAllTables} disabled={globalBusy} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
-            {globalBusy ? "計算中…" : "✓ 押している卓・余裕がある卓だけ自動調整"}
-          </button>
-          <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 16 }}>1分でも押している卓は間に合うよう短く、10分を超えて余裕がある卓は伸ばします。順調な卓はそのままです</div>
-
-          <div style={{ borderTop: `2px solid ${C.line}`, paddingTop: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 4 }}>100%の時間（全卓共通）</div>
-            <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 8 }}>そもそもの見積もりがずれていると感じたら、ここで調整</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
-              <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
-              <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", color: C.ink }}>
+      {/* ===== 固定エリア：進捗・卓見出し・卓調整 ===== */}
+      <div style={{ flexShrink: 0, padding: "14px 12px 10px", borderBottom: `2px solid ${C.line}`, background: C.bg }}>
+        {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 10 }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 16, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{totalMatches}試合</div>
+            <div style={{ height: 7, width: 160, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
+              <div style={{ height: "100%", width: `${totalMatches ? Math.round((doneCount / totalMatches) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
             </div>
-            <button onClick={applyPer100ToAll} disabled={globalBusy} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-              {globalBusy ? "反映中…" : "この基準値を全卓に反映する"}
-            </button>
           </div>
-
-          {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+          <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
         </div>
-      )}
 
-      {(() => {
-        const tinfo = [0, 1, 2].map((ti) => {
-          const q = queues[ti];
-          const cur = q[0];
-          const live = cur && cur.startedAt ? cur : null; // 「対戦中」に出す対象：実際に始まっている試合のみ
-          const callTarget = cur && !cur.startedAt ? cur : (q[1] || null); // 「呼び出し」に出す対象：次に呼ぶべき試合
-          const est = perTableEstimate(ti);
-          const status = tableScheduleStatus(ti);
-          // 卓の状態カードに出す設定値：卓調整は「未開始の試合」に適用されるので、その先頭（＝次に適用が効く試合）の値を表示する
-          const settingSrc = adjustableMatches(q)[0] || null;
-          return { ti, q, cur, live, callTarget, est, status, settingSrc };
-        });
-        return (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", columnGap: 6, rowGap: 8, alignItems: "start" }}>
-            {/* 見出し行 */}
-            {tinfo.map(({ ti }) => (
-              <div key={ti} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink }}>{ti + 1}</div>
-            ))}
-
-            {/* 終了目安・押し具合・設定 */}
-            {tinfo.map(({ ti, cur, status, settingSrc }) => (
-              <div key={ti} onClick={() => toggleExpand(ti)} style={{
-                position: "relative", textAlign: "center", cursor: "pointer", boxSizing: "border-box", width: "100%",
-                background: tableAdjust === ti ? C.blue : (status && !status.ok ? "#FFF5F4" : "#fff"),
-                border: `2px ${tableAdjust === ti ? "solid" : "dashed"} ${tableAdjust === ti ? C.blue : status && !status.ok ? C.minus : C.blue}`,
-                borderRadius: 14, padding: "10px 6px 8px",
-              }}>
-                <span style={{ position: "absolute", top: 6, right: 8, fontSize: 12, color: tableAdjust === ti ? "#fff" : C.blue, opacity: 0.8 }}>✎</span>
-                {cur ? (
-                  <>
-                    <div style={{
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 13, fontWeight: 800, borderRadius: 8, padding: "5px 8px", lineHeight: 1.3,
-                      color: tableAdjust === ti ? C.blue : (status ? (status.ok ? C.win : "#fff") : C.sub),
-                      background: tableAdjust === ti ? "#fff" : (status ? (status.ok ? C.zone : C.minus) : "transparent"),
-                      whiteSpace: "nowrap",
-                    }}>
-                      {status ? (status.ok ? `☑️${status.text}` : `⚠️${status.text}`) : "–"}
+        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 6 }}>
+          <div />
+          {tinfo.map(({ ti }) => (
+            <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>卓{ti + 1}</div>
+          ))}
+          <div />
+          {tinfo.map(({ ti, cur, status, settingSrc }) => (
+            <div key={ti} onClick={() => openTableAdjust(ti)} style={{
+              position: "relative", textAlign: "center", cursor: "pointer", boxSizing: "border-box", width: "100%",
+              background: tableAdjust === ti ? C.blue : (status && !status.ok ? "#FFF5F4" : "#fff"),
+              border: `2px ${tableAdjust === ti ? "solid" : "dashed"} ${tableAdjust === ti ? C.blue : status && !status.ok ? C.minus : C.blue}`,
+              borderRadius: 12, padding: "7px 5px 6px",
+            }}>
+              {cur ? (
+                <>
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap",
+                    fontSize: 12, fontWeight: 800, borderRadius: 8, padding: "4px 6px", lineHeight: 1.3,
+                    color: tableAdjust === ti ? C.blue : (status ? (status.ok ? C.win : "#fff") : C.sub),
+                    background: tableAdjust === ti ? "#fff" : (status ? (status.ok ? C.zone : C.minus) : "transparent"),
+                  }}>
+                    {status ? (status.ok ? `☑️${status.text}` : `⚠️${status.text}`) : "–"}
+                  </div>
+                  {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
+                    <div style={{ marginTop: 4, fontSize: 11.5, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.ink, whiteSpace: "nowrap" }}>
+                      🎱{settingSrc.lenPct || 100}% ⏰{settingSrc.matchMinutes || 30}分
                     </div>
-                    {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
-                      <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.ink }}>
-                        <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.7 }}>未開始の試合〜</div>
-                        <div style={{ whiteSpace: "nowrap" }}>🎱{settingSrc.lenPct || 100}% ⏰{settingSrc.matchMinutes || 30}分</div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, color: tableAdjust === ti ? "#fff" : C.sub, marginTop: 4 }}>予定なし</div>
-                )}
-              </div>
-            ))}
-
-            {/* 卓調整パネル：タップした卓の設定カードのすぐ下に全幅で展開する。開いている間は対戦中／次戦は隠す */}
-            {tableAdjust != null && queues[tableAdjust][0] && (() => {
-              const ti = tableAdjust;
-              const cur = queues[ti][0];
-              const future = adjustableMatches(queues[ti]);
-              return (
-                <div style={{ gridColumn: "1 / -1", background: C.zone, border: `2px solid ${C.blue}`, borderRadius: 14, padding: 16, position: "relative" }}>
-                  <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
-                  <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
-
-                  <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 未開始の試合（残り{future.length}試合）を調整</div>
-
-                  {future.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
-                  ) : (
-                    <>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
-                        <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-                        <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
-                        <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-                      </div>
-                      <button onClick={() => applyTableEndTime(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
-                        {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
-                      </button>
-                      <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 10, marginBottom: 16 }}>
-                        {snapBusy === ti ? "反映中…" : "全卓まとめて自動調整する"}
-                      </button>
-
-                      <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
-                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700 }}>試合の長さ</span>
-                          <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%</span>
-                        </div>
-                        <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%の時間（全卓共通）</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                        <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
-                        <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
-                        <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
-                      </div>
-                      <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 16 }}>
-                        {snapBusy === ti ? "反映中…" : "手動の値で全卓に反映する"}
-                      </button>
-                    </>
                   )}
+                </>
+              ) : (
+                <div style={{ fontSize: 11.5, color: tableAdjust === ti ? "#fff" : C.sub }}>予定なし</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
-                  <div style={{ marginTop: 16 }}>
-                    {snapMsg && <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+      {/* ===== スクロールエリア：ラウンドごとのタイムライン ===== */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 12px 24px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+          {Array.from({ length: slots }, (_, s) => (
+            <React.Fragment key={s}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              {[0, 1, 2].map((ti) => {
+                const e = cols[ti][s];
+                return (
+                  <div key={ti}>
+                    {e ? (
+                      <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onOpenQr={openQr} onEditReferee={(m) => setRefModalMatch(m)} />
+                    ) : (
+                      <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
+                    )}
                   </div>
-                </div>
-              );
-            })()}
+                );
+              })}
+            </React.Fragment>
+          ))}
+          {slots === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", color: C.sub, fontSize: 14, padding: "24px 0" }}>対戦がまだ登録されていません</div>}
+        </div>
+      </div>
 
-            {tableAdjust == null && (
-              <>
-                {/* 呼び出し 見出し（全幅）：本部のメインの仕事。次に呼ぶべき対戦をここに出す */}
-                <div style={{ gridColumn: "1 / -1", fontSize: 21, fontWeight: 900, color: C.blue, marginTop: 10 }}>📣 呼び出し</div>
-                {tinfo.map(({ ti, callTarget, live }) => {
-                  // 対戦中の試合がまだ8割未満なら、次の呼び出しカードはあえて目立たせない
-                  const callProminent = !live || computeFinishProgress(live) >= 0.8;
-                  return (
-                    <div key={ti}>
-                      {callTarget && <TimelineCard m={callTarget} current order={0} onOpen={() => openQr(callTarget)} referee={callTarget.referee} prominent={callProminent} />}
-                      {!callTarget && <EmptySlot label="予定なし" />}
+      {/* ===== モーダル：卓調整（1卓） ===== */}
+      {tableAdjust != null && queues[tableAdjust] && (() => {
+        const ti = tableAdjust;
+        const future = adjustableMatches(queues[ti]);
+        return (
+          <div onClick={() => setTableAdjust(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: C.zone, borderRadius: 16, padding: 18, width: "100%", maxWidth: 360, maxHeight: "85vh", overflowY: "auto", position: "relative" }}>
+              <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
+              <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 未開始の試合（残り{future.length}試合）を調整</div>
+
+              {future.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
+                    <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+                    <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
+                    <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+                  </div>
+                  <button onClick={() => applyTableEndTime(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
+                    {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
+                  </button>
+                  <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 10, marginBottom: 16 }}>
+                    {snapBusy === ti ? "反映中…" : "全卓まとめて自動調整する"}
+                  </button>
+
+                  <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
+                  <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>試合の長さ</span>
+                      <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%</span>
                     </div>
-                  );
-                })}
-
-                {/* スコアラー候補：呼び出す対戦にその場で割り当てる（設定でオフにできる） */}
-                {refereeEnabled && tinfo.map(({ ti, callTarget }) => (
-                  <div key={ti}>
-                    {callTarget && (
-                      <div style={{ textAlign: "center" }}>
-                        <button onClick={() => toggleRefereeList(ti)} style={{
-                          background: refereeOpen === ti ? C.blue : "#fff", color: refereeOpen === ti ? "#fff" : C.blue,
-                          border: `1.5px solid ${C.blue}`, borderRadius: 10, fontSize: 13, fontWeight: 800,
-                          padding: "7px 12px", cursor: "pointer", fontFamily: FONT, width: "100%",
-                        }}>
-                          {refereeOpen === ti ? "▲ 閉じる" : callTarget.referee ? "📝 スコアラーを変更" : "📝 スコアラーを選ぶ"}
-                        </button>
-                      </div>
-                    )}
-                    {refereeOpen === ti && (
-                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, marginTop: 6 }}>
-                        {getRefereeCandidates(ti, callTarget).length === 0 ? (
-                          <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            {getRefereeCandidates(ti, callTarget).map((p) => {
-                              const tierInfo = p.sameTableLive
-                                ? { label: "同卓で試合中（終了次第）", bg: C.lightBlue, col: C.blue }
-                                : p.tier === 1
-                                ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
-                                : p.tier === 2
-                                ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
-                                : null;
-                              return (
-                                <button key={p.id} onClick={() => assignReferee(ti, p.name, callTarget)} disabled={refereeBusy}
-                                  style={{
-                                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                                    background: p.tier === 0 || p.sameTableLive ? C.lightBlue : "#fff",
-                                    border: `1.5px solid ${p.tier === 0 || p.sameTableLive ? C.blue : C.line}`,
-                                    borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
-                                  }}>
-                                  <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
-                                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                                    {p.count > 0 && <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>担当{p.count}回</span>}
-                                    {tierInfo && (
-                                      <span style={{ background: tierInfo.bg, color: tierInfo.col, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
-                                        {tierInfo.label}
-                                      </span>
-                                    )}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
                   </div>
-                ))}
-
-                {/* 対戦中 見出し（全幅）：実際に始まっている試合だけを出す。無ければ空欄にして「呼び出しが必要」を目立たせる */}
-                <div style={{ gridColumn: "1 / -1", fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 10 }}>対戦中</div>
-                {tinfo.map(({ ti, live }) => (
-                  <div key={ti}>
-                    {live && <TimelineCard m={live} current order={0} onOpen={() => openQr(live)} referee={refereeEnabled ? live.referee : null} onRefereeClick={refereeEnabled ? () => toggleLiveRefereeList(ti) : undefined} />}
-                    {!live && <div style={{ minHeight: 48 }} />}
-                    {refereeEnabled && liveRefereeOpen === ti && live && (
-                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, marginTop: 6 }}>
-                        {getRefereeCandidates(ti, live).length === 0 ? (
-                          <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            {getRefereeCandidates(ti, live).map((p) => {
-                              const tierInfo = p.tier === 1
-                                ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
-                                : p.tier === 2
-                                ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
-                                : null;
-                              return (
-                                <button key={p.id} onClick={() => assignReferee(ti, p.name, live)} disabled={refereeBusy}
-                                  style={{
-                                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                                    background: p.tier === 0 ? C.lightBlue : "#fff",
-                                    border: `1.5px solid ${p.tier === 0 ? C.blue : C.line}`,
-                                    borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
-                                  }}>
-                                  <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
-                                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                                    {p.count > 0 && <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>担当{p.count}回</span>}
-                                    {tierInfo && (
-                                      <span style={{ background: tierInfo.bg, color: tierInfo.col, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
-                                        {tierInfo.label}
-                                      </span>
-                                    )}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%の時間（全卓共通）</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                    <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
+                    <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
+                    <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
                   </div>
-                ))}
+                  <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 4 }}>
+                    {snapBusy === ti ? "反映中…" : "手動の値で全卓に反映する"}
+                  </button>
+                </>
+              )}
 
-              </>
-            )}
+              {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+            </div>
           </div>
         );
       })()}
 
+      {/* ===== モーダル：全卓調整 ===== */}
+      {showGlobalAdjust && (
+        <div onClick={() => setShowGlobalAdjust(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.zone, borderRadius: 16, padding: 18, width: "100%", maxWidth: 360, maxHeight: "85vh", overflowY: "auto", position: "relative" }}>
+            <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
+            <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>全卓の調整</div>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
+              <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
+              <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
+            </div>
+            <button onClick={applyConditionalAllTables} disabled={globalBusy} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
+              {globalBusy ? "計算中…" : "✓ 押している卓・余裕がある卓だけ自動調整"}
+            </button>
+            <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 16 }}>1分でも押している卓は間に合うよう短く、10分を超えて余裕がある卓は伸ばします。順調な卓はそのままです</div>
+
+            <div style={{ borderTop: `2px solid ${C.line}`, paddingTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 4 }}>100%の時間（全卓共通）</div>
+              <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 8 }}>そもそもの見積もりがずれていると感じたら、ここで調整</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
+                <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
+                <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
+              </div>
+              <button onClick={applyPer100ToAll} disabled={globalBusy} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+                {globalBusy ? "反映中…" : "この基準値を全卓に反映する"}
+              </button>
+            </div>
+
+            {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ===== モーダル：呼び出し／引き継ぎQR ===== */}
       {qrMatch && (
         <div onClick={() => setQrMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
@@ -2192,6 +2054,7 @@ function HomeTab() {
         </div>
       )}
 
+      {/* ===== モーダル：スコアラー呼び出しQR（割り当て直後） ===== */}
       {refereeQR && (
         <div onClick={() => setRefereeQR(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
@@ -2204,152 +2067,50 @@ function HomeTab() {
         </div>
       )}
 
-    </div>
-  );
-}
-function EmptySlot({ label }) {
-  return (
-    <div style={{ background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 14, padding: "20px 4px", textAlign: "center", color: C.sub, fontSize: 13, boxSizing: "border-box", width: "100%" }}>
-      {label}
-    </div>
-  );
-}
-// 対戦の「終わりそう度」（スコア達成率と残り時間の進み具合のうち大きい方、0〜1）。
-// 呼び出しカードを目立たせるタイミングの判定にも使う
-function computeFinishProgress(m) {
-  const raceTo = m.raceTo || [0, 0];
-  const tot = m.tot || [0, 0];
-  const balls = m.balls || [];
-  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
-  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const scoreProgress = raceTo[0] > 0 && raceTo[1] > 0 ? Math.max(disp[0] / raceTo[0], disp[1] / raceTo[1]) : 0;
-  let timeProgress = 0;
-  if (m.startedAt && m.deadline && !m.finishedAt) {
-    const totalMs = m.deadline - m.startedAt;
-    const remainMs = m.deadline - Date.now();
-    timeProgress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
-  }
-  return Math.max(scoreProgress, timeProgress);
-}
-
-function TimelineCard({ m, current, order, onOpen, referee, prominent = true, onRefereeClick }) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!current) return;
-    const iv = setInterval(() => setTick((t) => t + 1), 15000);
-    return () => clearInterval(iv);
-  }, [current]);
-
-  const names = m.names || ["P1", "P2"];
-  const raceTo = m.raceTo || [0, 0];
-  const tot = m.tot || [0, 0];
-  const balls = m.balls || [];
-  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
-  const disp = current && m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
-  const hasProgress = (tot[0] > 0 || tot[1] > 0 || (m.rack || 1) > 1 || m.phase === "done");
-  const awaitingCall = current && !m.startedAt && !hasProgress;
-  const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && (raceTo[0] - tot[0] <= 14) && (raceTo[1] - tot[1] <= 14);
-
-  // 参加者の持ち時間の残り。deadline（絶対時刻）を基準に逆算する
-  let timeInfo = null;
-  if (current && m.startedAt && m.deadline && !m.finishedAt) {
-    const totalMs = m.deadline - m.startedAt;
-    const remainMs = m.deadline - Date.now();
-    const remainMin = Math.max(0, remainMs / 60000);
-    const progress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
-    timeInfo = { remainMin, progress, over: remainMs <= 0 };
-  }
-  const aboutToFinish = current && timeInfo && timeInfo.remainMin <= 3;
-  // 片方でもヒル（目標まで14点以内）、または残り3分を切ったら「そろそろ終わる」の赤にする
-  const oneHill = raceTo[0] > 0 && raceTo[1] > 0 && ((raceTo[0] - tot[0] <= 14) || (raceTo[1] - tot[1] <= 14));
-  const urgent = oneHill || aboutToFinish;
-
-  // 終わりそう度＝スコアの達成率と残り時間の進み具合のうち大きい方（数字は出さず、バーだけで見せる）
-  const scoreProgress = raceTo[0] > 0 && raceTo[1] > 0 ? Math.max(disp[0] / raceTo[0], disp[1] / raceTo[1]) : 0;
-  const finishProgress = Math.max(scoreProgress, timeInfo ? timeInfo.progress : 0);
-  const finishColor = urgent ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
-
-  const statusLabel = !current
-    ? `${order + 1}戦後`
-    : awaitingCall ? (prominent ? "📣 呼び出し中" : "🕓 次の呼び出し")
-    : m.phase === "banking" ? "バンキング待ち"
-    : aboutToFinish ? (hillHill ? "🔥 ヒルヒル！" : "⏰ 終わりそう")
-    : "試合中";
-  const accent = C.blue;
-  const calm = awaitingCall && !prominent; // 対戦中の試合がまだ8割未満：まだ呼び出すタイミングではないので目立たせない
-
-  if (!current) {
-    return (
-      <div onClick={onOpen} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "6px 5px", cursor: "pointer", opacity: 0.8, boxSizing: "border-box", width: "100%" }}>
-        <div style={{ textAlign: "center", fontSize: 9.5, color: C.sub, fontWeight: 700, marginBottom: 3 }}>{statusLabel}</div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {[0, 1].map((i) => (
-            <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, opacity: 0.6 }}>{raceTo[i]}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div onClick={onOpen} style={{
-      background: calm ? "#fff" : C.lightBlue,
-      border: `${calm ? 1.5 : 3}px solid ${calm ? C.line : accent}`,
-      boxShadow: calm ? "none" : `0 3px 12px rgba(46,109,181,0.28)`,
-      borderRadius: 16, padding: "12px 8px 10px", cursor: "pointer", boxSizing: "border-box", width: "100%",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 8 }}>
-        <div style={{
-          display: "inline-block", background: calm ? C.zone : accent, color: calm ? C.sub : "#fff",
-          border: calm ? `1px solid ${C.line}` : "none",
-          borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800,
-          whiteSpace: "nowrap", flexShrink: 0,
-        }}>{statusLabel}</div>
-        {m.startedAt && (m.lenPct || m.matchMinutes) && (
-          <span style={{ fontSize: 11, fontWeight: 800, color: C.ink, whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-            🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分
-          </span>
-        )}
-      </div>
-      <div style={{ display: "flex", gap: 4 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: i === 0 ? C.blue : C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 1 }}>{names[i]}</div>
-            <div style={{ fontSize: 18, fontWeight: 900, color: C.ink, lineHeight: 1.1, whiteSpace: "nowrap" }}>
-              {m.phase === "banking" ? "–" : disp[i]}
-              <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.45 }}>/{raceTo[i]}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-      {!awaitingCall && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 4, transition: "width 400ms ease" }} />
+      {/* ===== モーダル：✏️から開くスコアラー候補 ===== */}
+      {refModalMatch && (
+        <div onClick={() => setRefModalMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>卓{refModalMatch.table}：スコアラーを選ぶ</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 14, textAlign: "center" }}>{refModalMatch.names[0]} 対 {refModalMatch.names[1]}{refModalMatch.referee ? `（現在：${refModalMatch.referee}）` : ""}</div>
+            {getRefereeCandidates(refModalMatch.table - 1, refModalMatch).length === 0 ? (
+              <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {getRefereeCandidates(refModalMatch.table - 1, refModalMatch).map((p) => {
+                  const tierInfo = p.sameTableLive
+                    ? { label: "同卓で試合中（終了次第）", bg: C.lightBlue, col: C.blue }
+                    : p.tier === 1
+                    ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
+                    : p.tier === 2
+                    ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
+                    : null;
+                  return (
+                    <button key={p.id} onClick={() => assignReferee(refModalMatch.table - 1, p.name, refModalMatch)} disabled={refereeBusy}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                        background: p.tier === 0 || p.sameTableLive ? C.lightBlue : "#fff",
+                        border: `1.5px solid ${p.tier === 0 || p.sameTableLive ? C.blue : C.line}`,
+                        borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
+                      }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        {p.count > 0 && <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>担当{p.count}回</span>}
+                        {tierInfo && (
+                          <span style={{ background: tierInfo.bg, color: tierInfo.col, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
+                            {tierInfo.label}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <button onClick={() => setRefModalMatch(null)} style={{ marginTop: 14, width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
       )}
-      {onRefereeClick ? (
-        <div style={{ marginTop: 8, minHeight: 24, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <button onClick={(e) => { e.stopPropagation(); onRefereeClick(); }} style={{
-            background: referee ? "none" : C.blue, color: referee ? C.ink : "#fff",
-            border: referee ? "none" : "none", borderRadius: 8,
-            padding: referee ? "2px 0" : "3px 10px", fontSize: referee ? 12 : 11.5,
-            fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-            textDecoration: referee ? "underline" : "none",
-          }}>
-            {referee ? `✏️${referee}` : "📝 スコアラーを選ぶ"}
-          </button>
-        </div>
-      ) : (
-        referee && (
-          <div style={{ marginTop: 8, textAlign: "center", fontSize: 12, fontWeight: 700, color: C.ink }}>✏️{referee}</div>
-        )
-      )}
-
     </div>
   );
 }
