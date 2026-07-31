@@ -364,7 +364,8 @@ function buildDetailedStandings(matches, roster) {
 function buildMatchList(matches) {
   const all = Object.values(matches || {}).filter((m) => m && Array.isArray(m.names));
   const withSlot = all.filter((m) => m.slot != null);
-  const withoutSlot = all.filter((m) => m.slot == null).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  // 決勝トーナメントの対戦は専用の表示があるので、ここでの「個別追加分」には含めない
+  const withoutSlot = all.filter((m) => m.slot == null && !m.bracket).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
   const bySlot = new Map();
   withSlot.forEach((m) => {
@@ -660,12 +661,17 @@ function StandingsTab() {
 function PcMatchGridTab() {
   const [matches, setMatches] = useState({});
   const [err, setErr] = useState(null);
+  const [view, setView] = useState("prelim"); // "prelim" | "bracket"
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
 
   const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
+  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
+  const hasBracket = bracketMatches.length > 0;
+  const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
+  const bracketTotal = bracketTotalRounds(bracketSize);
   const tableCount = 3;
   const rowCount = Math.max(1, rounds.length);
 
@@ -676,11 +682,26 @@ function PcMatchGridTab() {
     if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
     return { background: "#fff" }; // 未開始：白
   };
+  const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
 
   return (
     <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
+        <button onClick={() => setView("prelim")} style={{
+          background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
+          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>予選</button>
+        <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
+          background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
+          border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
+          cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
+        }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
+      </div>
+
+      {view === "prelim" ? (
+        <>
       <div style={{
         flex: 1, minHeight: 0, display: "grid",
         gridTemplateColumns: "60px repeat(3, 1fr)",
@@ -730,6 +751,34 @@ function PcMatchGridTab() {
               );
             })}
           </div>
+        </div>
+      )}
+        </>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
+          {Array.from({ length: bracketTotal }, (_, ri) => ri + 1).map((r) => {
+            const ms = bracketMatchesForRound(matches, r);
+            if (ms.length === 0) return null;
+            return (
+              <div key={r} style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", justifyContent: "space-around" }}>
+                <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.blue, marginBottom: 10 }}>{roundLabel(r)}</div>
+                {ms.map((m) => {
+                  const done = isMatchFinished(m);
+                  const w = done ? matchWinnerIndex(m) : null;
+                  return (
+                    <div key={m.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", marginBottom: 14 }}>
+                      {[0, 1].map((i) => (
+                        <div key={i} style={{ fontSize: 18, fontWeight: w === i ? 900 : 600, color: w === i ? C.win : w == null ? C.ink : C.sub, textAlign: "center", padding: "3px 0" }}>
+                          {m.names[i]}{done && ` （${(m.tot || [0, 0])[i]}）`}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {!hasBracket && <div style={{ margin: "auto", color: C.sub, fontSize: 16 }}>決勝トーナメントはまだ登録されていません</div>}
         </div>
       )}
     </div>
@@ -826,7 +875,27 @@ function BracketTab({ roster }) {
     return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0) };
   };
 
-  const nextTable = (count) => (count % 3) + 1;
+  // 4人の時は卓1・2だけ使う。空いている（未終了の対戦を持たない）卓を優先し、
+  // 一度に複数試合を組む時は割り当てるごとに数を数えて偏らないようにする
+  const allowedTables = size === 4 ? [1, 2] : [1, 2, 3];
+  const assignTables = (count) => {
+    const pending = {};
+    allowedTables.forEach((t) => { pending[t] = 0; });
+    Object.values(matches || {}).forEach((m) => {
+      if (!m) return;
+      const t = Number(m.table);
+      if (!(t in pending)) return;
+      if (!isMatchFinished(m)) pending[t]++;
+    });
+    const result = [];
+    for (let i = 0; i < count; i++) {
+      let best = allowedTables[0];
+      allowedTables.forEach((t) => { if (pending[t] < pending[best]) best = t; });
+      result.push(best);
+      pending[best]++;
+    }
+    return result;
+  };
 
   const registerRound1 = async () => {
     if (registering) return;
@@ -837,6 +906,7 @@ function BracketTab({ roster }) {
     try {
       const now = Date.now();
       const next = {};
+      const tables = assignTables(size / 2);
       for (let i = 0; i < size / 2; i++) {
         const p1 = names[i * 2], p2 = names[i * 2 + 1];
         const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
@@ -846,7 +916,7 @@ function BracketTab({ roster }) {
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
           balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
           lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: nextTable(i),
+          names: [p1.name, p2.name], table: tables[i],
           r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
           createdAt: now + i, updatedAt: now,
           bracket: true, bracketRound: 1, bracketPos: i, bracketSize: size,
@@ -872,6 +942,7 @@ function BracketTab({ roster }) {
     try {
       const now = Date.now();
       const next = {};
+      const tables = assignTables(winners.length / 2);
       for (let i = 0; i < winners.length / 2; i++) {
         const p1 = winners[i * 2], p2 = winners[i * 2 + 1];
         const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, lenPct) : { rt1: 0, rt2: 0 };
@@ -880,7 +951,7 @@ function BracketTab({ roster }) {
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
           balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
           lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: nextTable(i),
+          names: [p1.name, p2.name], table: tables[i],
           r1: p1.r, r2: p2.r, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
           createdAt: now + i, updatedAt: now,
           bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
@@ -2104,6 +2175,10 @@ function HomeTab() {
   const slots = Math.max(0, ...cols.map((c) => c.length));
   const totalMatches = cols.reduce((s, c) => s + c.length, 0);
   const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
+  // 決勝トーナメントの試合が最初に現れる行（卓ごとの一番早い位置）。無ければ Infinity
+  const bracketStartRow = Math.min(
+    ...cols.map((c) => { const idx = c.findIndex((e) => e.m && e.m.bracket); return idx === -1 ? Infinity : idx; })
+  );
   const tinfo = [0, 1, 2].map((ti) => {
     const q = queues[ti];
     const cur = q[0];
@@ -2169,6 +2244,13 @@ function HomeTab() {
         <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
           {Array.from({ length: slots }, (_, s) => (
             <React.Fragment key={s}>
+              {s === bracketStartRow && (
+                <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, margin: "6px 0 2px" }}>
+                  <div style={{ flex: 1, height: 2, background: C.blue }} />
+                  <div style={{ fontSize: 13, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</div>
+                  <div style={{ flex: 1, height: 2, background: C.blue }} />
+                </div>
+              )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
