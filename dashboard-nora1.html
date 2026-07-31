@@ -404,6 +404,7 @@ function App() {
   const [rosterLoaded, setRosterLoaded] = useState(false); // 読み込みに成功した時だけ true。false の間は保存しない
   const [rosterError, setRosterError] = useState(null);
   const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
+  const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
   const isPc = deviceMode === "pc";
 
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
@@ -432,6 +433,30 @@ function App() {
     ["settings", "⚙️ 設定"],
   ];
 
+  const playerContent = isPc ? (
+    <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", display: "flex", gap: 18 }}>
+      {roundRobin && (
+        <div style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 8 }}>対戦表（総当たり）</div>
+          <RoundRobinMatrix />
+        </div>
+      )}
+      <div style={{ flex: roundRobin ? 1.3 : 1, minWidth: 0, minHeight: 0 }}>
+        <PcStandingsTab />
+      </div>
+    </div>
+  ) : (
+    <div style={{ height: "100%", overflowY: "auto" }}>
+      {roundRobin && (
+        <div style={{ padding: "16px 12px 0" }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, marginBottom: 8 }}>対戦表（総当たり）</div>
+          <RoundRobinMatrix compact />
+        </div>
+      )}
+      <StandingsTab />
+    </div>
+  );
+
   return (
     <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
@@ -447,10 +472,11 @@ function App() {
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && (isPc ? <PcMatchGridTab /> : <HomeTab />)}
-          {tab === "player" && (isPc ? <PcStandingsTab /> : <StandingsTab />)}
+          {tab === "player" && playerContent}
           {tab === "settings" && (
             <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError}
-              deviceMode={deviceMode} onSetDeviceMode={(m) => { setDeviceMode(m); saveSettings({ deviceMode: m }); }} />
+              deviceMode={deviceMode} onSetDeviceMode={(m) => { setDeviceMode(m); saveSettings({ deviceMode: m }); }}
+              roundRobin={roundRobin} onSetRoundRobin={(v) => { setRoundRobin(v); saveSettings({ roundRobinMode: v }); }} />
           )}
         </div>
       </div>
@@ -661,13 +687,12 @@ function StandingsTab() {
 
 /* ========= PC表示タブ：対戦一覧（左）と戦績（右）を1画面に収めて開きっぱなしにする用。
    紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
-/* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
-/* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
-function PcMatchGridTab() {
+/* ========= 総当たり表：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）。
+   単体でも他タブに埋め込んでも使えるよう、自前でデータ購読する ========= */
+function RoundRobinMatrix({ compact }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
-  const [view, setView] = useState("prelim"); // "prelim" | "matrix" | "bracket"
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
@@ -676,24 +701,6 @@ function PcMatchGridTab() {
     (r) => setRoster(Array.isArray(r) ? r : []),
     () => {}), []);
 
-  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
-  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
-  const hasBracket = bracketMatches.length > 0;
-  const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
-  const bracketTotal = bracketTotalRounds(bracketSize);
-  const tableCount = 3;
-  const rowCount = Math.max(1, rounds.length);
-
-  const cellStyle = (m) => {
-    if (!m) return { background: "#fff" };
-    const done = isMatchFinished(m);
-    if (done) return { background: "#DADDE1" }; // 終了：灰色
-    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
-    return { background: "#fff" }; // 未開始：白
-  };
-  const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
-
-  // 総当たり用：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）
   const matrix = useMemo(() => {
     const all = Object.values(matches || {}).filter((m) => m && !m.bracket).map((m) => normalizeMatch(m));
     const names = [];
@@ -716,6 +723,85 @@ function PcMatchGridTab() {
     });
     return { names, grid };
   }, [matches, roster]);
+
+  const cellH = compact ? 30 : 40;
+  const cellFont = compact ? 12 : 16;
+  const headFont = compact ? 11 : 13;
+
+  if (matrix.names.length === 0) {
+    return <div style={{ color: C.sub, fontSize: 14, textAlign: "center", padding: "20px 0" }}>対戦がまだ登録されていません</div>;
+  }
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      {err && <div style={{ color: C.minus, fontSize: 12, marginBottom: 6 }}>同期エラー: {err}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: `${compact ? 60 : 84}px repeat(${matrix.names.length}, minmax(${compact ? 44 : 64}px, 1fr))`, border: `1px solid ${C.line}`, boxSizing: "border-box" }}>
+        <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
+        {matrix.names.map((n, j) => (
+          <div key={"h" + j} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: headFont, fontWeight: 800, color: C.sub, padding: "5px 2px", textAlign: "center", wordBreak: "break-all" }}>
+            {n}
+          </div>
+        ))}
+        {matrix.names.map((rowName, i) => (
+          <React.Fragment key={"r" + i}>
+            <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: headFont, fontWeight: 800, color: C.sub, padding: "5px 4px", textAlign: "center", wordBreak: "break-all" }}>
+              {rowName}
+            </div>
+            {matrix.names.map((colName, j) => {
+              if (i === j) {
+                return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#EEF0F2" }} />;
+              }
+              const cell = matrix.grid[i][j];
+              if (!cell) {
+                return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#fff" }} />;
+              }
+              const { m, mine } = cell;
+              const done = isMatchFinished(m);
+              const live = !done && !!m.startedAt;
+              const bg = done ? "#DADDE1" : live ? "#FFF3B0" : "#fff";
+              const tot = m.tot || [0, 0];
+              const w = done ? matchWinnerIndex(m) : null;
+              const win = w != null && w === mine;
+              return (
+                <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: cellFont, fontWeight: win ? 900 : 600, color: win ? C.win : C.ink, minHeight: cellH }}>
+                  {done ? `${tot[mine]}-${tot[1 - mine]}` : live ? "●" : ""}
+                </div>
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
+/* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
+function PcMatchGridTab() {
+  const [matches, setMatches] = useState({});
+  const [err, setErr] = useState(null);
+  const [view, setView] = useState("prelim"); // "prelim" | "matrix" | "bracket"
+
+  useEffect(() => dbSubscribe("matches",
+    (m) => { setMatches(m || {}); setErr(null); },
+    (e) => setErr(e)), []);
+
+  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
+  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
+  const hasBracket = bracketMatches.length > 0;
+  const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
+  const bracketTotal = bracketTotalRounds(bracketSize);
+  const tableCount = 3;
+  const rowCount = Math.max(1, rounds.length);
+
+  const cellStyle = (m) => {
+    if (!m) return { background: "#fff" };
+    const done = isMatchFinished(m);
+    if (done) return { background: "#DADDE1" }; // 終了：灰色
+    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
+    return { background: "#fff" }; // 未開始：白
+  };
+  const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
@@ -793,46 +879,7 @@ function PcMatchGridTab() {
         </>
       ) : view === "matrix" ? (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          {matrix.names.length === 0 ? (
-            <div style={{ margin: "auto", color: C.sub, fontSize: 16, textAlign: "center", paddingTop: 40 }}>対戦がまだ登録されていません</div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: `84px repeat(${matrix.names.length}, minmax(64px, 1fr))`, border: `1px solid ${C.line}`, boxSizing: "border-box" }}>
-              <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
-              {matrix.names.map((n, j) => (
-                <div key={"h" + j} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub, padding: "6px 2px", textAlign: "center", wordBreak: "break-all" }}>
-                  {n}
-                </div>
-              ))}
-              {matrix.names.map((rowName, i) => (
-                <React.Fragment key={"r" + i}>
-                  <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub, padding: "6px 4px", textAlign: "center", wordBreak: "break-all" }}>
-                    {rowName}
-                  </div>
-                  {matrix.names.map((colName, j) => {
-                    if (i === j) {
-                      return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#EEF0F2" }} />;
-                    }
-                    const cell = matrix.grid[i][j];
-                    if (!cell) {
-                      return <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: "#fff" }} />;
-                    }
-                    const { m, mine } = cell;
-                    const done = isMatchFinished(m);
-                    const live = !done && !!m.startedAt;
-                    const bg = done ? "#DADDE1" : live ? "#FFF3B0" : "#fff";
-                    const tot = m.tot || [0, 0];
-                    const w = done ? matchWinnerIndex(m) : null;
-                    const win = w != null && w === mine;
-                    return (
-                      <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: win ? 900 : 600, color: win ? C.win : C.ink, minHeight: 40 }}>
-                        {done ? `${tot[mine]}-${tot[1 - mine]}` : live ? "●" : ""}
-                      </div>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
-            </div>
-          )}
+          <RoundRobinMatrix />
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
@@ -1180,7 +1227,7 @@ function ConnectionTest() {
 }
 
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
-function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMode, onSetDeviceMode }) {
+function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMode, onSetDeviceMode, roundRobin, onSetRoundRobin }) {
   const [showSingle, setShowSingle] = useState(false);
   const [showBracket, setShowBracket] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
@@ -1235,7 +1282,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
-        <BulkScheduleTab roster={roster} />
+        <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
@@ -1372,7 +1419,7 @@ function bulkMakePlan(N, G, relaxed) {
     const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
     const cap = Math.min(sizes[s], sizes[s + 1]);
     if (!relaxed && need > cap) {
-      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。条件緩和モードを試してください。` };
+      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。人数を変えてください。` };
     }
     if (need > 0) lower += need;
   }
@@ -1472,11 +1519,19 @@ function bulkGenerate(N, G, relaxed) {
     const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed);
     if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (best.cost <= plan.lower) break; }
   }
-  if (!best) return { error: relaxed ? "緩和モードでも組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。人数か試合数を変えるか、条件緩和モードを試してください。" };
+  if (!best) return { error: relaxed ? "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。" };
   return { plan, board: best.board, cost: best.cost, optimal: best.cost <= plan.lower };
 }
+// 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する
+function bulkGenerateAuto(N, G) {
+  const strict = bulkGenerate(N, G, false);
+  if (!strict.error) return { ...strict, usedRelaxed: false };
+  const relaxed = bulkGenerate(N, G, true);
+  if (!relaxed.error) return { ...relaxed, usedRelaxed: true };
+  return { error: relaxed.error || strict.error };
+}
 
-function BulkScheduleTab({ roster }) {
+function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.players || Math.max(6, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
@@ -1491,12 +1546,11 @@ function BulkScheduleTab({ roster }) {
   const [endM, setEndM] = useState(s0.endM || "00");
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
-  const [relaxed, setRelaxed] = useState(!!s0.relaxedSchedule);
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, relaxedSchedule: relaxed });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, relaxed]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min]);
 
   const timeEstimate = useMemo(() => {
     if (!result || result.error) return null;
@@ -1539,12 +1593,12 @@ function BulkScheduleTab({ roster }) {
     return { pct: rounded };
   }, [result, startH, startM, endH, endM, changeoverMin, per100Min]);
 
-  // 条件緩和モードの時は「1人の試合数」を使わず、全員と1回ずつ当たる総当たり戦として組む
-  const effectiveGames = relaxed ? players - 1 : games;
+  // 総当たりモードの時は「1人の試合数」を使わず、全員と1回ずつ当たる総当たり戦として組む
+  const effectiveGames = roundRobin ? players - 1 : games;
 
   const run = () => {
     setBusy(true); setMsg(null);
-    setTimeout(() => { setResult(bulkGenerate(players, effectiveGames, relaxed)); setBusy(false); }, 20);
+    setTimeout(() => { setResult(bulkGenerateAuto(players, effectiveGames)); setBusy(false); }, 20);
   };
 
   const rows = useMemo(() => {
@@ -1618,7 +1672,7 @@ function BulkScheduleTab({ roster }) {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
-        {relaxed ? (
+        {roundRobin ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, textAlign: "center" }}>総当たり戦（{players - 1}）</div>
@@ -1628,19 +1682,23 @@ function BulkScheduleTab({ roster }) {
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: relaxed ? C.lightBlue : C.zone, border: `1.5px solid ${relaxed ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: roundRobin ? C.lightBlue : C.zone, border: `1.5px solid ${roundRobin ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>条件緩和モード</div>
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>ONの間は総当たり戦（全員と1回ずつ）で組み、同卓縛り・3連投禁止も緩めます</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>総当たりモード</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>ONの間は全員と1回ずつ対戦する総当たり戦で組みます。プレイヤータブに対戦表も表示されます</div>
         </div>
-        <button onClick={() => setRelaxed((v) => !v)} style={{
-          background: relaxed ? C.blue : C.line, color: relaxed ? "#fff" : C.sub,
+        <button onClick={() => onSetRoundRobin(!roundRobin)} style={{
+          background: roundRobin ? C.blue : C.line, color: roundRobin ? "#fff" : C.sub,
           border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
           cursor: "pointer", fontFamily: FONT, flexShrink: 0,
         }}>
-          {relaxed ? "ON" : "OFF"}
+          {roundRobin ? "ON" : "OFF"}
         </button>
       </div>
+
+      {result && !result.error && result.usedRelaxed && (
+        <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
+      )}
 
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
