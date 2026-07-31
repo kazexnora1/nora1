@@ -398,40 +398,13 @@ function saveSettings(patch) {
   } catch {}
 }
 
-/* ========= プレイヤータブ：成績・対戦表（総当たり表／決勝トーナメント込み）を統合。スマホ表示⇄PC表示を切り替え ========= */
-function PlayerTab() {
-  const [sub, setSub] = useState("standings"); // "standings" | "matches"
-  const [pc, setPc] = useState(false);
-
-  const btn = (active) => ({
-    background: active ? C.blue : "#fff", color: active ? "#fff" : C.ink,
-    border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "7px 14px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
-  });
-
-  return (
-    <div style={{ height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
-      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 16px", flexShrink: 0, borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setSub("standings")} style={btn(sub === "standings")}>🏅 成績</button>
-          <button onClick={() => setSub("matches")} style={btn(sub === "matches")}>📋 対戦表</button>
-        </div>
-        <button onClick={() => setPc((v) => !v)} style={btn(pc)}>{pc ? "🖥 PC表示" : "📱 スマホ表示"}</button>
-      </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: (pc || sub === "matches") ? "hidden" : "auto" }}>
-        <div style={{ maxWidth: pc ? 1600 : 820, margin: "0 auto", height: (pc || sub === "matches") ? "100%" : "auto" }}>
-          {sub === "standings" ? (pc ? <PcStandingsTab /> : <StandingsTab />) : <PcMatchGridTab />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
 function App() {
   const [tab, setTab] = useState("home");
   const [roster, setRoster] = useState([]);
   const [rosterLoaded, setRosterLoaded] = useState(false); // 読み込みに成功した時だけ true。false の間は保存しない
   const [rosterError, setRosterError] = useState(null);
+  const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
+  const isPc = deviceMode === "pc";
 
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
   const refreshRoster = async () => {
@@ -472,10 +445,13 @@ function App() {
         </div>
       </div>
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
-        <div style={{ maxWidth: tab === "player" ? "none" : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
-          {tab === "home" && <HomeTab />}
-          {tab === "player" && <PlayerTab />}
-          {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
+        <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
+          {tab === "home" && (isPc ? <PcMatchGridTab /> : <HomeTab />)}
+          {tab === "player" && (isPc ? <PcStandingsTab /> : <StandingsTab />)}
+          {tab === "settings" && (
+            <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError}
+              deviceMode={deviceMode} onSetDeviceMode={(m) => { setDeviceMode(m); saveSettings({ deviceMode: m }); }} />
+          )}
         </div>
       </div>
     </div>
@@ -1204,7 +1180,7 @@ function ConnectionTest() {
 }
 
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
-function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
+function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMode, onSetDeviceMode }) {
   const [showSingle, setShowSingle] = useState(false);
   const [showBracket, setShowBracket] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
@@ -1223,6 +1199,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   return (
     <div>
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 0", color: C.ink }}>
+        <div style={{ display: "flex", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 4, marginBottom: 16 }}>
+          <button onClick={() => onSetDeviceMode("mobile")} style={{
+            flex: 1, background: deviceMode !== "pc" ? "#fff" : "none", color: deviceMode !== "pc" ? C.blue : C.sub,
+            border: "none", borderRadius: 9, padding: "10px 4px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            boxShadow: deviceMode !== "pc" ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+          }}>📱 スマホ操作用</button>
+          <button onClick={() => onSetDeviceMode("pc")} style={{
+            flex: 1, background: deviceMode === "pc" ? "#fff" : "none", color: deviceMode === "pc" ? C.blue : C.sub,
+            border: "none", borderRadius: 9, padding: "10px 4px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            boxShadow: deviceMode === "pc" ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+          }}>🖥 PC表示用</button>
+        </div>
+
         <div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>大会名</div>
         <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
           placeholder="例：第◯回 身内杯"
