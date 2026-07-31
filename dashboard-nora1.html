@@ -1112,7 +1112,7 @@ function BulkScheduleTab({ roster }) {
 
   const register = async () => {
     if (!rows || registering) return;
-    if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦はすべて置き換えられます。よろしいですか？`)) return;
+    if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦とスコアラーの担当回数はすべてリセットされます。よろしいですか？`)) return;
     setRegistering(true);
     try {
       const now = Date.now();
@@ -1128,6 +1128,8 @@ function BulkScheduleTab({ roster }) {
         };
       });
       await dbSet("matches", next);
+      // 対戦表を組み直したら、スコアラーの担当回数も新しい大会として0からやり直す
+      await dbSet("refereeCounts", {});
       // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
       const savedMatches = (await dbGet("matches")) || {};
       const saved = Object.keys(savedMatches).filter((id) => next[id]).length;
