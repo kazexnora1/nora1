@@ -749,16 +749,16 @@ function PcStandingsTab() {
       <div style={{
         flex: 1, minHeight: 0, display: "grid",
         gridTemplateColumns: `52px minmax(100px, 1.1fr) repeat(${maxGames}, minmax(0, 1fr)) 76px 64px`,
-        gridTemplateRows: `40px repeat(${rowCount}, 1fr)`,
+        gridTemplateRows: `26px repeat(${rowCount}, 1fr)`,
         border: `1px solid ${C.line}`, boxSizing: "border-box",
       }}>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 15 }}>順位</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 15 }}>名前</div>
+        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>順位</div>
+        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>名前</div>
         {Array.from({ length: maxGames }, (_, i) => (
-          <div key={i} style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 15 }}>{i + 1}</div>
+          <div key={i} style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>{i + 1}</div>
         ))}
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 15 }}>W-L</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 15 }}>率</div>
+        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>W-L</div>
+        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>率</div>
 
         {stRows.map((r) => (
           <React.Fragment key={r.name}>
