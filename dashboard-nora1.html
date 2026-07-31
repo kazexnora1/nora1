@@ -3,20 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>JCL9Match B1 本部</title>
+<title>JCL9Match B2テスト</title>
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
-  @media print {
-    .no-print { display: none !important; }
-    .print-fit { height: auto !important; overflow: visible !important; }
-    body, html, #root { height: auto !important; overflow: visible !important; }
-  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -36,9 +32,9 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef, useMemo } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-/* ========= ハンデ計算（App A/B2と共通） ========= */
+/* ========= ハンデ計算（App Aと共通） ========= */
 function roundHalfToEven(v) {
   const w = Math.floor(v);
   const d = v - w;
@@ -73,17 +69,16 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 const C = {
-  bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
-  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
-
-/* このB1から発行するQRが指す先（B2アプリのURL）。実際にデプロイしたURLに合わせて調整してください */
-const B2_URL = "https://kazexnora1.github.io/nora1/players-nora1.html";
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const PC = [C.blue, C.red];
+const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
 
 /* ========= 共有バックエンド：Firebase Realtime Database =========
-   ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。
-   B1・B2・B3 の3ファイルすべて同じ値にすること。 */
+   ↓ B1・B3 とまったく同じ値を貼ってください */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
   authDomain: "nora1kaze-247f3.firebaseapp.com",
@@ -96,61 +91,8 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
-/* 1回だけ読む */
-async function dbGet(path) {
-  const snap = await db.ref(path).once("value");
-  return snap.val();
-}
-/* 変更を購読する。ポーリングと違い、変わった瞬間に届く。戻り値を呼ぶと解除 */
-function dbSubscribe(path, onValue, onError) {
-  const ref = db.ref(path);
-  const handler = ref.on("value", (snap) => onValue(snap.val()),
-    (e) => onError && onError(e && e.message ? e.message : String(e)));
-  return () => ref.off("value", handler);
-}
-async function dbSet(path, value) { await db.ref(path).set(value); }
-/* 複数の場所をまとめて更新する。指定した項目だけが変わるので、
-   スコアラーが入力中の値を本部側が上書きしてしまう事故が起きない */
-async function dbUpdate(path, values) { await db.ref(path).update(values); }
-
-function normalizeRecord(rec) {
-  rec = rec || {};
-  return {
-    roster: Array.isArray(rec.roster) ? rec.roster : [],
-    results: Array.isArray(rec.results) ? rec.results : [],
-    matches: rec.matches && typeof rec.matches === "object" ? rec.matches : {},
-    refereeCounts: rec.refereeCounts && typeof rec.refereeCounts === "object" ? rec.refereeCounts : {},
-  };
-}
-/* 全体を1回読む（従来のjsonbinReadと同じ形で返す） */
-async function readAll() {
-  return normalizeRecord(await dbGet("/"));
-}
-const ROSTER_BACKUP_KEY = "jcl9_b1_roster_backup_v1";
-function backupRoster(roster) {
-  try { if (roster && roster.length) localStorage.setItem(ROSTER_BACKUP_KEY, JSON.stringify(roster)); } catch {}
-}
-function loadRosterBackup() {
-  try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
-}
-async function saveRoster(roster, allowEmpty) {
-  // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
-  if (!allowEmpty && (!roster || roster.length === 0)) {
-    const cur = await dbGet("roster");
-    if (Array.isArray(cur) && cur.length > 0) throw new Error("メンバーが空のため保存を中止しました");
-  }
-  await dbSet("roster", roster || []);
-  backupRoster(roster);
-}
-async function saveMatch(matchId, state) {
-  // その対戦だけを書き換える（他の卓のデータには触れない）
-  await dbSet("matches/" + matchId, { ...state, updatedAt: Date.now() });
-}
-function randomMatchId() {
-  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-}
-const STALE_MS = 1000 * 60 * 60 * 6;
-/* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+/* Firebaseは空の配列・空のオブジェクトを保存しない（キーごと消える）。
+   読み込んだ直後にここで補っておかないと、hist などが undefined のまま使われて落ちる */
 function normalizeMatch(m) {
   if (!m) return m;
   return {
@@ -158,17 +100,90 @@ function normalizeMatch(m) {
     names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
     tot: Array.isArray(m.tot) ? m.tot : [0, 0],
     raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
-    balls: Array.isArray(m.balls) ? m.balls : [],
+    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
     hist: Array.isArray(m.hist) ? m.hist : [],
     rack: m.rack || 1,
+    version: m.version || 1,
+    phase: m.phase || "banking",
+    brk: m.brk === 0 || m.brk === 1 ? m.brk : null,
+    lastResult: m.lastResult || null,
   };
 }
+
+/* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
+async function loadMatchRemote(matchId) {
+  const snap = await db.ref("matches/" + matchId).once("value");
+  return normalizeMatch(snap.val());
+}
+async function saveMatchRemote(matchId, state) {
+  await db.ref("matches/" + matchId).set({ ...state, updatedAt: Date.now() });
+}
+/* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
+function subscribeMatch(matchId, onValue, onError) {
+  const ref = db.ref("matches/" + matchId);
+  const handler = ref.on("value", (snap) => onValue(normalizeMatch(snap.val())),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+
+/* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
+const DEFAULT_MATCH_MINUTES = 30;
+
+const initialMatchState = (rt1, rt2, names, table) => ({
+  version: 1,
+  phase: "banking", // banking | play | done | finished
+  brk: null, // 0 | 1 | null
+  tot: [0, 0],
+  rack: 1,
+  balls: mkBalls(),
+  lastResult: null,
+  hist: [],
+  raceTo: [rt1, rt2],
+  names,
+  table,
+  startedAt: null, // スコアラーがバンキング勝者を選び、試合が実際に始まった時刻
+  deadline: null, // タイマー開始時に確定させる「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算する
+  finishedAt: null, // 決着した時刻
+  elapsedMs: null, // 所要時間（ミリ秒）
+  winner: null,
+});
+
+/* ========= 「対戦表」「テーブルの様子」タブ用の共通ヘルパー（全卓の対戦を購読） ========= */
+function subscribeAllMatches(onValue, onError) {
+  const ref = db.ref("matches");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない対戦は前日の残骸とみなして無視
 function isMatchFinished(m) {
-  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.bothLose) return true; // 時間切れでどちらも目標に届かなかった
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
-// 卓ごとの待機列：未終了の対戦を作成順に並べる。[0]が現在対戦中、[1]が次戦
+function matchWinnerIndex(m) {
+  if (m.bothLose) return null;
+  if (m.winner === 0 || m.winner === 1) return m.winner;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  const r0 = rt[0] > 0 && tot[0] >= rt[0], r1 = rt[1] > 0 && tot[1] >= rt[1];
+  if (r0 && r1) { const last = (m.hist || []).slice(-1)[0]; return last ? last.w : 0; }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
+/* 卓ごとの全対戦を作成順に並べる（「対戦表」タブ用） */
+function getAllForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+/* 卓ごとの待機列：未終了の対戦だけを作成順に並べる。[0]が現在対戦中、[1]が次戦（「テーブルの様子」タブ用） */
 function getQueueForTable(matches, tableNum) {
   const list = [];
   for (const id in matches) {
@@ -181,49 +196,7 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
-// 調整対象＝未開始の試合すべて。先頭が開始済み（試合中）の時だけ先頭を除く
-function adjustableMatches(q) { return q[0] && q[0].startedAt ? q.slice(1) : q; }
-
-// 実際に開始済みの試合の残り時間だけを確保し、未開始の試合（呼び出し中を含む）すべてを
-// 指定の終了予定時刻に収める試合の長さ・持ち時間を逆算する
-function computeTableAdjustment(queueForTable, eH, eM, per100) {
-  const cur = queueForTable[0];
-  const curStarted = !!(cur && cur.startedAt);
-  // 先頭が未開始（呼び出し中）なら、それも調整対象に含める。開始済みの試合だけは設定が確定しているので触らない
-  const future = curStarted ? queueForTable.slice(1) : queueForTable.slice(0);
-  if (!future.length) return null;
-  const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
-  const availableMin = (targetD - Date.now()) / 60000;
-  if (availableMin <= 0) return { error: "すでにその時刻を過ぎています" };
-  let curRemainMin = 0;
-  if (curStarted && cur.matchMinutes) {
-    const elapsed = (Date.now() - cur.startedAt) / 60000;
-    curRemainMin = Math.max(0, cur.matchMinutes - elapsed);
-  }
-  const availableForFuture = availableMin - curRemainMin;
-  if (availableForFuture <= 0) return { error: "現在の対戦の残り時間だけで、指定時刻を超えています" };
-  const perMatchMin = availableForFuture / future.length;
-  const rawPct = Math.round((perMatchMin / per100) * 100 / 5) * 5;
-  const hitFloor = rawPct < 40;
-  const newLenPct = Math.min(140, Math.max(40, rawPct));
-  const newMinutes = Math.max(5, Math.round(per100 * (newLenPct / 100)));
-  return { future, newLenPct, newMinutes, hitFloor, curRemainMin };
-}
-
-// 卓ごとの全対戦（終了分も含む）を作成順に並べる。タイムラインの「コマ」順の復元に使う
-function getAllForTable(matches, tableNum) {
-  const list = [];
-  for (const id in matches) {
-    const m = matches[id];
-    if (!m || Number(m.table) !== tableNum) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    list.push({ ...normalizeMatch(m), id });
-  }
-  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
-  return list;
-}
-// 卓ごとの一覧に状態を付ける。
-// 終了／試合中（スコアラーがバンキング勝者を選んだ）／呼び出し中（次に始める1試合だけ）／待機中（それより先）
+/* 試合終了／試合中／呼び出し中（次に始める1試合だけ）／待機中 */
 function annotateColumn(list) {
   let calledYet = false;
   return list.map((m) => {
@@ -233,278 +206,55 @@ function annotateColumn(list) {
     return { m, st: "queued" };
   });
 }
-/* ========= 決勝トーナメント（単純な抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function getBracketMatches(matches) {
-  return Object.values(matches || {}).filter((m) => m && m.bracket).map((m) => ({ ...normalizeMatch(m) }));
-}
-function bracketMatchesForRound(matches, round) {
-  return getBracketMatches(matches).filter((m) => m.bracketRound === round).sort((a, b) => a.bracketPos - b.bracketPos);
-}
-function bracketTotalRounds(size) { return Math.round(Math.log2(size)); }
-function matchWinnerIndex(m) {
-  if (m.bothLose) return null; // 両者負け
-  if (m.winner === 0 || m.winner === 1) return m.winner;
-  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
-  const r0 = rt[0] > 0 && tot[0] >= rt[0];
-  const r1 = rt[1] > 0 && tot[1] >= rt[1];
-  // ヒルヒルで両者が目標に達した場合は、そのラックで9番を落とした方（＝最終ラックの勝者）が勝ち
-  if (r0 && r1) {
-    const last = (m.hist || []).slice(-1)[0];
-    return last ? last.w : 0;
-  }
-  if (r0) return 0;
-  if (r1) return 1;
-  return null;
-}
-// タイムラインで点数を手直しした時、保存済みの m.winner に頼らず新しい点数から勝敗を計算し直す
-function recomputeWinner(raceTo, tot, hist) {
-  const r0 = raceTo[0] > 0 && tot[0] >= raceTo[0];
-  const r1 = raceTo[1] > 0 && tot[1] >= raceTo[1];
-  if (r0 && r1) { const last = (hist || []).slice(-1)[0]; return last ? last.w : 0; }
-  if (r0) return 0;
-  if (r1) return 1;
-  return null;
-}
-// 成績集計
-// ・勝ちがつかなかった試合は、目標点に対する取得点の割合（達成率、上限100%）を記録
-// ・時間切れでどちらも目標に届かなかった試合は両者負け扱いで、双方に達成率を記録
-// ・並び順は 勝ち数 → 達成率の平均 → 得失点差
-function buildStandings(matches, roster) {
-  const stats = {};
-  const ensure = (name) => {
-    if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
-    return stats[name];
-  };
-  roster.forEach((p) => { if (p.name) ensure(p.name); });
 
-  for (const id in matches) {
-    const m = matches[id];
-    if (!m || !isMatchFinished(m)) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    const names = m.names || [];
-    const tot = m.tot || [0, 0];
-    const rt = m.raceTo || [0, 0];
-    const w = matchWinnerIndex(m); // null なら両者負け
-    [0, 1].forEach((i) => {
-      if (!names[i]) return;
-      const s = ensure(names[i]);
-      s.pf += tot[i] || 0;
-      s.pa += tot[1 - i] || 0;
-      if (i === w) s.win++;
-      else {
-        s.loss++;
-        if (rt[i] > 0) s.rates.push(Math.min(1, (tot[i] || 0) / rt[i])); // 100%を上限にする
-      }
-    });
-  }
+/* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
+function TimelineTab({ myMatchId }) {
+  const [cols, setCols] = useState([[], [], []]);
+  const [err, setErr] = useState(null);
 
-  const rows = Object.values(stats).map((s) => ({
-    ...s,
-    played: s.win + s.loss,
-    avgRate: s.rates.length ? s.rates.reduce((a, b) => a + b, 0) / s.rates.length : null,
-  }));
-  rows.sort((a, b) => {
-    if (b.win !== a.win) return b.win - a.win;
-    // 負け試合がない（＝全勝）方を上に
-    const ar = a.avgRate == null ? 2 : a.avgRate;
-    const br = b.avgRate == null ? 2 : b.avgRate;
-    if (br !== ar) return br - ar;
-    return (b.pf - b.pa) - (a.pf - a.pa);
-  });
-  // 同着は同じ順位にし、次の順位は同着人数ぶん飛ばす（一般的な順位付け）
-  let rank = 1;
-  rows.forEach((r, i) => {
-    if (i > 0) {
-      const p = rows[i - 1];
-      const same = p.win === r.win && (p.avgRate == null ? 2 : p.avgRate) === (r.avgRate == null ? 2 : r.avgRate) && (p.pf - p.pa) === (r.pf - r.pa);
-      r.rank = same ? p.rank : i + 1;
-    } else {
-      r.rank = 1;
-    }
-  });
-  return rows;
-}
-const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
+  useEffect(() => subscribeAllMatches(
+    (matches) => { setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t)))); setErr(null); },
+    (e) => setErr(e)), []);
 
-// 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら自分の取得点）を並べる。
-// 「戦績（対戦相手つき）」PC表示用
-function buildDetailedStandings(matches, roster) {
-  const base = buildStandings(matches, roster);
-  const list = Object.values(matches || {})
-    .filter((m) => m && Array.isArray(m.names))
-    .map((m) => ({ ...m }));
-  list.sort((a, b) => (a.slot != null && b.slot != null ? a.slot - b.slot : (a.createdAt || 0) - (b.createdAt || 0)));
-
-  const byName = {};
-  base.forEach((r) => { byName[r.name] = { ...r, games: [] }; });
-
-  list.forEach((m) => {
-    const names = m.names || [];
-    const finished = isMatchFinished(m);
-    const w = finished ? matchWinnerIndex(m) : null; // null: 未終了 or 両者負け
-    [0, 1].forEach((i) => {
-      const name = names[i];
-      if (!name || !byName[name]) return;
-      const opponent = names[1 - i] || "";
-      if (!finished) {
-        byName[name].games.push({ opponent, display: "", pending: true });
-      } else if (i === w) {
-        byName[name].games.push({ opponent, display: "W", isWin: true });
-      } else {
-        const tot = m.tot || [0, 0];
-        const rt = m.raceTo || [0, 0];
-        const rate = rt[i] > 0 ? Math.min(1, (tot[i] || 0) / rt[i]) : 0;
-        byName[name].games.push({ opponent, display: `${Math.round(rate * 100)}%`, isWin: false });
-      }
-    });
-  });
-
-  const rows = Object.values(byName);
-  rows.sort((a, b) => a.rank - b.rank);
-  const maxGames = rows.reduce((m, r) => Math.max(m, r.games.length), 0);
-  return { rows, maxGames };
-}
-
-// 対戦一覧（PC表示用）：回転（slot）ごとに卓順で並べる。slotの無い対戦（個別追加分）は末尾に作成順で added
-function buildMatchList(matches) {
-  const all = Object.values(matches || {}).filter((m) => m && Array.isArray(m.names));
-  const withSlot = all.filter((m) => m.slot != null);
-  // 決勝トーナメントの対戦は専用の表示があるので、ここでの「個別追加分」には含めない
-  const withoutSlot = all.filter((m) => m.slot == null && !m.bracket).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-
-  const bySlot = new Map();
-  withSlot.forEach((m) => {
-    if (!bySlot.has(m.slot)) bySlot.set(m.slot, []);
-    bySlot.get(m.slot).push(m);
-  });
-  const rounds = [...bySlot.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([slot, ms]) => ({ slot, matches: ms.sort((a, b) => (a.table || 0) - (b.table || 0)) }));
-
-  return { rounds, extra: withoutSlot };
-}
-let _id = 1;
-const nid = () => _id++;
-
-/* ========= 設定の永続化（端末ローカル）。人数・試合数・時間割などを次回起動時も復元 ========= */
-const SETTINGS_KEY = "jcl9_b1_settings_v1";
-function loadSettings() {
-  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
-}
-function saveSettings(patch) {
-  try {
-    const cur = loadSettings();
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cur, ...patch }));
-  } catch {}
-}
-
-/* ========= ルート：タブ切替 ========= */
-function App() {
-  const [tab, setTab] = useState("home");
-  const [roster, setRoster] = useState([]);
-  const [rosterLoaded, setRosterLoaded] = useState(false); // 読み込みに成功した時だけ true。false の間は保存しない
-  const [rosterError, setRosterError] = useState(null);
-
-  const _idsOf = (rs) => rs.map((p) => p.id || 0);
-  const refreshRoster = async () => {
-    // 失敗は握り潰さない。握り潰すと「空のまま読み込み完了」になり、空リストで上書きしてしまう
-    const r = await readAll();
-    if (r.roster.length) {
-      _id = Math.max(..._idsOf(r.roster)) + 1;
-      backupRoster(r.roster);
-    }
-    setRoster(r.roster);
-    setRosterLoaded(true);
-    setRosterError(null);
-  };
-
-  useEffect(() => {
-    (async () => {
-      try { await refreshRoster(); }
-      catch (e) { setRosterError(String(e && e.message ? e.message : e)); }
-    })();
-  }, []);
-
-  const tabs = [
-    ["home", "🗓 タイムライン"],
-    ["standings", "🏅 成績"],
-    ["pcmatch", "🖥 PC対戦表"],
-    ["pcstand", "🖥 PC戦績"],
-    ["settings", "⚙️ 設定"],
-  ];
+  const slots = Math.max(1, ...cols.map((c) => c.length));
+  const total = cols.reduce((a, c) => a + c.length, 0);
+  const doneCount = cols.reduce((a, c) => a + c.filter((e) => e.st === "done").length, 0);
 
   return (
-    <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
-          {tabs.map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)}
-              style={{ flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
-              {label}
-            </button>
-          ))}
+    <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
+          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
         </div>
       </div>
-      <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: tab === "home" ? "hidden" : "auto" }}>
-        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1600 : 820, margin: "0 auto", height: tab === "home" ? "100%" : "auto" }}>
-          {tab === "home" && <HomeTab />}
-          {tab === "standings" && <StandingsTab />}
-          {tab === "pcmatch" && <PcMatchGridTab />}
-          {tab === "pcstand" && <PcStandingsTab />}
-          {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
-        </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+        <div />
+        {[1, 2, 3].map((t) => (
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
+        ))}
+        {Array.from({ length: slots }, (_, s) => (
+          <React.Fragment key={s}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+            {[0, 1, 2].map((ti) => {
+              const e = cols[ti][s];
+              return <div key={ti}>{e
+                ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} />
+                : <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
+            })}
+          </React.Fragment>
+        ))}
       </div>
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
 }
-
-function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
+function TimelineSlotCard({ m, st, mine }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
   const w = st === "done" ? matchWinnerIndex(m) : null;
-
-  // 試合中の進行バー用：残り時間だけは時間経過そのものでも変わるので、定期的に再描画する
-  const [, forceTick] = useState(0);
-  useEffect(() => {
-    if (st !== "live") return;
-    const iv = setInterval(() => forceTick((t) => t + 1), 15000);
-    return () => clearInterval(iv);
-  }, [st]);
-  const scoreProgress = rt[0] > 0 && rt[1] > 0 ? Math.max(tot[0] / rt[0], tot[1] / rt[1]) : 0;
-  let timeProgress = 0;
-  if (m.startedAt && m.deadline && !m.finishedAt) {
-    const totalMs = m.deadline - m.startedAt;
-    const remainMs = m.deadline - Date.now();
-    timeProgress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
-  }
-  const finishProgress = Math.max(scoreProgress, timeProgress);
-  const remainMin = m.deadline ? Math.max(0, (m.deadline - Date.now()) / 60000) : null;
-  // 片方でもヒル（目標まで14点以内）、または残り3分を切ったら「そろそろ終わる」の赤にする
-  const oneHill = rt[0] > 0 && rt[1] > 0 && ((rt[0] - tot[0] <= 14) || (rt[1] - tot[1] <= 14));
-  const urgent = oneHill || (remainMin != null && remainMin <= 3);
-  const finishColor = urgent ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
-
-  // 終了した試合はここだけスコアを訂正できる（B1のこのカードから）。誤タップで数字を消さないよう、
-  // カードを押すと専用のダイアログが開く方式にしている。他画面（B2/B3等）にもそのまま反映される
-  const [editOpen, setEditOpen] = useState(false);
-  const [draft, setDraft] = useState(["", ""]);
-  const [saving, setSaving] = useState(false);
-  const openEdit = () => { setDraft([String(tot[0]), String(tot[1])]); setEditOpen(true); };
-  const saveEdit = async () => {
-    const v0 = Math.max(0, Math.min(999, parseInt(draft[0], 10) || 0));
-    const v1 = Math.max(0, Math.min(999, parseInt(draft[1], 10) || 0));
-    const newTot = [v0, v1];
-    const newWinner = recomputeWinner(rt, newTot, m.hist);
-    setSaving(true);
-    try {
-      await dbUpdate("matches/" + m.id, {
-        tot: newTot, winner: newWinner, version: (m.version || 1) + 1, updatedAt: Date.now(),
-      });
-      setEditOpen(false);
-    } catch {}
-    setSaving(false);
-  };
 
   const style =
     st === "done"
@@ -517,29 +267,16 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
       ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
       : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
-  // 終了した試合は勝敗だけを出す。点数は大小で勝敗が決まるわけではないので出さない
   const won = (i) => !m.bothLose && w === i;
-  const clickable = st === "done" || st === "call" || st === "live";
-  const handleClick = () => {
-    if (st === "done") openEdit();
-    else if ((st === "call" || st === "live") && onOpenQr) onOpenQr(m);
-  };
 
   return (
-    <div onClick={clickable ? handleClick : undefined} style={{
+    <div style={{
       position: "relative", height: 128, boxSizing: "border-box", background: style.bg,
-      border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
-      padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
+      border: `${mine ? 3 : st === "live" || st === "call" ? 2 : 1}px solid ${mine ? C.win : style.border}`,
+      borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
     }}>
-      {refereeEnabled && (st === "call" || st === "live") && (
-        <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
-          position: "absolute", top: 3, right: 3, zIndex: 2, background: "rgba(255,255,255,0.9)",
-          border: `1px solid ${C.line}`, borderRadius: 20, width: 22, height: 22, fontSize: 12,
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0,
-        }} title={m.referee ? `スコアラー：${m.referee}` : "スコアラーを選ぶ"}>📱</button>
-      )}
-      {/* 1: バッジ */}
+      {mine && <span style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: C.win, color: "#fff", borderRadius: 10, padding: "1px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>担当中</span>}
       <div style={{ textAlign: "center" }}>
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
@@ -547,1901 +284,822 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
           borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
         }}>{style.badge}</span>
       </div>
-
-      {/* 2: 選手名 */}
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{
-            flex: 1, minWidth: 0, textAlign: "center", fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
-            color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>{names[i]}</div>
-        ))}
-      </div>
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+            <div style={{
+              fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</div>
 
-      {/* 3: スコア（呼び出し中・待機中は「-」） */}
-      <div style={{ display: "flex", gap: 3 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{
-            flex: 1, minWidth: 0, textAlign: "center", lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
-            fontSize: st === "done" ? 24 : st === "live" ? 26 : 22, fontWeight: 900,
-            color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
-          }}>
-            {st === "done" || st === "live" ? tot[i] : "–"}
-          </div>
-        ))}
-      </div>
-
-      {/* 4: 目標点 */}
-      <div style={{ display: "flex", gap: 3 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
-        ))}
-      </div>
-
-      {/* 5: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 18 }}>
-        {st === "done" && <span style={{ fontSize: 12, opacity: 0.6 }}>✏️</span>}
-        {st === "live" && (
-          <div style={{ width: "100%", height: 5, background: "rgba(0,0,0,0.1)", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 3, transition: "width 400ms ease" }} />
-          </div>
-        )}
-      </div>
-
-      {editOpen && (
-        <div onClick={(e) => { e.stopPropagation(); setEditOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "22px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 16 }}>スコアを訂正</div>
-            <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
-              {[0, 1].map((i) => (
-                <div key={i} style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-                  <input
-                    type="text" inputMode="numeric" value={draft[i]} autoFocus={i === 0}
-                    onChange={(e) => {
-                      const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 3);
-                      setDraft((arr) => (i === 0 ? [v, arr[1]] : [arr[0], v]));
-                    }}
-                    style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 22, fontWeight: 800, color: C.ink, outline: "none", fontFamily: FONT }}
-                  />
-                  <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>目標 {rt[i]}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-              <button onClick={() => setEditOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>キャンセル</button>
-              <button onClick={saveEdit} disabled={saving} style={{ flex: 1, background: C.blue, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: "#fff", cursor: "pointer", fontFamily: FONT }}>{saving ? "保存中…" : "保存"}</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ========= 成績タブ：勝ち数→負け試合の達成率平均の順に並べる ========= */
-function StandingsTab() {
-  const [rows, setRows] = useState([]);
-  const [err, setErr] = useState(null);
-
-  useEffect(() => dbSubscribe("/",
-    (rec) => { const r = normalizeRecord(rec); setRows(buildStandings(r.matches, r.roster)); setErr(null); },
-    (e) => setErr(e)), []);
-
-  return (
-    <div style={{ padding: "16px 12px 32px", color: C.ink }}>
-      <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 12px 8px", fontSize: 14.5, color: C.sub, fontWeight: 800 }}>
-        <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
-      </div>
-      {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 15, color: C.sub, padding: "28px 0" }}>まだ結果がありません</div>}
-      {rows.map((r, i) => {
-        const top = r.rank <= 8 && r.played > 0;
-        return (
-          <div key={r.name} style={{
-            display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
-            background: top ? C.lightBlue : "#fff", border: `1.5px solid ${top ? C.blue : C.line}`,
-            borderRadius: 12, padding: "15px 12px", marginBottom: 8,
-          }}>
-            <div style={{ fontSize: 21, fontWeight: 900, color: top ? C.blue : C.sub }}>{r.rank}</div>
-            <div style={{ fontSize: 21, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-            <div style={{ textAlign: "center", fontSize: 25, fontWeight: 900, color: C.win }}>{r.win}</div>
-            <div style={{ textAlign: "center", fontSize: 25, fontWeight: 800, color: C.sub }}>{r.loss}</div>
-            <div style={{ textAlign: "right", fontSize: 19, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
-          </div>
-        );
-      })}
-      <div style={{ fontSize: 13.5, color: C.sub, marginTop: 16, lineHeight: 1.7 }}>
-        並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。全勝の選手は達成率「–」で最上位に並びます。
-      </div>
-      {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
-    </div>
-  );
-}
-
-/* ========= PC表示タブ：対戦一覧（左）と戦績（右）を1画面に収めて開きっぱなしにする用。
-   紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
-/* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
-/* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
-function PcMatchGridTab() {
-  const [matches, setMatches] = useState({});
-  const [err, setErr] = useState(null);
-  const [view, setView] = useState("prelim"); // "prelim" | "bracket"
-
-  useEffect(() => dbSubscribe("matches",
-    (m) => { setMatches(m || {}); setErr(null); },
-    (e) => setErr(e)), []);
-
-  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
-  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
-  const hasBracket = bracketMatches.length > 0;
-  const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
-  const bracketTotal = bracketTotalRounds(bracketSize);
-  const tableCount = 3;
-  const rowCount = Math.max(1, rounds.length);
-
-  const cellStyle = (m) => {
-    if (!m) return { background: "#fff" };
-    const done = isMatchFinished(m);
-    if (done) return { background: "#DADDE1" }; // 終了：灰色
-    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
-    return { background: "#fff" }; // 未開始：白
-  };
-  const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
-
-  return (
-    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      {err && <Notice>データを取得できません：{err}</Notice>}
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
-        <button onClick={() => setView("prelim")} style={{
-          background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
-          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-        }}>予選</button>
-        <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
-          background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
-          border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
-          cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
-        }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
-      </div>
-
-      {view === "prelim" ? (
-        <>
-      <div style={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: "60px repeat(3, 1fr)",
-        gridTemplateRows: `44px repeat(${rowCount}, 1fr)`,
-        border: `1px solid ${C.line}`, boxSizing: "border-box",
-      }}>
-        <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
-        {Array.from({ length: tableCount }, (_, i) => (
-          <div key={i} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: C.sub }}>
-            {i + 1}卓
-          </div>
-        ))}
-
-        {rounds.map(({ slot, matches: ms }) => (
-          <React.Fragment key={slot}>
-            <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: C.sub }}>
-              {slot + 1}
-            </div>
-            {Array.from({ length: tableCount }, (_, ti) => {
-              const m = ms.find((x) => (x.table || 0) === ti + 1);
-              const names = m ? (m.names || ["", ""]) : null;
-              return (
-                <div key={ti} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700, overflow: "hidden", padding: "0 6px", textAlign: "center" }}>
-                  {names ? `${names[0]}－${names[1]}` : ""}
-                </div>
-              );
-            })}
-          </React.Fragment>
-        ))}
-
-        {rounds.length === 0 && (
-          <div style={{ gridColumn: `1 / span ${tableCount + 1}`, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 16 }}>
-            対戦がまだ登録されていません
-          </div>
-        )}
-      </div>
-
-      {extra.length > 0 && (
-        <div style={{ marginTop: 10, flexShrink: 0 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {extra.map((m) => {
-              const names = m.names || ["", ""];
-              return (
-                <div key={m.id} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 14px", fontSize: 16, fontWeight: 700 }}>
-                  {names[0]}－{names[1]}（卓{m.table}）
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-        </>
-      ) : (
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
-          {Array.from({ length: bracketTotal }, (_, ri) => ri + 1).map((r) => {
-            const ms = bracketMatchesForRound(matches, r);
-            if (ms.length === 0) return null;
-            return (
-              <div key={r} style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", justifyContent: "space-around" }}>
-                <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.blue, marginBottom: 10 }}>{roundLabel(r)}</div>
-                {ms.map((m) => {
-                  const done = isMatchFinished(m);
-                  const w = done ? matchWinnerIndex(m) : null;
-                  return (
-                    <div key={m.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", marginBottom: 14 }}>
-                      {[0, 1].map((i) => (
-                        <div key={i} style={{ fontSize: 18, fontWeight: w === i ? 900 : 600, color: w === i ? C.win : w == null ? C.ink : C.sub, textAlign: "center", padding: "3px 0" }}>
-                          {m.names[i]}{done && ` （${(m.tot || [0, 0])[i]}）`}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
+            {st === "done" ? (
+              <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.3, color: won(i) ? C.win : C.sub }}>
+                {won(i) ? "勝" : "負"}
               </div>
-            );
-          })}
-          {!hasBracket && <div style={{ margin: "auto", color: C.sub, fontSize: 16 }}>決勝トーナメントはまだ登録されていません</div>}
-        </div>
-      )}
+            ) : st === "live" ? (
+              <>
+                <div style={{ fontSize: 26, fontWeight: 900, color: C.ink, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" }}>{tot[i]}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 23, fontWeight: 800, color: C.sub, lineHeight: 1.3, fontVariantNumeric: "tabular-nums" }}>{rt[i]}</div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-/* ========= PC戦績タブ：単体表示、大きめの文字。各対戦相手セルは上に相手名、下に結果（勝ちならW／負けなら達成率%） ========= */
-function PcStandingsTab() {
-  const [matches, setMatches] = useState({});
-  const [roster, setRoster] = useState([]);
+/* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
+function TablesTab() {
+  const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
 
-  useEffect(() => dbSubscribe("/",
-    (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
+  useEffect(() => subscribeAllMatches(
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
 
-  const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster), [matches, roster]);
-  const rowCount = Math.max(1, stRows.length);
-  const gCell = { border: `1px solid ${C.line}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 4px" };
-  const tournamentName = loadSettings().tournamentName || "";
+  const nextMatches = queues
+    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+    .filter(Boolean);
 
   return (
-    <div className="print-fit" style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      {err && <Notice>データを取得できません：{err}</Notice>}
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexShrink: 0 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>{tournamentName ? `${tournamentName}　結果` : "成績結果"}</div>
-        <button className="no-print" onClick={() => window.print()} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>🖨 印刷する</button>
-      </div>
-
-      <div className="print-fit" style={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: `52px minmax(100px, 1.1fr) repeat(${maxGames}, minmax(0, 1fr)) 76px 64px`,
-        gridTemplateRows: `26px repeat(${rowCount}, 1fr)`,
-        border: `1px solid ${C.line}`, boxSizing: "border-box",
-      }}>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>順位</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>名前</div>
-        {Array.from({ length: maxGames }, (_, i) => (
-          <div key={i} style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>{i + 1}</div>
-        ))}
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>W-L</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub, fontSize: 11 }}>率</div>
-
-        {stRows.map((r) => (
-          <React.Fragment key={r.name}>
-            <div style={{ ...gCell, fontWeight: 800, fontSize: 20 }}>{r.rank}</div>
-            <div style={{ ...gCell, fontWeight: 800, fontSize: 18, alignItems: "flex-start", textAlign: "left", paddingLeft: 10 }}>{r.name}</div>
-            {Array.from({ length: maxGames }, (_, i) => {
-              const g = r.games[i];
-              return (
-                <div key={i} style={gCell}>
-                  {g ? (
-                    <>
-                      <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.3 }}>{g.opponent}</div>
-                      <div style={{ fontSize: 19, fontWeight: g.isWin ? 900 : 700, color: g.pending ? C.sub : g.isWin ? C.win : C.ink, lineHeight: 1.3 }}>
-                        {g.pending ? "―" : g.display}
-                      </div>
-                    </>
-                  ) : "–"}
-                </div>
-              );
-            })}
-            <div style={{ ...gCell, fontSize: 18, fontWeight: 700 }}>{r.win}-{r.loss}</div>
-            <div style={{ ...gCell, fontSize: 18, fontWeight: 700 }}>{r.avgRate == null ? "–" : `${Math.round(r.avgRate * 100)}%`}</div>
-          </React.Fragment>
-        ))}
-
-        {stRows.length === 0 && (
-          <div style={{ gridColumn: `1 / span ${maxGames + 4}`, ...gCell, color: C.sub, fontSize: 16 }}>まだ結果がありません</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-
-/* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster }) {
-  const s0 = useMemo(() => loadSettings(), []);
-  const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
-  const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0));
-  const [lenPct, setLenPct] = useState(100);
-  const [registering, setRegistering] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [matches, setMatches] = useState({});
-
-  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
-  useEffect(() => { saveSettings({ bracketSize: size }); }, [size]);
-
-  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
-  const totalRounds = bracketTotalRounds(size);
-  const started = bracketMatches.length > 0;
-  const round1 = bracketMatchesForRound(matches, 1);
-
-  const winnerInfo = (m) => {
-    const w = matchWinnerIndex(m);
-    if (w == null) return null;
-    return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0) };
-  };
-
-  // 4人の時は卓1・2だけ使う。空いている（未終了の対戦を持たない）卓を優先し、
-  // 一度に複数試合を組む時は割り当てるごとに数を数えて偏らないようにする
-  const allowedTables = size === 4 ? [1, 2] : [1, 2, 3];
-  const assignTables = (count) => {
-    const pending = {};
-    allowedTables.forEach((t) => { pending[t] = 0; });
-    Object.values(matches || {}).forEach((m) => {
-      if (!m) return;
-      const t = Number(m.table);
-      if (!(t in pending)) return;
-      if (!isMatchFinished(m)) pending[t]++;
-    });
-    const result = [];
-    for (let i = 0; i < count; i++) {
-      let best = allowedTables[0];
-      allowedTables.forEach((t) => { if (pending[t] < pending[best]) best = t; });
-      result.push(best);
-      pending[best]++;
-    }
-    return result;
-  };
-
-  const registerRound1 = async () => {
-    if (registering) return;
-    const names = slotIdx.slice(0, size).map((idx) => roster[idx]).filter(Boolean);
-    if (names.length < size) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
-    if (!window.confirm(`決勝トーナメント（${size}人）の1回戦、${size / 2}試合を登録します。よろしいですか？`)) return;
-    setRegistering(true);
-    try {
-      const now = Date.now();
-      const next = {};
-      const tables = assignTables(size / 2);
-      for (let i = 0; i < size / 2; i++) {
-        const p1 = names[i * 2], p2 = names[i * 2 + 1];
-        const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
-        const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
-        const id = randomMatchId();
-        next[id] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: tables[i],
-          r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-          createdAt: now + i, updatedAt: now,
-          bracket: true, bracketRound: 1, bracketPos: i, bracketSize: size,
-        };
-      }
-      await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `1回戦 ${size / 2}試合を登録しました` });
-    } catch (e) {
-      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setRegistering(false);
-  };
-
-  const advanceRound = async (fromRound) => {
-    if (registering) return;
-    const prev = bracketMatchesForRound(matches, fromRound);
-    if (prev.length === 0 || prev.some((m) => !isMatchFinished(m))) { setMsg({ ok: false, text: "前のラウンドがまだ終わっていません" }); return; }
-    const winners = prev.map(winnerInfo);
-    if (winners.some((w) => !w)) { setMsg({ ok: false, text: "勝者が確定していない試合があります" }); return; }
-    const nextRound = fromRound + 1;
-    if (!window.confirm(`${nextRound}回戦、${winners.length / 2}試合を登録します。よろしいですか？`)) return;
-    setRegistering(true);
-    try {
-      const now = Date.now();
-      const next = {};
-      const tables = assignTables(winners.length / 2);
-      for (let i = 0; i < winners.length / 2; i++) {
-        const p1 = winners[i * 2], p2 = winners[i * 2 + 1];
-        const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, lenPct) : { rt1: 0, rt2: 0 };
-        const id = randomMatchId();
-        next[id] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: tables[i],
-          r1: p1.r, r2: p2.r, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-          createdAt: now + i, updatedAt: now,
-          bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
-        };
-      }
-      await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `${nextRound}回戦 ${winners.length / 2}試合を登録しました` });
-    } catch (e) {
-      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setRegistering(false);
-  };
-
-  const roundLabel = (r) => (r === totalRounds ? "決勝" : totalRounds - r === 1 ? "準決勝" : `${r}回戦`);
-
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>決勝トーナメント</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>抽選で引いた番号順に枠へ入れて組みます</div>
-      </div>
-
-      {!started && (
-        <>
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            {[4, 8].map((n) => (
-              <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
-            ))}
-          </div>
-
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 8 }}>抽選番号ごとの選手</div>
-          {Array.from({ length: size }, (_, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div style={{ width: 28, textAlign: "center", fontSize: 14, fontWeight: 800, color: C.blue, flexShrink: 0 }}>{i + 1}</div>
-              <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1 }}>
-                {roster.map((p, ri) => <option key={p.id} value={ri}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
-              </select>
-            </div>
-          ))}
-
-          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 700 }}>ボールハンデ</span>
-              <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
-            </div>
-            <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-          </div>
-
-          <button onClick={registerRound1} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
-            {registering ? "登録中…" : `1回戦（${size / 2}試合）を登録する`}
-          </button>
-        </>
-      )}
-
-      {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 12 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
-
-      {started && (
-        <div style={{ marginTop: started ? 0 : 16 }}>
-          {Array.from({ length: totalRounds }, (_, ri) => ri + 1).map((r) => {
-            const ms = bracketMatchesForRound(matches, r);
-            if (ms.length === 0) return null;
-            const allDone = ms.every((m) => isMatchFinished(m));
-            const isLastShown = r === Math.max(...bracketMatches.map((m) => m.bracketRound));
-            return (
-              <div key={r} style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
-                {ms.map((m) => {
-                  const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
-                  return (
-                    <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6 }}>
-                      {[0, 1].map((i) => (
-                        <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600, color: w === i ? C.win : w == null ? C.ink : C.sub }}>
-                          {m.names[i]}{isMatchFinished(m) && ` (${(m.tot || [0, 0])[i]})`}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-                {allDone && isLastShown && r < totalRounds && (
-                  <button onClick={() => advanceRound(r)} disabled={registering} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
-                    {registering ? "登録中…" : `${roundLabel(r + 1)}を組む`}
-                  </button>
-                )}
-                {allDone && r === totalRounds && (
-                  <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win, marginTop: 6 }}>
-                    🏆 優勝：{ms[0].names[matchWinnerIndex(ms[0])]}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ========= 接続診断：保存できない原因（通信・上限・データ量）をその場で確認する ========= */
-function ConnectionTest() {
-  const [log, setLog] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async () => {
-    setBusy(true);
-    const lines = [];
-    lines.push(`接続先：${FIREBASE_CONFIG.databaseURL}`);
-    try {
-      const t0 = Date.now();
-      const rec = (await dbGet("/")) || {};
-      lines.push(`① 読み込み：成功（${Date.now() - t0}ms）`);
-      lines.push(`   データ量：${(JSON.stringify(rec).length / 1024).toFixed(1)} KB`);
-      lines.push(`   メンバー：${(rec.roster || []).length}人`);
-      lines.push(`   対戦データ：${Object.keys(rec.matches || {}).length}件`);
-      // 実データには触れず、確認用の場所に書き込んで権限をチェックする
-      const t1 = Date.now();
-      await dbSet("_healthcheck", Date.now());
-      lines.push(`② 書き込み：成功（${Date.now() - t1}ms）`);
-      lines.push("→ 読み書きとも正常です");
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      lines.push(`エラー：${msg}`);
-      if (/permission|Permission/.test(msg)) lines.push("→ Realtime Databaseのルールが許可になっていません");
-      else if (/FIREBASE_CONFIG|Invalid|invalid/.test(msg)) lines.push("→ databaseURL の値を確認してください");
-      else lines.push("→ オフライン、または設定値が違う可能性があります");
-    }
-    setLog(lines);
-    setBusy(false);
-  };
-
-  return (
-    <div style={{ marginTop: 14 }}>
-      <button onClick={run} disabled={busy} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "11px 0", cursor: "pointer", fontFamily: FONT }}>
-        {busy ? "確認中…" : "🔌 保存できるか接続を確認する"}
-      </button>
-      {log && (
-        <pre style={{ marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 1.7, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "monospace" }}>{log.join("\n")}</pre>
-      )}
-    </div>
-  );
-}
-
-/* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
-function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
-  const [showSingle, setShowSingle] = useState(false);
-  const [showBracket, setShowBracket] = useState(false);
-  const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
-  const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
-
-  const updateTournamentName = (v) => {
-    setTournamentName(v);
-    saveSettings({ tournamentName: v });
-  };
-  const toggleRefereeEnabled = () => {
-    const next = !refereeEnabled;
-    setRefereeEnabled(next);
-    saveSettings({ refereeEnabled: next });
-  };
-
-  return (
-    <div>
-      <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 0", color: C.ink }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>大会名</div>
-        <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
-          placeholder="例：第◯回 身内杯"
-          style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginTop: 14 }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
-            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>人数が少ない大会などでオフにできます</div>
-          </div>
-          <button onClick={toggleRefereeEnabled} style={{
-            background: refereeEnabled ? C.win : C.line, color: refereeEnabled ? "#fff" : C.sub,
-            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-            cursor: "pointer", fontFamily: FONT, flexShrink: 0,
-          }}>
-            {refereeEnabled ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <ConnectionTest />
-      </div>
-      <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
-      <div style={{ borderTop: `8px solid ${C.zone}` }}>
-        <BulkScheduleTab roster={roster} />
-      </div>
-      <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
-        <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
-          🏆 決勝トーナメント {showBracket ? "▲" : "▼"}
-        </button>
-        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={roster} /></div>}
-      </div>
-      <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
-        <button onClick={() => setShowSingle((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
-          🎱 個別に対戦を追加する {showSingle ? "▲" : "▼"}
-        </button>
-        {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={roster} /></div>}
-      </div>
-    </div>
-  );
-}
-
-/* ========= メンバータブ ========= */
-function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState(null);
-  const saveTimer = useRef(null);
-  const rosterRef = useRef(roster);
-  rosterRef.current = roster;
-  const backup = useRef(loadRosterBackup()).current;
-
-  // 保存は「ユーザーが実際に編集した時」だけ走らせる。
-  // 以前は roster の変化を useEffect で監視していたため、読み込みに失敗して空のままこのタブを開くと、
-  // マウント時に空リストで上書き保存されてしまっていた
-  const persist = (allowEmpty) => {
-    if (!loaded) return; // 読み込みに成功していない間は絶対に保存しない
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      setSaving(true);
-      try {
-        await saveRoster(rosterRef.current, allowEmpty);
-        setSaveMsg(null);
-      } catch (e) {
-        setSaveMsg(String(e && e.message ? e.message : e));
-      }
-      setSaving(false);
-    }, 600);
-  };
-
-  const update = (id, k, v) => { setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p))); persist(); };
-  const remove = (id) => { setRoster((rs) => rs.filter((p) => p.id !== id)); persist(true); };
-  const add = () => {
-    if (roster.length >= 40) return;
-    setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "" }]);
-    persist();
-  };
-  const restoreBackup = () => {
-    if (!backup.length) return;
-    if (!window.confirm(`この端末に残っている${backup.length}人分のバックアップで復元します。よろしいですか？`)) return;
-    setRoster(backup);
-    _id = Math.max(...backup.map((p) => p.id || 0)) + 1;
-    persist(true);
-  };
-  // 当日の抽選番号順に並び替える。番号未入力の人は元の順序のまま最後にまとめる
-  const sortByDraw = () => {
-    const numbered = roster.filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
-    const unnumbered = roster.filter((p) => !(p.draw !== undefined && p.draw !== "" && p.draw != null));
-    numbered.sort((a, b) => parseInt(a.draw, 10) - parseInt(b.draw, 10));
-    setRoster([...numbered, ...unnumbered]);
-    persist();
-  };
-  const hasAnyDraw = roster.some((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
-
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>メンバーリスト</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : "名前とファーゴレート（共有）"}</div>
-        <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
-      </div>
-
-      {loadError && (
-        <Notice>メンバーの読み込みに失敗しました。データを守るため編集の保存を停止しています。通信を確認して「🔄 更新」を押してください。（{loadError}）</Notice>
-      )}
-      {saveMsg && <Notice>{saveMsg}</Notice>}
-      {loaded && roster.length === 0 && backup.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <Notice>共有リストが空です。この端末に{backup.length}人分のバックアップが残っています。</Notice>
-          <button onClick={restoreBackup} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>↺ バックアップから復元する</button>
-        </div>
-      )}
-      {roster.length > 0 && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 6, padding: "0 2px" }}>
-          <div style={{ flex: 1, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
-          <div style={{ width: 80, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>レート</div>
-          <div style={{ width: 64, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>抽選番号</div>
-          <div style={{ width: 40 }} />
-        </div>
-      )}
-      {roster.map((p) => (
-        <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-          <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
-            style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
-          <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            style={{ width: 80, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
-          <input inputMode="numeric" value={p.draw || ""} onChange={(e) => update(p.id, "draw", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            placeholder="―"
-            style={{ width: 64, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 15, fontWeight: 800, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
-          <button onClick={() => remove(p.id)} style={{ width: 40, height: 40, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
+    <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} style={{ height: 230, marginBottom: 14 }}>
+          <TablePanel tableNum={i + 1} m={queues[i][0]} />
         </div>
       ))}
-      {roster.length < 40 && (
-        <button onClick={add} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>＋ 選手を追加</button>
-      )}
-      {hasAnyDraw && (
-        <button onClick={sortByDraw} style={{ width: "100%", marginTop: 10, background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-          🎲 抽選番号順に並び替える
-        </button>
-      )}
-      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
-        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
-      </div>
+      <NextList matches={nextMatches} />
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
 }
-
-/* ========= 対戦表タブ（対戦作成＝実質のB1本体） ========= */
-/* ========= 試合割りタブ：総当たり風スケジュールを自動生成して一括登録 ========= */
-const BULK_TABLES = 3;
-
-function bulkMakePlan(N, G) {
-  const total = (N * G) / 2;
-  if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
-  const slots = Math.ceil(total / BULK_TABLES);
-  const sizes = [];
-  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? BULK_TABLES : total - BULK_TABLES * (slots - 1));
-  let lower = 0;
-  for (let s = 0; s < slots - 1; s++) {
-    const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
-    const cap = Math.min(sizes[s], sizes[s + 1]);
-    if (need > cap) {
-      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。` };
-    }
-    if (need > 0) lower += need;
-  }
-  return { total, slots, sizes, lower };
-}
-function bulkMulberry(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit) {
-  const { total, slots, sizes } = plan;
-  const pos = [];
-  for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
-
-  const deg = new Int32Array(N + 1);
-  const used = new Set();
-  const seat = Array.from({ length: slots }, () => new Map());
-  const board = [];
-  let cost = 0, nodes = 0, best = null;
-
-  const viable = (s) => {
-    const left = slots - s - 1;
-    for (let x = 1; x <= N; x++) {
-      const need = G - deg[x];
-      if (!need) continue;
-      let room = left;
-      if (seat[s].has(x) && s > 0 && seat[s - 1].has(x)) room -= 1;
-      if (need > room - Math.floor(room / 3)) return false;
-    }
-    if (left > 0) {
-      let free = 0;
-      for (let x = 1; x <= N; x++) {
-        if (deg[x] >= G) continue;
-        if (seat[s].has(x) && s > 0 && seat[s - 1].has(x)) continue;
-        free++;
-      }
-      if (free < sizes[s + 1] * 2) return false;
-    }
-    return true;
-  };
-
-  const walk = (p) => {
-    if (nodes++ > nodeLimit) throw new Error("budget");
-    if (p === total) { best = { board: board.map((m) => ({ ...m })), cost }; return true; }
-    const [s, t] = pos[p];
-    const here = seat[s], prev = s > 0 ? seat[s - 1] : null, back = s > 1 ? seat[s - 2] : null;
-
-    const cands = [];
-    for (let a = 1; a <= N; a++) {
-      if (deg[a] >= G || here.has(a)) continue;
-      for (let b = a + 1; b <= N; b++) {
-        if (deg[b] >= G || here.has(b) || used.has(a * 32 + b)) continue;
-        let carry = 0, ok = true;
-        for (const x of [a, b]) {
-          if (prev && prev.has(x)) {
-            if (prev.get(x) !== t) { ok = false; break; }
-            if (back && back.has(x)) { ok = false; break; }
-            carry++;
-          }
-        }
-        if (!ok || cost + carry >= ceiling) continue;
-        cands.push({ a, b, carry, score: carry * 1000 - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 });
-      }
-    }
-    cands.sort((x, y) => x.score - y.score);
-
-    for (const c of cands) {
-      deg[c.a]++; deg[c.b]++;
-      used.add(c.a * 32 + c.b);
-      here.set(c.a, t); here.set(c.b, t);
-      cost += c.carry;
-      board.push({ slot: s, table: t, a: c.a, b: c.b, carry: c.carry });
-      if (t !== sizes[s] - 1 || viable(s)) { if (walk(p + 1)) return true; }
-      board.pop(); cost -= c.carry;
-      here.delete(c.a); here.delete(c.b);
-      used.delete(c.a * 32 + c.b);
-      deg[c.a]--; deg[c.b]--;
-    }
-    return false;
-  };
-
-  try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
-  return best;
-}
-function bulkGenerate(N, G) {
-  const plan = bulkMakePlan(N, G);
-  if (plan.error) return { error: plan.error };
-  let best = null, ceiling = Infinity;
-  const start = Date.now();
-  for (let r = 0; r < 400; r++) {
-    if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000);
-    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (best.cost <= plan.lower) break; }
-  }
-  if (!best) return { error: "条件を満たす組み合わせが見つかりませんでした。人数か試合数を変えてください。" };
-  return { plan, board: best.board, cost: best.cost, optimal: best.cost <= plan.lower };
-}
-
-function BulkScheduleTab({ roster }) {
-  const s0 = useMemo(() => loadSettings(), []);
-  const [players, setPlayers] = useState(s0.players || Math.max(6, Math.min(16, roster.length || 12)));
-  const [games, setGames] = useState(s0.games || 4);
-  const [lenPct, setLenPct] = useState(s0.lenPct || 100);
-  const [result, setResult] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [registering, setRegistering] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [startH, setStartH] = useState(s0.startH || "11");
-  const [startM, setStartM] = useState(s0.startM || "00");
-  const [endH, setEndH] = useState(s0.endH || "17");
-  const [endM, setEndM] = useState(s0.endM || "00");
-  const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
-  const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
-
-  // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
-  useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min]);
-
-  const timeEstimate = useMemo(() => {
-    if (!result || result.error) return null;
-    const sH = parseInt(startH, 10), sM = parseInt(startM, 10);
-    const eH = parseInt(endH, 10), eM = parseInt(endM, 10);
-    const chg = parseInt(changeoverMin, 10) || 0;
-    const per100 = parseInt(per100Min, 10) || 0;
-    if ([sH, sM, eH, eM].some((v) => isNaN(v))) return null;
-    const matchMin = per100 * (lenPct / 100);
-    const slots = result.plan.slots;
-    const totalMin = slots * matchMin + (slots - 1) * chg;
-    const startTotal = sH * 60 + sM;
-    const endTotal = eH * 60 + eM;
-    const finishTotal = startTotal + totalMin;
-    const fits = finishTotal <= endTotal;
-    const fmt = (mins) => {
-      const m = Math.round(mins);
-      const h = Math.floor(((m % 1440) + 1440) % 1440 / 60);
-      const mm = ((m % 60) + 60) % 60;
-      return `${String(h).padStart(2, "0")}:${String(Math.round(mm)).padStart(2, "0")}`;
-    };
-    return { matchMin, totalMin, finishTotal, fits, diff: Math.abs(endTotal - finishTotal), finishLabel: fmt(finishTotal) };
-  }, [result, startH, startM, endH, endM, changeoverMin, per100Min, lenPct]);
-
-  // 終了時刻ちょうどに収まる「試合の長さ（%）」を逆算
-  const idealLenPct = useMemo(() => {
-    if (!result || result.error) return null;
-    const sH = parseInt(startH, 10), sM = parseInt(startM, 10);
-    const eH = parseInt(endH, 10), eM = parseInt(endM, 10);
-    const chg = parseInt(changeoverMin, 10) || 0;
-    const per100 = parseInt(per100Min, 10) || 0;
-    if ([sH, sM, eH, eM].some((v) => isNaN(v)) || per100 <= 0) return null;
-    const slots = result.plan.slots;
-    const available = (eH * 60 + eM) - (sH * 60 + sM) - (slots - 1) * chg;
-    if (available <= 0) return { pct: 40, clampedLow: true };
-    const raw = (available / slots / per100) * 100;
-    const rounded = Math.round(raw / 5) * 5;
-    if (rounded > 140) return { pct: 140, clampedHigh: true };
-    if (rounded < 40) return { pct: 40, clampedLow: true };
-    return { pct: rounded };
-  }, [result, startH, startM, endH, endM, changeoverMin, per100Min]);
-
-  const run = () => {
-    setBusy(true); setMsg(null);
-    setTimeout(() => { setResult(bulkGenerate(players, games)); setBusy(false); }, 20);
-  };
-
-  const rows = useMemo(() => {
-    if (!result || result.error) return null;
-    const base = Date.now();
-    return result.board.map((m, i) => {
-      const p1 = roster[m.a - 1] || { name: `選手${m.a}`, r: "" };
-      const p2 = roster[m.b - 1] || { name: `選手${m.b}`, r: "" };
-      const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
-      const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
-      const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
-      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
-    });
-  }, [result, roster, lenPct, per100Min]);
-
-  const grid = useMemo(() => {
-    if (!rows) return null;
-    const map = new Map();
-    for (const m of rows) {
-      if (!map.has(m.slot)) map.set(m.slot, [null, null, null]);
-      map.get(m.slot)[m.table] = m;
-    }
-    return [...map.entries()].sort((a, b) => a[0] - b[0]);
-  }, [rows]);
-
-  const register = async () => {
-    if (!rows || registering) return;
-    if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦とスコアラーの担当回数はすべてリセットされます。よろしいですか？`)) return;
-    setRegistering(true);
-    try {
-      const now = Date.now();
-      const next = {};
-      rows.forEach((m) => {
-        next[m.matchId] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
-          names: [m.n1, m.n2], table: m.table + 1, slot: m.slot,
-          r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
-          createdAt: m.createdAt, updatedAt: now,
-        };
-      });
-      await dbSet("matches", next);
-      // 対戦表を組み直したら、スコアラーの担当回数も新しい大会として0からやり直す
-      await dbSet("refereeCounts", {});
-      // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
-      const savedMatches = (await dbGet("matches")) || {};
-      const saved = Object.keys(savedMatches).filter((id) => next[id]).length;
-      if (saved !== rows.length) {
-        throw new Error(`保存を確認できませんでした（${saved}/${rows.length}件）。もう一度お試しください`);
-      }
-      setMsg({ ok: true, text: `${rows.length}件をタイムラインに登録しました` });
-    } catch (e) {
-      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setRegistering(false);
-  };
-
-  const noRatings = rows && rows.some((m) => !m.rt1 && !m.rt2);
-
+function NextList({ matches }) {
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>試合割り</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>空き卓は最終コマのみ／3連続なし／連投は同卓のみ</div>
-      </div>
-
-      {roster.length < players && (
-        <Notice>メンバーが{roster.length}人しかいません。先頭から{players}人分を使うので、メンバータブで人数を確認してください。</Notice>
-      )}
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
-        <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
-      </div>
-
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
-          <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
-        </div>
-        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-      </div>
-
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 10 }}>時間割</div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>開始</div>
-            <TimeInput h={startH} m={startM} onH={setStartH} onM={setStartM} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>終了</div>
-            <TimeInput h={endH} m={endM} onH={setEndH} onM={setEndM} />
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>入替（分）</div>
-            <input inputMode="numeric" value={changeoverMin} onChange={(e) => setChangeoverMin(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center" }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>100%の目安（分）</div>
-            <input inputMode="numeric" value={per100Min} onChange={(e) => setPer100Min(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center" }} />
-          </div>
-        </div>
-      </div>
-
-      <button onClick={run} disabled={busy}
-        style={{ width: "100%", background: busy ? C.line : C.ink, color: busy ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
-        {busy ? "計算中…" : "組む ▶"}
-      </button>
-
-      {result?.error && <Notice>{result.error}</Notice>}
-
-      {grid && (
-        <>
-          <Notice>下書きができました。まだ保存されていません。内容を確認して、一番下の青いボタンで登録してください。</Notice>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12.5, color: C.sub, marginBottom: 14, justifyContent: "center" }}>
-            <span>総試合 <b style={{ color: C.ink }}>{result.plan.total}</b></span>
-            <span>コマ <b style={{ color: C.ink }}>{result.plan.slots}</b></span>
-            <span>同卓2連 <b style={{ color: C.ink }}>{result.cost}</b> / 下限 {result.plan.lower}</span>
-            {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
-          </div>
-
-          {timeEstimate && (
-            <div style={{ textAlign: "center", marginBottom: 10, fontSize: 13, color: timeEstimate.fits ? C.win : C.minus, fontWeight: 700 }}>
-              終了目安 <b style={{ fontSize: 16 }}>{timeEstimate.finishLabel}</b>
-              {timeEstimate.fits ? `（終了予定まで${Math.round(timeEstimate.diff)}分の余裕）` : `（終了予定を${Math.round(timeEstimate.diff)}分オーバー）`}
-            </div>
-          )}
-
-          {idealLenPct && (
-            <div style={{ textAlign: "center", marginBottom: 14 }}>
-              <button onClick={() => setLenPct(idealLenPct.pct)}
-                style={{ background: lenPct === idealLenPct.pct ? C.win : "#fff", color: lenPct === idealLenPct.pct ? "#fff" : C.blue, border: `1.5px solid ${lenPct === idealLenPct.pct ? C.win : C.blue}`, borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-                {lenPct === idealLenPct.pct ? "✓ " : "⏱ "}終了時刻に合わせて{idealLenPct.pct}%にする
-              </button>
-              {idealLenPct.clampedHigh && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>時間に余裕があるので140%（上限）でも収まります</div>}
-              {idealLenPct.clampedLow && <div style={{ fontSize: 11.5, color: C.hill, marginTop: 6 }}>40%（下限）にしても間に合わない可能性があります</div>}
-            </div>
-          )}
-
-          {noRatings && <Notice>ファーゴレート未設定の選手がいるため、目標点が0のカードがあります。メンバータブで登録しておくと目標点も入ります。</Notice>}
-
-          <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
-            <div />
-            {[1, 2, 3].map((t) => <div key={t} style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub }}>卓{t}</div>)}
-          </div>
-          {grid.map(([slot, cells]) => (
-            <div key={slot} style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6, alignItems: "stretch" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: C.sub }}>{slot + 1}</div>
-              {cells.map((m, i) => m ? <BulkCard key={i} m={m} /> : (
-                <div key={i} style={{ background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, padding: "14px 4px" }}>空き</div>
-              ))}
-            </div>
-          ))}
-
-          <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(to top, #fff 70%, rgba(255,255,255,0))", paddingTop: 14, paddingBottom: 8, marginTop: 16 }}>
-            <button onClick={register} disabled={registering}
-              style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT, boxShadow: "0 4px 14px rgba(46,109,181,0.35)" }}>
-              {registering ? "登録中…" : "▲ この対戦表をタイムラインに登録する"}
-            </button>
-            <div style={{ textAlign: "center", fontSize: 11, color: C.sub, marginTop: 6 }}>
-              「組む」だけでは保存されません。このボタンで登録するとタイムライン・ダッシュボードに反映されます
-            </div>
-            {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 8 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-function BulkCard({ m }) {
-  return (
-    <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "8px 5px", position: "relative" }}>
-      {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
-      <div style={{ display: "flex", gap: 3 }}>
-        {[[m.n1, m.rt1, C.blue], [m.n2, m.rt2, C.red]].map(([name, rt, col], i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{rt > 0 ? rt : "–"}</div>
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", boxSizing: "border-box" }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2, marginBottom: 10 }}>次の試合</div>
+      {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, opacity: 0.6, textAlign: "center", marginTop: 20 }}>予定なし</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {matches.map((m, i) => (
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12, padding: "8px 12px" }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, flexShrink: 0 }}>卓{m.tableNum}</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 400 }}>対</span> {(m.names || ["", ""])[1]}
+            </span>
           </div>
         ))}
       </div>
     </div>
   );
 }
-const numBoxStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 20, fontWeight: 800, padding: "10px 0", outline: "none", fontFamily: FONT };
-function TimeInput({ h, m, onH, onM }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <input inputMode="numeric" value={h} onChange={(e) => onH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ ...numBoxStyle, textAlign: "center" }} />
-      <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
-      <input inputMode="numeric" value={m} onChange={(e) => onM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ ...numBoxStyle, textAlign: "center" }} />
-    </div>
-  );
+function hillInfo(rt, disp) {
+  if (rt <= 0) return null;
+  const rem = rt - disp;
+  if (rem <= 0) return { label: "達成", value: null };
+  const toHill = rem - 14;
+  return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
 }
-function BulkStepper({ label, value, min, max, onChange }) {
-  const btn = { width: 38, height: 38, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT };
-  return (
-    <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px" }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>{label}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <button style={btn} onClick={() => onChange(Math.max(min, value - 1))}>−</button>
-        <div style={{ flex: 1, textAlign: "center", fontSize: 22, fontWeight: 800 }}>{value}</div>
-        <button style={btn} onClick={() => onChange(Math.min(max, value + 1))}>＋</button>
+function TablePanel({ tableNum, m }) {
+  if (!m) {
+    return (
+      <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 16, letterSpacing: 2 }}>卓 {tableNum}</div>
+        <div style={{ fontSize: 20, opacity: 0.6 }}>待機中</div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-function ScheduleTab({ roster }) {
-  const [i1, setI1] = useState(0);
-  const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
-  const [table, setTable] = useState(1);
-  const [lenPct, setLenPct] = useState(100);
-  const [tableStatus, setTableStatus] = useState([null, null, null]);
-  const [creating, setCreating] = useState(false);
-  const [createdInfo, setCreatedInfo] = useState(null);
-
-  const refreshStatus = async () => {
-    try {
-      const matches = await dbGet("matches");
-      setTableStatus([1, 2, 3].map((t) => getQueueForTable(matches || {}, t)[0] || null));
-    } catch {}
-  };
-  useEffect(() => dbSubscribe("matches",
-    (matches) => setTableStatus([1, 2, 3].map((t) => getQueueForTable(matches || {}, t)[0] || null)),
-    () => {}), []);
-
-  const p1 = roster[i1], p2 = roster[i2];
-  const R1 = p1 ? parseInt(p1.r, 10) : 0, R2 = p2 ? parseInt(p2.r, 10) : 0;
-  const valid = p1 && p2 && i1 !== i2 && R1 > 0 && R2 > 0;
-  const res = valid ? computeRace(R1, R2, lenPct) : null;
-
-  const create = async () => {
-    if (!valid || creating) return;
-    setCreating(true);
-    const matchId = randomMatchId();
-    const state = {
-      version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-      balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
-      lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
-      names: [p1.name, p2.name], table, createdAt: Date.now(),
-      r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-    };
-    await saveMatch(matchId, state).catch(() => {});
-    const url = new URL(B2_URL);
-    url.searchParams.set("m", matchId);
-    url.searchParams.set("p1", p1.name);
-    url.searchParams.set("p2", p2.name);
-    url.searchParams.set("r1", R1);
-    url.searchParams.set("r2", R2);
-    url.searchParams.set("len", lenPct);
-    url.searchParams.set("t", table);
-    setCreatedInfo({ url: url.toString(), table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
-    setCreating(false);
-    refreshStatus();
-  };
+  const names = m.names || ["プレイヤー1", "プレイヤー2"];
+  const raceTo = m.raceTo || [0, 0];
+  const tot = m.tot || [0, 0];
+  const balls = m.balls || [];
+  const live = [
+    balls.filter((b) => b.loc === "p1" && !b.dead).length,
+    balls.filter((b) => b.loc === "p2" && !b.dead).length,
+  ];
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+  const bothLose = !!m.bothLose;
+  const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
+  const matchWinner = bothLose || m.phase === "banking" ? null :
+    (m.winner === 0 || m.winner === 1) ? m.winner :
+    (reached[0] && reached[1]) ? ((m.hist || []).slice(-1)[0] || { w: 0 }).w :
+    reached[0] ? 0 :
+    reached[1] ? 1 :
+    (!hillHill && disp[0] >= raceTo[0] && raceTo[0] > 0) ? 0 :
+    (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
+  const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>対戦表</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>卓と対戦者を決めて対戦を作成します</div>
+    <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "14px 16px", color: C.ink, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
+        <span style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>
+          {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
+        </span>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {[1, 2, 3].map((t) => {
-          const st = tableStatus[t - 1];
-          const label = !st ? "空き" : st.phase === "banking" ? "バンキング中" : st.phase === "done" ? "ラック終了" : "対戦中";
+      {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
+        <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "4px 10px", textAlign: "center", fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+          ヒルヒル
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0 }}>
+        {[0, 1].map((i) => {
+          const pc = i === 0 ? C.blue : C.red;
+          const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
           return (
-            <div key={t} style={{ flex: 1, background: C.zone, border: `2px solid ${table === t ? C.blue : C.line}`, borderRadius: 12, padding: "10px 6px", textAlign: "center", cursor: "pointer" }} onClick={() => setTable(t)}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: table === t ? C.blue : C.ink }}>卓{t}</div>
-              <div style={{ fontSize: 10.5, color: st ? C.win : C.sub, marginTop: 4 }}>{label}</div>
-              {st && <div style={{ fontSize: 9.5, color: C.sub, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.names ? st.names.join(" / ") : ""}</div>}
+            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 3px ${pc}` : "none", borderRadius: 14, padding: "8px 4px 6px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+              <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink }}>
+                {m.phase === "banking" ? "–" : disp[i]}
+                <span style={{ fontSize: 15, opacity: 0.5 }}>/{raceTo[i]}</span>
+              </div>
+              {bothLose ? (
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
+                  達成率 {(rate(i) * 100).toFixed(1)}％
+                </div>
+              ) : hi && (
+                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
+                  {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
+                </div>
+              )}
+              {m.brk === i && <div style={{ fontSize: 12, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 2 }}>● ブレイク</div>}
             </div>
           );
         })}
       </div>
 
-      <Field label="プレイヤー1">
-        <select value={i1} onChange={(e) => setI1(+e.target.value)} style={selectStyle}>
-          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
-        </select>
-      </Field>
-      <Field label="プレイヤー2">
-        <select value={i2} onChange={(e) => setI2(+e.target.value)} style={selectStyle}>
-          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
-        </select>
-      </Field>
-
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "14px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
-          <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
-        </div>
-        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-          {[["ショート", 75], ["ロング", 100], ["長め", 120]].map(([t, v]) => (
-            <button key={t} onClick={() => setLenPct(v)} style={{ flex: 1, border: `2px solid ${lenPct === v ? C.blue : C.line}`, background: lenPct === v ? C.lightBlue : "#fff", borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t}</button>
-          ))}
-        </div>
-      </div>
-
-      {i1 === i2 && <Notice>同じ選手が選ばれています</Notice>}
-      {res && (
-        <div style={{ textAlign: "center", marginBottom: 14, fontSize: 15 }}>
-          目標点：<b style={{ color: C.blue }}>{res.rt1}</b> 対 <b style={{ color: C.red }}>{res.rt2}</b>
-        </div>
-      )}
-
-      <button onClick={create} disabled={!valid || creating} style={{ width: "100%", background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT }}>
-        {creating ? "作成中…" : `卓${table}に対戦を作成 ▶`}
-      </button>
-
-      {createdInfo && (
-        <div style={{ marginTop: 18, textAlign: "center" }}>
-          <div style={{ fontSize: 13.5, color: C.win, fontWeight: 700, marginBottom: 10 }}>✓ 卓{createdInfo.table}に作成しました</div>
-          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(createdInfo.url)}`} style={{ width: 200, height: 200 }} />
-          <div style={{ fontSize: 12, color: C.sub, marginTop: 8 }}>{createdInfo.names.join(" 対 ")}</div>
-        </div>
+      {bothLose ? (
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.hill }}>時間切れ・両者負け</div>
+      ) : matchWinner != null && (
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win }}>🏆 {names[matchWinner]} 勝利</div>
       )}
     </div>
   );
 }
-function Field({ label, children }) {
-  return <div style={{ marginBottom: 10 }}><div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{label}</div>{children}</div>;
-}
-function Notice({ children }) {
-  return <div style={{ fontSize: 13.5, color: C.hill, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>{children}</div>;
-}
-const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT };
 
-/* ========= QR発行タブ ========= */
+/* ========= カメラでQRを読み取る画面（普段の待機画面） =========
+   iOS/Androidともファイル入力にcapture属性を付けると標準カメラが起動する（これは実際に動作する）。
+   撮った写真はその場でjsQRを使って解析し、対戦情報を取り出す。
+   ※ Safariには「カメラアプリを直接開くリンク」という機能は無いため、写真を1枚撮ってもらう方式にしている */
+function CameraLinkScreen({ onScanned }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
 
-// 対戦の「試合の長さ・持ち時間・目標点」だけを部分更新するための組み立て。
-// 対戦データ全体を書き戻さないので、スコアラーが入力中のスコアを消してしまわない
-function planMatchUpdate(updates, qm, lenPct, minutes, now) {
-  const R1 = qm.r1 || 0, R2 = qm.r2 || 0;
-  const base = qm.raceTo || [0, 0];
-  const rt = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: base[0], rt2: base[1] };
-  updates[qm.id + "/raceTo"] = [rt.rt1, rt.rt2];
-  updates[qm.id + "/lenPct"] = lenPct;
-  updates[qm.id + "/matchMinutes"] = minutes;
-  updates[qm.id + "/version"] = (qm.version || 1) + 1;
-  updates[qm.id + "/updatedAt"] = now;
-}
-const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 20, cursor: "pointer", fontFamily: FONT, touchAction: "manipulation" };
-
-function HomeTab() {
-  const [queues, setQueues] = useState([[], [], []]);
-  const refereeEnabled = loadSettings().refereeEnabled !== false; // 設定タブでオフにできる
-  // スコアの更新が無くても時間経過だけで「そろそろ呼び出し」判定が動くよう、定期的に再描画する
-  const [, forceTick] = useState(0);
-  useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 15000); return () => clearInterval(iv); }, []);
-  const [roster, setRoster] = useState([]);
-  const [refereeCounts, setRefereeCounts] = useState({});
-  const [refModalMatch, setRefModalMatch] = useState(null); // ✏️で開くスコアラー候補モーダルの対象試合
-  const [refereeBusy, setRefereeBusy] = useState(false);
-  const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
-  const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
-  const [globalBusy, setGlobalBusy] = useState(false);
-  const [tLenPct, setTLenPct] = useState(100);
-  const [tPer100, setTPer100] = useState(60);
-
-  const [loadErr, setLoadErr] = useState(null);
-  const [cols, setCols] = useState([[], [], []]); // 終了分も含む全対戦（タイムライン表示用）
-  const applyRecord = (rec) => {
-    const r = normalizeRecord(rec);
-    setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
-    setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(r.matches, t))));
-    setRoster(r.roster);
-    setRefereeCounts(r.refereeCounts);
-    setLoadErr(null);
-  };
-  // 手動更新用（購読しているので通常は不要）
-  const refresh = async () => {
-    try { applyRecord(await dbGet("/")); }
-    catch (e) { setLoadErr(String(e && e.message ? e.message : e)); }
-  };
-  // 変更を購読する。ポーリングしないので、開きっぱなしでも通信が積み上がらない
-  useEffect(() => dbSubscribe("/", applyRecord, (e) => setLoadErr(e)), []);
-
-  const getRefereeCandidates = (ti, target) => {
-    if (!target) return [];
-    const isLive = !!target.startedAt; // true: 対戦中カードの変更／false: 呼び出しカードの候補
-
-    // 実際に試合中（ライブ）の選手は除外。
-    // ただし「呼び出し」の候補では、同卓で今まさに試合中の選手は除外しない
-    // （この対戦が始まる頃には、その試合はもう終わっているはずだから）
-    const playingNow = new Set();
-    queues.forEach((q, qi) => {
-      if (!(q[0] && q[0].startedAt)) return;
-      if (!isLive && qi === ti) return;
-      q[0].names.forEach((n) => playingNow.add(n));
-    });
-    // これから呼び出す・変更する対戦の当事者2人は、自分の試合のスコアラーにはなれないので必ず除外
-    target.names.forEach((n) => playingNow.add(n));
-
-    // 既にスコアラーとして動いている・決まっている人も除外
-    // （現在試合中の担当、呼び出し中で決まっている担当の両方。卓に関わらず未終了の対戦すべてを見る）
-    const refereeingNow = new Set();
-    queues.forEach((q) => q.forEach((m) => { if (m && m.referee) refereeingNow.add(m.referee); }));
-
-    // 呼び出し候補限定：同卓で今試合中の選手（終わったら空くのでおすすめ表示にする）
-    const sameTableLiveNames = new Set(
-      !isLive && queues[ti][0] && queues[ti][0].startedAt ? queues[ti][0].names : []
-    );
-
-    const nextAtThisTable = new Set(queues[ti][1] ? queues[ti][1].names : []);
-    const nextAtOtherTable = new Set();
-    queues.forEach((q, qi) => {
-      if (qi === ti) return;
-      // 別卓で今まさに呼び出し中（まだ始まっていない）対戦の当事者も、もうすぐ試合が始まるので後回しにする
-      if (q[0] && !q[0].startedAt) q[0].names.forEach((n) => nextAtOtherTable.add(n));
-      if (q[1]) q[1].names.forEach((n) => nextAtOtherTable.add(n));
-    });
-
-    return roster
-      .filter((p) => p.name && !playingNow.has(p.name) && !refereeingNow.has(p.name))
-      .map((p) => {
-        const sameTableLive = sameTableLiveNames.has(p.name);
-        // 0: 次試合なし（優先）／1: 同卓の次試合／2: 別卓の次試合（後回し）
-        const tier = nextAtThisTable.has(p.name) ? 1 : nextAtOtherTable.has(p.name) ? 2 : 0;
-        const count = refereeCounts[p.name] || 0;
-        return { ...p, tier, count, sameTableLive };
-      })
-      .sort((a, b) => (a.sameTableLive === b.sameTableLive ? 0 : a.sameTableLive ? -1 : 1) || a.tier - b.tier || a.count - b.count);
+  const parseMatchUrl = (text) => {
+    const url = new URL(text);
+    const q = url.searchParams;
+    if (!(q.get("m") && q.get("p1") && q.get("p2") && q.get("r1") && q.get("r2") && q.get("len"))) return null;
+    return {
+      matchId: q.get("m"),
+      names: [q.get("p1"), q.get("p2")],
+      ratings: [Number(q.get("r1")), Number(q.get("r2"))],
+      lenPct: Number(q.get("len")),
+      raceToParam: q.get("rt1") && q.get("rt2") ? [Number(q.get("rt1")), Number(q.get("rt2"))] : null,
+      table: Number(q.get("t")) || 1,
+    };
   };
 
-  const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
-  const assignReferee = async (ti, name, target) => {
-    if (!target || refereeBusy) return;
-    setRefereeBusy(true);
-    try {
-      // 対戦の一部だけを更新する。スコアラーが入力中の値には触れない
-      await dbUpdate("matches/" + target.id, {
-        referee: name, version: (target.version || 1) + 1, updatedAt: Date.now(),
-      });
-      const prevCount = (await dbGet("refereeCounts/" + name)) || 0;
-      await dbSet("refereeCounts/" + name, prevCount + 1);
-      setRefModalMatch(null);
-      setRefereeQR({ name, match: target });
-      publishQr({ url: urlFor(target), heading: `📝 卓${target.table} スコアラー呼び出し`, names: `${name} さん` });
-      refresh();
-    } catch {}
-    setRefereeBusy(false);
-  };
-
-  const [snapBusy, setSnapBusy] = useState(null);
-  const [snapMsg, setSnapMsg] = useState(null);
-
-  const perTableEstimate = (ti) => {
-    const q = queues[ti];
-    if (!q.length) return null;
-    let totalMin = 0;
-    q.forEach((m, idx) => {
-      if (idx === 0 && m.startedAt && m.matchMinutes) {
-        const elapsed = (Date.now() - m.startedAt) / 60000;
-        totalMin += Math.max(0, m.matchMinutes - elapsed);
-      } else {
-        totalMin += m.matchMinutes || 30;
-      }
-    });
-    return new Date(Date.now() + totalMin * 60000);
-  };
-
-  // 終了予定時刻に対して、この卓は順調か・押しているかを判定
-  const tableScheduleStatus = (ti) => {
-    const est = perTableEstimate(ti);
-    if (!est) return null;
-    const cfg = loadSettings();
-    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
-    if (isNaN(eH) || isNaN(eM)) return null;
-    const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
-    const diffMin = Math.round((targetD - est) / 60000);
-    // 表示上、前後5分の誤差は「順調」扱いにする（自動調整の計算自体は誤差ゼロを狙う従来通り）
-    return diffMin >= -5
-      ? { ok: true, text: `余裕${Math.max(0, diffMin)}分` }
-      : { ok: false, text: `押し${Math.abs(diffMin)}分` };
-  };
-
-  // 開始済みの試合は設定確定なので対象外。未開始の試合（呼び出し中を含む）を、指定した最終試合の終了予定時刻から逆算して調整する
-  const applyTableEndTime = async (ti) => {
-    if (snapBusy != null) return;
-    const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
-    if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
-    const cfg = loadSettings();
-    const per100 = parseInt(cfg.per100Min, 10) || 60;
-    const calc = computeTableAdjustment(queues[ti], eH, eM, per100);
-    if (!calc) { setSnapMsg({ ok: false, text: "次の試合がありません" }); return; }
-    if (calc.error) { setSnapMsg({ ok: false, text: calc.error }); return; }
-    setSnapBusy(ti);
-    try {
-      const now = Date.now();
-      const updates = {};
-      calc.future.forEach((qm) => planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now));
-      await dbUpdate("matches", updates);
-      setTLenPct(calc.newLenPct);
-
-      let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${ti + 1}：未開始の${calc.future.length}試合を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
-      if (calc.hitFloor) {
-        // 下限40%でも指定時刻に間に合わないので、最終試合の終了予定時刻自体を現実的な時刻へ更新する
-        const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
-        finalEndH = String(realFinish.getHours()).padStart(2, "0");
-        finalEndM = String(realFinish.getMinutes()).padStart(2, "0");
-        setTEndH(finalEndH); setTEndM(finalEndM);
-        msg += `（40%が下限のため終了予定を${finalEndH}:${finalEndM}に更新）`;
-      }
-      saveSettings({ endH: finalEndH, endM: finalEndM });
-      setSnapMsg({ ok: true, text: msg });
-      refresh();
-    } catch (e) {
-      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setSnapBusy(null);
-  };
-
-  const [tEndH, setTEndH] = useState("17");
-  const [tEndM, setTEndM] = useState("00");
-
-  const openTableAdjust = (ti) => {
-    setRefModalMatch(null);
-    setShowGlobalAdjust(false);
-    const future = adjustableMatches(queues[ti]); // 開始済みの試合だけ対象外（呼び出し中は含む）
-    const avgLen = future.length ? Math.round(future.reduce((s, m) => s + (m.lenPct || 100), 0) / future.length / 5) * 5 : 100;
-    setTLenPct(avgLen);
-    const cfg = loadSettings();
-    setTPer100(parseInt(cfg.per100Min, 10) || 60);
-    setTEndH(cfg.endH || "17");
-    setTEndM(cfg.endM || "00");
-    setTableAdjust(ti);
-  };
-  // 100%のときの時間（分）は全卓共通の基準値。ここで変えたら全卓の未開始の試合にまとめて反映する
-  const applyTableAdjust = async () => {
-    if (tableAdjust == null || snapBusy != null) return;
-    const newMinutes = Math.max(1, Math.round(tPer100 * (tLenPct / 100)));
-    setSnapBusy(tableAdjust);
-    try {
-      const now = Date.now();
-      const updates = {};
-      let count = 0;
-      [0, 1, 2].forEach((oi) => {
-        adjustableMatches(queues[oi]).forEach((qm) => { planMatchUpdate(updates, qm, tLenPct, newMinutes, now); count++; });
-      });
-      if (count === 0) { setSnapMsg({ ok: false, text: "次の試合がありません" }); setSnapBusy(null); return; }
-      await dbUpdate("matches", updates);
-      saveSettings({ per100Min: String(tPer100) });
-      setSnapMsg({ ok: true, text: `全卓（${count}試合）を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
-      refresh();
-    } catch (e) {
-      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setSnapBusy(null);
-  };
-
-  // 終了予定時刻は全卓共通。この時刻に対して、卓ごとに押し／順調／余裕を見て、それぞれ自動調整する
-  const applyAllTables = async () => {
-    if (tableAdjust == null || snapBusy != null) return;
-    const ti = tableAdjust;
-    const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
-    if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
-    setSnapBusy(ti);
-    try {
-      const cfg = loadSettings();
-      const per100 = parseInt(cfg.per100Min, 10) || 60;
-      const now = Date.now();
-      const updates = {};
-      let count = 0;
-      const skipped = [];
-      let latestFinish = null; // 40%下限に達した卓の中で、一番遅い現実的な終了時刻
-      [0, 1, 2].forEach((oi) => {
-        const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
-        if (!calc || calc.error) { skipped.push(oi + 1); return; }
-        calc.future.forEach((qm) => { planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now); count++; });
-        if (calc.hitFloor) {
-          const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
-          if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
+  const handleFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // 同じ写真でも次回changeが発火するようにリセット
+    if (!file) return;
+    setErr(null);
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = window.jsQR ? window.jsQR(imageData.data, imageData.width, imageData.height) : null;
+          if (!code) { setErr("QRコードを読み取れませんでした。ピントを合わせてもう一度撮影してください"); setBusy(false); return; }
+          const info = parseMatchUrl(code.data);
+          if (!info) { setErr("対戦用のQRコードではないようです"); setBusy(false); return; }
+          setBusy(false);
+          onScanned(info);
+        } catch (err) {
+          setBusy(false);
+          setErr("QRコードの解析に失敗しました：" + (err && err.message ? err.message : err));
         }
-        if (oi === ti) { setTLenPct(calc.newLenPct); }
-      });
-      if (count === 0) { setSnapMsg({ ok: false, text: "反映できる対戦がありませんでした" }); setSnapBusy(null); return; }
-      await dbUpdate("matches", updates);
-      let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `全卓（${count}試合）に終了予定 ${tEndH}:${tEndM} を反映し、それぞれ自動調整しました`;
-      if (latestFinish) {
-        finalEndH = String(latestFinish.getHours()).padStart(2, "0");
-        finalEndM = String(latestFinish.getMinutes()).padStart(2, "0");
-        setTEndH(finalEndH); setTEndM(finalEndM);
-        msg += `（40%が下限の卓があるため終了予定を${finalEndH}:${finalEndM}に更新）`;
-      }
-      saveSettings({ endH: finalEndH, endM: finalEndM });
-      if (skipped.length) msg += `（卓${skipped.join("・")}は対象外でした）`;
-      setSnapMsg({ ok: true, text: msg });
-      refresh();
-    } catch (e) {
-      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setSnapBusy(null);
+      };
+      img.onerror = () => { setBusy(false); setErr("写真を読み込めませんでした"); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   };
-
-  // 押している卓（1分でも）と、余裕がありすぎる卓（10分超）だけを自動調整する。順調な卓はそのまま
-  const applyConditionalAllTables = async () => {
-    if (globalBusy) return;
-    const eH = parseInt(tEndH, 10), eM = parseInt(tEndM, 10);
-    if (isNaN(eH) || isNaN(eM)) { setSnapMsg({ ok: false, text: "終了予定時刻を入力してください" }); return; }
-    setGlobalBusy(true);
-    try {
-      const cfg = loadSettings();
-      const per100 = parseInt(cfg.per100Min, 10) || 60;
-      const now = Date.now();
-      const updates = {};
-      let count = 0;
-      const adjustedTables = [];
-      let latestFinish = null;
-      [0, 1, 2].forEach((oi) => {
-        const est = perTableEstimate(oi);
-        if (!est) return; // 予定がない卓は無視
-        const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
-        const diffMin = Math.round((targetD - est) / 60000);
-        const needsAdjust = diffMin < 0 || diffMin > 10;
-        if (!needsAdjust) return; // 順調な範囲は触らない
-        const calc = computeTableAdjustment(queues[oi], eH, eM, per100);
-        if (!calc || calc.error) return;
-        calc.future.forEach((qm) => { planMatchUpdate(updates, qm, calc.newLenPct, calc.newMinutes, now); count++; });
-        adjustedTables.push(oi + 1);
-        if (calc.hitFloor) {
-          const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
-          if (!latestFinish || realFinish > latestFinish) latestFinish = realFinish;
-        }
-      });
-      if (count === 0) {
-        setSnapMsg({ ok: true, text: "調整が必要な卓はありませんでした" });
-        setGlobalBusy(false);
-        return;
-      }
-      await dbUpdate("matches", updates);
-      let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${adjustedTables.join("・")}（${count}試合）を自動調整しました`;
-      if (latestFinish) {
-        finalEndH = String(latestFinish.getHours()).padStart(2, "0");
-        finalEndM = String(latestFinish.getMinutes()).padStart(2, "0");
-        setTEndH(finalEndH); setTEndM(finalEndM);
-        msg += `（40%が下限のため終了予定を${finalEndH}:${finalEndM}に更新）`;
-      }
-      saveSettings({ endH: finalEndH, endM: finalEndM });
-      setSnapMsg({ ok: true, text: msg });
-      refresh();
-    } catch (e) {
-      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setGlobalBusy(false);
-  };
-
-  // 100%のときの時間（基準値）だけを更新し、各対戦の長さ％はそのまま持ち時間だけ再計算する。見積もり自体がずれていた時用
-  const applyPer100ToAll = async () => {
-    if (globalBusy) return;
-    setGlobalBusy(true);
-    try {
-      const now = Date.now();
-      const updates = {};
-      let count = 0;
-      [0, 1, 2].forEach((oi) => {
-        adjustableMatches(queues[oi]).forEach((qm) => {
-          const lenPct = qm.lenPct || 100;
-          updates[qm.id + "/matchMinutes"] = Math.max(1, Math.round(tPer100 * (lenPct / 100)));
-          updates[qm.id + "/version"] = (qm.version || 1) + 1;
-          updates[qm.id + "/updatedAt"] = now;
-          count++;
-        });
-      });
-      if (count === 0) { setSnapMsg({ ok: false, text: "対象の対戦がありませんでした" }); setGlobalBusy(false); return; }
-      await dbUpdate("matches", updates);
-      saveSettings({ per100Min: String(tPer100) });
-      setSnapMsg({ ok: true, text: `100%の時間を${tPer100}分に更新し、全卓${count}試合の持ち時間を再計算しました` });
-      refresh();
-    } catch (e) {
-      setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setGlobalBusy(false);
-  };
-
-  const urlFor = (m) => {
-    const rt = m.raceTo || [0, 0];
-    const url = new URL(B2_URL);
-    url.searchParams.set("m", m.id);
-    url.searchParams.set("p1", m.names[0]);
-    url.searchParams.set("p2", m.names[1]);
-    url.searchParams.set("r1", 0);
-    url.searchParams.set("r2", 0);
-    url.searchParams.set("len", 100);
-    url.searchParams.set("t", m.table);
-    url.searchParams.set("rt1", rt[0]);
-    url.searchParams.set("rt2", rt[1]);
-    return url.toString();
-  };
-
-  const [qrMatch, setQrMatch] = useState(null); // 次戦以降のQRのみを表示する軽量モーダル
-
-  // 別画面（B4: qr-nora1.html）にもQRを表示させる。1つだけ共有し、B4側は1分経つと自動で消す
-  const publishQr = async (payload) => {
-    try { await dbSet("activeCall", { ...payload, publishedAt: Date.now() }); } catch {}
-  };
-  const openQr = (m) => {
-    setQrMatch(m);
-    publishQr({ url: urlFor(m), heading: `📣 卓${m.table} 呼び出し`, names: `${m.names[0]} 対 ${m.names[1]}` });
-  };
-  // 卓のカードをタップ：現在対戦の調整パネルをその場で展開／格納
-  const toggleExpand = (ti) => {
-    if (tableAdjust === ti) { setTableAdjust(null); return; }
-    openTableAdjust(ti);
-  };
-
-  const toggleGlobalAdjust = () => {
-    if (showGlobalAdjust) { setShowGlobalAdjust(false); return; }
-    setTableAdjust(null);
-    setRefModalMatch(null);
-    const cfg = loadSettings();
-    setTEndH(cfg.endH || "17");
-    setTEndM(cfg.endM || "00");
-    setTPer100(parseInt(cfg.per100Min, 10) || 60);
-    setShowGlobalAdjust(true);
-  };
-
-  const _cfg = loadSettings();
-  const sharedEnd = (_cfg.endH && _cfg.endM) ? `${_cfg.endH}:${_cfg.endM}` : "未設定";
-
-  const slots = Math.max(0, ...cols.map((c) => c.length));
-  const totalMatches = cols.reduce((s, c) => s + c.length, 0);
-  const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
-  // 決勝トーナメントの試合が最初に現れる行（卓ごとの一番早い位置）。無ければ Infinity
-  const bracketStartRow = Math.min(
-    ...cols.map((c) => { const idx = c.findIndex((e) => e.m && e.m.bracket); return idx === -1 ? Infinity : idx; })
-  );
-  const tinfo = [0, 1, 2].map((ti) => {
-    const q = queues[ti];
-    const cur = q[0];
-    const status = tableScheduleStatus(ti);
-    const settingSrc = adjustableMatches(q)[0] || null;
-    return { ti, cur, status, settingSrc };
-  });
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", color: C.ink }}>
-      {/* ===== 固定エリア：進捗・卓見出し・卓調整 ===== */}
-      <div style={{ flexShrink: 0, padding: "14px 12px 10px", borderBottom: `2px solid ${C.line}`, background: C.bg }}>
-        {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 10 }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 16, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{totalMatches}試合</div>
-            <div style={{ height: 7, width: 160, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
-              <div style={{ height: "100%", width: `${totalMatches ? Math.round((doneCount / totalMatches) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
-            </div>
-          </div>
-          <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 6 }}>
-          <div />
-          {tinfo.map(({ ti }) => (
-            <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>卓{ti + 1}</div>
-          ))}
-          <div />
-          {tinfo.map(({ ti, cur, status, settingSrc }) => (
-            <div key={ti} onClick={() => openTableAdjust(ti)} style={{
-              position: "relative", textAlign: "center", cursor: "pointer", boxSizing: "border-box", width: "100%",
-              background: tableAdjust === ti ? C.blue : (status && !status.ok ? "#FFF5F4" : "#fff"),
-              border: `2px ${tableAdjust === ti ? "solid" : "dashed"} ${tableAdjust === ti ? C.blue : status && !status.ok ? C.minus : C.blue}`,
-              borderRadius: 12, padding: "7px 5px 6px",
-            }}>
-              {cur ? (
-                <>
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap",
-                    fontSize: 12, fontWeight: 800, borderRadius: 8, padding: "4px 6px", lineHeight: 1.3,
-                    color: tableAdjust === ti ? C.blue : (status ? (status.ok ? C.win : "#fff") : C.sub),
-                    background: tableAdjust === ti ? "#fff" : (status ? (status.ok ? C.zone : C.minus) : "transparent"),
-                  }}>
-                    {status ? (status.ok ? `☑️${status.text}` : `⚠️${status.text}`) : "–"}
-                  </div>
-                  {settingSrc && (settingSrc.lenPct || settingSrc.matchMinutes) && (
-                    <div style={{ marginTop: 4, fontSize: 11.5, fontWeight: 700, color: tableAdjust === ti ? "#fff" : C.ink, whiteSpace: "nowrap" }}>
-                      🎱{settingSrc.lenPct || 100}% ⏰{settingSrc.matchMinutes || 30}分
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div style={{ fontSize: 11.5, color: tableAdjust === ti ? "#fff" : C.sub }}>予定なし</div>
-              )}
-            </div>
-          ))}
-        </div>
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 10 }}>対戦の準備中です</div>
+      <div style={{ fontSize: 14, color: C.sub, marginBottom: 30, lineHeight: 1.7 }}>
+        本部（B1）の画面に対戦QRが表示されたら、下のボタンでカメラを起動して撮影してください
       </div>
-
-      {/* ===== スクロールエリア：ラウンドごとのタイムライン ===== */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 12px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
-          {Array.from({ length: slots }, (_, s) => (
-            <React.Fragment key={s}>
-              {s === bracketStartRow && (
-                <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, margin: "6px 0 2px" }}>
-                  <div style={{ flex: 1, height: 2, background: C.blue }} />
-                  <div style={{ fontSize: 13, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</div>
-                  <div style={{ flex: 1, height: 2, background: C.blue }} />
-                </div>
-              )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
-              {[0, 1, 2].map((ti) => {
-                const e = cols[ti][s];
-                return (
-                  <div key={ti}>
-                    {e ? (
-                      <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onOpenQr={openQr} onEditReferee={(m) => setRefModalMatch(m)} />
-                    ) : (
-                      <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
-                    )}
-                  </div>
-                );
-              })}
-            </React.Fragment>
-          ))}
-          {slots === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", color: C.sub, fontSize: 14, padding: "24px 0" }}>対戦がまだ登録されていません</div>}
-        </div>
-      </div>
-
-      {/* ===== モーダル：卓調整（1卓） ===== */}
-      {tableAdjust != null && queues[tableAdjust] && (() => {
-        const ti = tableAdjust;
-        const future = adjustableMatches(queues[ti]);
-        return (
-          <div onClick={() => setTableAdjust(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: C.zone, borderRadius: 16, padding: 18, width: "100%", maxWidth: 360, maxHeight: "85vh", overflowY: "auto", position: "relative" }}>
-              <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
-              <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
-              <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 未開始の試合（残り{future.length}試合）を調整</div>
-
-              {future.length === 0 ? (
-                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "8px 0 16px" }}>この卓は現在の対戦が最後です</div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
-                    <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-                    <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
-                    <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-                  </div>
-                  <button onClick={() => applyTableEndTime(ti)} disabled={snapBusy != null} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
-                    {snapBusy === ti ? "計算中…" : "✓ この時刻に合わせる（持ち時間・ハンデ自動）"}
-                  </button>
-                  <button onClick={applyAllTables} disabled={snapBusy != null} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 10, marginBottom: 16 }}>
-                    {snapBusy === ti ? "反映中…" : "全卓まとめて自動調整する"}
-                  </button>
-
-                  <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginBottom: 8 }}>または手動で設定</div>
-                  <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700 }}>ボールハンデ</span>
-                      <span style={{ fontSize: 17, fontWeight: 800 }}>{tLenPct}%（{Math.round(tPer100 * (tLenPct / 100))}分）</span>
-                    </div>
-                    <input type="range" min={40} max={140} step={5} value={tLenPct} onChange={(e) => setTLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-                  </div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>100%の時間（全卓共通）</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                    <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
-                    <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
-                    <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
-                  </div>
-                  <button onClick={applyTableAdjust} disabled={snapBusy != null} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 4 }}>
-                    {snapBusy === ti ? "反映中…" : "手動の値で全卓に反映する"}
-                  </button>
-                </>
-              )}
-
-              {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ===== モーダル：全卓調整 ===== */}
-      {showGlobalAdjust && (
-        <div onClick={() => setShowGlobalAdjust(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: C.zone, borderRadius: 16, padding: 18, width: "100%", maxWidth: 360, maxHeight: "85vh", overflowY: "auto", position: "relative" }}>
-            <button onClick={() => setShowGlobalAdjust(false)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
-            <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>全卓の調整</div>
-
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 6 }}>終了予定時刻（全卓共通）</div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
-              <input inputMode="numeric" value={tEndH} onChange={(e) => setTEndH(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-              <span style={{ fontSize: 18, fontWeight: 800, color: C.sub }}>:</span>
-              <input inputMode="numeric" value={tEndM} onChange={(e) => setTEndM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} style={{ width: 64, textAlign: "center", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 0", fontSize: 20, fontWeight: 800, fontFamily: FONT }} />
-            </div>
-            <button onClick={applyConditionalAllTables} disabled={globalBusy} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "13px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 6 }}>
-              {globalBusy ? "計算中…" : "✓ 押している卓・余裕がある卓だけ自動調整"}
-            </button>
-            <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 16 }}>1分でも押している卓は間に合うよう短く、10分を超えて余裕がある卓は伸ばします。順調な卓はそのままです</div>
-
-            <div style={{ borderTop: `2px solid ${C.line}`, paddingTop: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, textAlign: "center", marginBottom: 4 }}>100%の時間（全卓共通）</div>
-              <div style={{ fontSize: 10.5, color: C.sub, textAlign: "center", marginBottom: 8 }}>そもそもの見積もりがずれていると感じたら、ここで調整</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-                <button onClick={() => setTPer100((v) => Math.max(10, v - 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>−</button>
-                <div style={{ flex: 1, textAlign: "center", fontSize: 18, fontWeight: 800 }}>{tPer100}分</div>
-                <button onClick={() => setTPer100((v) => Math.min(180, v + 1))} style={{ ...homeStepBtn, width: 44, height: 44, fontSize: 20 }}>＋</button>
-              </div>
-              <button onClick={applyPer100ToAll} disabled={globalBusy} style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-                {globalBusy ? "反映中…" : "この基準値を全卓に反映する"}
-              </button>
-            </div>
-
-            {snapMsg && <div style={{ marginTop: 12, textAlign: "center", fontSize: 12, fontWeight: 700, color: snapMsg.ok ? C.win : C.minus }}>{snapMsg.ok ? "✓ " : "✗ "}{snapMsg.text}</div>}
-          </div>
-        </div>
-      )}
-
-      {/* ===== モーダル：呼び出し／引き継ぎQR ===== */}
-      {qrMatch && (
-        <div onClick={() => setQrMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{qrMatch.table}：{qrMatch.names.join(" 対 ")}</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(urlFor(qrMatch))}`} style={{ width: 200, height: 200, margin: "0 auto" }} />
-            <button onClick={() => setQrMatch(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
-          </div>
-        </div>
-      )}
-
-      {/* ===== モーダル：スコアラー呼び出しQR（割り当て直後） ===== */}
-      {refereeQR && (
-        <div onClick={() => setRefereeQR(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　スコアラー呼び出し</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>📝 {refereeQR.name} さん</div>
-            <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>このQRを読み込んでください</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
-            <button onClick={() => setRefereeQR(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
-          </div>
-        </div>
-      )}
-
-      {/* ===== モーダル：✏️から開くスコアラー候補 ===== */}
-      {refModalMatch && (
-        <div onClick={() => setRefModalMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>卓{refModalMatch.table}：スコアラーを選ぶ</div>
-            <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 14, textAlign: "center" }}>{refModalMatch.names[0]} 対 {refModalMatch.names[1]}{refModalMatch.referee ? `（現在：${refModalMatch.referee}）` : ""}</div>
-            {getRefereeCandidates(refModalMatch.table - 1, refModalMatch).length === 0 ? (
-              <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {getRefereeCandidates(refModalMatch.table - 1, refModalMatch).map((p) => {
-                  const tierInfo = p.sameTableLive
-                    ? { label: "同卓で試合中（終了次第）", bg: C.lightBlue, col: C.blue }
-                    : p.tier === 1
-                    ? { label: "同卓に次試合", bg: "#FFF3E0", col: C.hill }
-                    : p.tier === 2
-                    ? { label: "別卓に次試合", bg: C.zone, col: C.sub }
-                    : null;
-                  return (
-                    <button key={p.id} onClick={() => assignReferee(refModalMatch.table - 1, p.name, refModalMatch)} disabled={refereeBusy}
-                      style={{
-                        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                        background: p.tier === 0 || p.sameTableLive ? C.lightBlue : "#fff",
-                        border: `1.5px solid ${p.tier === 0 || p.sameTableLive ? C.blue : C.line}`,
-                        borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
-                      }}>
-                      <span style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{p.name}</span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        {p.count > 0 && <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>担当{p.count}回</span>}
-                        {tierInfo && (
-                          <span style={{ background: tierInfo.bg, color: tierInfo.col, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
-                            {tierInfo.label}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <button onClick={() => setRefModalMatch(null)} style={{ marginTop: 14, width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
-          </div>
-        </div>
-      )}
+      <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy}
+        style={{ background: busy ? C.line : C.blue, color: busy ? C.sub : "#fff", border: "none", borderRadius: 18, padding: "22px 30px", fontSize: 17, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, boxShadow: busy ? "none" : "0 4px 14px rgba(46,109,181,0.3)" }}>
+        {busy ? "読み取り中…" : "📷 カメラでQRを読み取る"}
+      </button>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
+      {err && <div style={{ marginTop: 18, fontSize: 13.5, color: C.minus, lineHeight: 1.6 }}>{err}</div>}
     </div>
   );
 }
+
+/* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
+   スコアラーの中身（QR未読込ならカメラ画面、読込済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブルの様子"], ["scorer", "🎯 スコアラー"]];
+function Shell() {
+  const params = new URLSearchParams(window.location.search);
+  const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
+  const [setupInfo, setSetupInfo] = useState(() => {
+    if (!hasSetup) return null;
+    return {
+      matchId: params.get("m"),
+      names: [params.get("p1"), params.get("p2")],
+      ratings: [Number(params.get("r1")), Number(params.get("r2"))],
+      lenPct: Number(params.get("len")),
+      raceToParam: params.get("rt1") && params.get("rt2")
+        ? [Number(params.get("rt1")), Number(params.get("rt2"))]
+        : null,
+      table: Number(params.get("t")) || 1,
+    };
+  });
+  const [tab, setTab] = useState("scorer");
+
+  const handleScanned = (info) => {
+    // 再読み込みしても復元できるよう、URLにも同じ情報を反映しておく
+    const url = new URL(window.location.href);
+    url.searchParams.set("m", info.matchId);
+    url.searchParams.set("p1", info.names[0]);
+    url.searchParams.set("p2", info.names[1]);
+    url.searchParams.set("r1", info.ratings[0]);
+    url.searchParams.set("r2", info.ratings[1]);
+    url.searchParams.set("len", info.lenPct);
+    url.searchParams.set("t", info.table);
+    if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
+    window.history.replaceState({}, "", url.toString());
+    setSetupInfo(info);
+    setTab("scorer");
+  };
+  // 試合が終わって「終了」を押した時に呼ばれる。カメラ待ち受け画面に戻す
+  const handleExit = () => {
+    window.history.replaceState({}, "", window.location.pathname);
+    setSetupInfo(null);
+  };
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+        {TABS.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 13, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
+          <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
+          <TablesTab />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
+          {setupInfo ? <MatchScreen setupInfo={setupInfo} onExit={handleExit} /> : <CameraLinkScreen onScanned={handleScanned} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= ルート ========= */
+function App() {
+  return <Shell />;
+}
+
+/* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
+function MatchScreen({ setupInfo, onExit }) {
+  const { matchId, names, lenPct, table } = setupInfo;
+  const [res] = useState(() => setupInfo.raceToParam
+    ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
+    : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
+  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
+  const [loaded, setLoaded] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // 球エリア内では画面スクロール（スワイプ）を無効化し、球の操作だけ効くようにする
+  const playAreaRef = useRef(null);
+  useEffect(() => {
+    const el = playAreaRef.current;
+    if (!el) return;
+    const block = (e) => e.preventDefault();
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block, { passive: false });
+  });
+  const [pressed, setPressed] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const lastTapRef = useRef({});
+  const dirtyRef = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const pushTimer = useRef(null);
+
+  const pl = [{ name: names[0], raceTo: String(state.raceTo[0]) }, { name: names[1], raceTo: String(state.raceTo[1]) }];
+
+  const applyLocal = (updater) => {
+    setState((s) => {
+      const next = typeof updater === "function" ? updater(s) : updater;
+      return { ...next, version: s.version + 1 };
+    });
+    dirtyRef.current = true;
+  };
+
+  const [resetDetected, setResetDetected] = useState(false); // 本部が対戦表を組み直し、この対戦が無くなった時に立てる
+
+  // 初回：既存の共有stateを取り込む。ここでは絶対に新規作成しない——
+  // 対戦は必ずB1（本部）が先に作成しているので、無ければ「本部が対戦表を組み直した」等でこの対戦が
+  // 無くなったということ。ここで作り直してしまうと、消えたはずの対戦が復活してB1側を汚してしまう
+  useEffect(() => {
+    (async () => {
+      try {
+        const remote = await loadMatchRemote(matchId);
+        if (remote) {
+          setState(remote);
+        } else {
+          setResetDetected(true);
+        }
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）。
+  // 本部が対戦表を組み直すと、この対戦IDのデータが丸ごと消えて null が届く——その場合はリセット扱いにする
+  useEffect(() => {
+    if (!loaded) return;
+    return subscribeMatch(matchId,
+      (remote) => {
+        if (!remote) { setResetDetected(true); return; }
+        if (remote.version > stateRef.current.version) setState(remote);
+        setSyncStatus({ ok: true });
+      },
+      (err) => setSyncStatus({ ok: false, err }));
+  }, [loaded, matchId]);
+
+  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む（リセット後は何も書き込まない）
+  useEffect(() => {
+    if (!loaded || !dirtyRef.current || resetDetected) return;
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      dirtyRef.current = false;
+      try {
+        await saveMatchRemote(matchId, stateRef.current);
+        setSyncStatus({ ok: true });
+      } catch (err) {
+        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
+      }
+    }, 500);
+  }, [state, loaded, resetDetected]);
+
+  const rt = (i) => state.raceTo[i] || 0;
+  const { tot, rack, brk, balls, phase, lastResult, hist } = state;
+  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const disp = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
+  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
+
+  // ===== 持ち時間タイマー =====
+  // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
+  // matchMinutes を後から変えても既に始まっている試合の残り時間は動かない
+  const deadline = state.deadline || null;
+  // 勝敗が決まったらその時点で停止（finishedAt で固定）
+  const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
+  const isTimeUp = msLeft != null && msLeft <= 0;
+  const timeParts = msLeft == null ? ["--", "--"] : (() => {
+    const s = Math.max(0, Math.floor(msLeft / 1000));
+    return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
+  })();
+  const timeLabel = `${timeParts[0]}:${timeParts[1]}`;
+  // 目標達成率（確定分のみ）。100%を超えることがあるが、成績では100%を上限とする
+  const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
+
+  // ===== 勝敗判定 =====
+  // ・通常どおり、目標点に到達した方が勝ち
+  // ・ヒルヒルで両者が到達した場合は、そのラックで9番を落とした方（最終ラックの勝者）が勝ち
+  const reached = [rt(0) > 0 && tot[0] >= rt(0), rt(1) > 0 && tot[1] >= rt(1)];
+  let matchWinner = null;
+  if (reached[0] && reached[1]) matchWinner = lastResult ? lastResult.w : 0;
+  else if (reached[0]) matchWinner = 0;
+  else if (reached[1]) matchWinner = 1;
+  else if (phase === "play" && !hillHill) {
+    if (disp[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
+    else if (disp[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
+  }
+  // 時間切れ後は、今やっているラックが最終ラック。
+  // そのラックが終わってもどちらも目標に届かなければ両者負け（それぞれ達成率で評価される）
+  const bothLose = matchWinner == null && isTimeUp && phase === "done";
+  const isFinalRack = isTimeUp && matchWinner == null && !bothLose;
+
+  // 試合が決まった時点で所要時間を記録（画面には出さない）。訂正で決着が戻ったら記録も消す
+  useEffect(() => {
+    if (!loaded) return;
+    if ((matchWinner != null || bothLose) && !state.finishedAt) {
+      const fin = Date.now();
+      applyLocal((s) => ({
+        ...s,
+        finishedAt: fin,
+        elapsedMs: s.startedAt ? fin - s.startedAt : null,
+        winner: matchWinner,
+        bothLose,
+      }));
+    } else if (matchWinner == null && !bothLose && state.finishedAt) {
+      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null, bothLose: false }));
+    }
+  }, [matchWinner, bothLose, loaded, state.finishedAt]);
+
+  const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
+
+  const finish = (nb, w) => {
+    pushUndo();
+    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
+    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
+    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
+    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
+  };
+  const move = (n, dir) => {
+    if (phase !== "play") return;
+    const b = balls.find((x) => x.n === n);
+    let loc = b.loc;
+    if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
+    else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
+    const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
+    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
+    else { pushUndo(); applyLocal((s) => ({ ...s, balls: nb })); }
+  };
+  const toggleDead = (n) => {
+    if (phase !== "play") return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
+  };
+  const correct = () => {
+    if (!lastResult) return;
+    pushUndo();
+    applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
+  };
+  const nextRack = () => {
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
+  };
+  const undoRack = () => {
+    pushUndo();
+    applyLocal((s) => {
+      if (!s.hist.length) return s;
+      const last = s.hist[s.hist.length - 1];
+      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
+    });
+  };
+  const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
+  const rematch = () => {
+    pushUndo();
+    applyLocal((s) => {
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: now + mins * 60000, finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
+    });
+  };
+  const backToSetup = () => {
+    window.history.replaceState({}, "", window.location.pathname);
+    if (onExit) onExit(); else window.location.reload();
+  };
+  const swapBreak = () => {
+    if (phase !== "play") return;
+    if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
+  };
+  // バンキング勝者を選んだ瞬間に試合開始を確定する（＝B1へ「試合中」を通知するトリガー）。
+  // 既に他端末で開始済みなら startedAt/deadline は変更しない
+  const chooseBreak = (i) => {
+    applyLocal((s) => {
+      if (s.startedAt) return { ...s, brk: i, phase: "play" };
+      const now = Date.now();
+      const mins = s.matchMinutes || DEFAULT_MATCH_MINUTES;
+      return { ...s, brk: i, phase: "play", startedAt: now, deadline: now + mins * 60000 };
+    });
+  };
+
+  const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+  const gestureImpl = (n, dy) => {
+    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
+    const now = Date.now();
+    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
+    else lastTapRef.current[n] = now;
+  };
+  const gestureRef = useRef(gestureImpl);
+  gestureRef.current = gestureImpl;
+  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+
+  const hillInfo = (i) => {
+    if (rt(i) <= 0) return { txt: "", on: false };
+    const rem = rt(i) - disp[i];
+    if (rem <= 0) return { txt: "達成", on: true };
+    const toHill = rem - 14;
+    return toHill > 0 ? { txt: `ヒルまで あと${toHill}`, on: false } : { txt: `残り${rem}`, on: true };
+  };
+  const col = (loc) => balls.filter((b) => b.loc === loc);
+  const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
+  let cum = [0, 0];
+  const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
+
+  const appUrl = window.location.href;
+
+  if (!loaded) {
+    return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
+  }
+
+  if (resetDetected) {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>この対戦はリセットされました</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.7 }}>
+          本部が対戦表を組み直したようです。お手数ですが、本部で新しく表示されたQRを読み込み直してください。
+        </div>
+        {onExit && (
+          <button onClick={onExit} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            📷 カメラ画面にもどる
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (phase === "banking") {
+    return (
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink, textAlign: "center" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>バンキング</div>
+        <div style={{ fontSize: 14, color: C.sub, marginBottom: 20 }}>先攻を選んでください（どちらの端末からでもOK）</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[0].name}<br />が先攻</button>
+          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[1].name}<br />が先攻</button>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
+          目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
+          持ち時間 <b style={{ fontSize: 20, color: C.ink }}>{state.matchMinutes || DEFAULT_MATCH_MINUTES}分</b>（先攻を選んだ時点から計測開始）
+        </div>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 700, padding: "10px 16px", cursor: "pointer", fontFamily: FONT }}>📱 相手の端末に共有（QR）</button>
+        {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
+        {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 8, fontSize: 12.5, color: C.blue, cursor: "pointer", fontWeight: 700, padding: "5px 10px" }}>📱 引き継ぎ用QR</button>
+        <div style={{
+          position: "absolute", left: "50%", transform: "translateX(-50%)",
+          display: "flex", alignItems: "center", pointerEvents: "none",
+          fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+          color: matchWinner != null ? C.sub : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
+        }}>
+          {matchWinner == null && isTimeUp ? (
+            <span>時間切れ</span>
+          ) : (
+            <>
+              <span style={{ width: 26, textAlign: "right" }}>{timeParts[0]}</span>
+              <span style={{ width: 8, textAlign: "center" }}>:</span>
+              <span style={{ width: 26, textAlign: "left" }}>{timeParts[1]}</span>
+            </>
+          )}
+        </div>
+        <span style={{ fontSize: 12.5, color: C.sub }}>卓{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
+      </div>
+
+      {isFinalRack && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          時間切れ：このラックが最終ラック（届かなければ両者負け）
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+        {[0, 1].map((i) => {
+          const pc = PC[i]; const hi = hillInfo(i);
+          return (
+            <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
+              <div style={{
+                fontSize: 15, fontWeight: 800, borderRadius: 7, padding: "2px 0", marginBottom: 2,
+                background: `linear-gradient(to right, rgba(255,255,255,0.42) ${Math.min(100, Math.round(rate(i) * 100))}%, rgba(0,0,0,0.14) ${Math.min(100, Math.round(rate(i) * 100))}%)`,
+                textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+              }}>{pl[i].name}</div>
+              <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+              </div>
+              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
+              <div style={{ minHeight: 18, marginTop: 4 }}>
+                {brk === i && (
+                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hillHill && matchWinner == null && phase === "play" && (
+        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
+          ヒルヒル：このラックで9番を落とした方が勝ち
+        </div>
+      )}
+
+      {matchWinner != null || bothLose ? (
+        <div style={{ marginBottom: 6 }}>
+          {bothLose ? (
+            <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ・両者負け</div>
+              <div style={{ fontSize: 12.5, marginTop: 2, fontWeight: 700 }}>
+                達成率 {pl[0].name} {(rate(0) * 100).toFixed(1)}％ ／ {pl[1].name} {(rate(1) * 100).toFixed(1)}％
+              </div>
+              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+            </div>
+          ) : (
+            <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
+              <div style={{ fontSize: 12.5, marginTop: 2, color: C.hill, fontWeight: 700 }}>
+                {pl[1 - matchWinner].name} 達成率 {(rate(1 - matchWinner) * 100).toFixed(1)}％
+              </div>
+              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+            <button onClick={correct} style={ctrl}>◀ 訂正</button>
+            <button onClick={rematch} style={{ ...ctrl, background: C.win, color: "#fff", border: "none" }}>🔁 リマッチ</button>
+            <button onClick={backToSetup} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>終了</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+          {phase === "done" && lastResult ? (
+            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
+          ) : (
+            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
+          )}
+          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {phase === "done" && lastResult && (
+              <>
+                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
+                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
+                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
+              </>
+            )}
+          </div>
+          {phase === "done" && lastResult ? (
+            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
+          ) : (
+            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
+          )}
+        </div>
+      )}
+
+      <div ref={playAreaRef} style={{ touchAction: "none" }}>
+        <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
+            {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
+            {balls.map((b) => {
+              const moved = b.loc !== "c";
+              return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+            })}
+          </div>
+          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
+            {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+          </div>
+        </div>
+
+        <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+      </div>
+
+      {histRows.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
+          {histRows.slice().reverse().map((h, k) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
+              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
+                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.cum[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.cum[1]}</span></b>
+                <span style={{ fontSize: 11.5, color: C.sub }}>(+{h.add[0]}/+{h.add[1]})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
+    </div>
+  );
+}
+
+function QRModal({ url, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>相手の端末でこのQRを読む</div>
+        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`} alt="QR" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
+        <div style={{ fontSize: 10.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{url}</div>
+        <button onClick={onClose} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+      </div>
+    </div>
+  );
+}
+
+function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
+  return (
+    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
+      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
+        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+      </div>
+    </div>
+  );
+}
+function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
+  const size = big ? 52 : 34;
+  const base = BALL[b.n]; const nine = b.n === 9;
+  const ref = useRef(null);
+  const startYRef = useRef(0);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
+    const move = (e) => { e.preventDefault(); };
+    const end = (e) => {
+      e.preventDefault();
+      onPress(b.n, false);
+      const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
+      onGesture(b.n, y - startYRef.current);
+    };
+    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
+    const opts = { passive: false };
+    el.addEventListener("touchstart", start, opts);
+    el.addEventListener("touchmove", move, opts);
+    el.addEventListener("touchend", end, opts);
+    el.addEventListener("touchcancel", cancel, opts);
+    return () => {
+      el.removeEventListener("touchstart", start, opts);
+      el.removeEventListener("touchmove", move, opts);
+      el.removeEventListener("touchend", end, opts);
+      el.removeEventListener("touchcancel", cancel, opts);
+    };
+  }, [b.n, onPress, onGesture]);
+
+  return (
+    <div ref={ref}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
+        background: b.dead ? C.dead : nine ? "#fff" : base,
+        border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
+        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
+        color: nine && !b.dead ? base : "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
+        touchAction: "none", cursor: "pointer", position: "relative",
+        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+        transform: pressed ? "scale(1.25)" : "scale(1)",
+        transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
+        zIndex: pressed ? 10 : 1,
+        ...style }}>
+      {b.n}
+      {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
+      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
+    </div>
+  );
+}
+const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
