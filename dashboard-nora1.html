@@ -228,6 +228,14 @@ function annotateColumn(list) {
     return { m, st: "queued" };
   });
 }
+/* ========= 決勝トーナメント（単純な抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
+function getBracketMatches(matches) {
+  return Object.values(matches || {}).filter((m) => m && m.bracket).map((m) => ({ ...normalizeMatch(m) }));
+}
+function bracketMatchesForRound(matches, round) {
+  return getBracketMatches(matches).filter((m) => m.bracketRound === round).sort((a, b) => a.bracketPos - b.bracketPos);
+}
+function bracketTotalRounds(size) { return Math.round(Math.log2(size)); }
 function matchWinnerIndex(m) {
   if (m.bothLose) return null; // 両者負け
   if (m.winner === 0 || m.winner === 1) return m.winner;
@@ -793,6 +801,183 @@ function PcStandingsTab() {
 }
 
 
+
+/* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
+function BracketTab({ roster }) {
+  const s0 = useMemo(() => loadSettings(), []);
+  const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
+  const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0));
+  const [lenPct, setLenPct] = useState(100);
+  const [registering, setRegistering] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [matches, setMatches] = useState({});
+
+  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
+  useEffect(() => { saveSettings({ bracketSize: size }); }, [size]);
+
+  const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
+  const totalRounds = bracketTotalRounds(size);
+  const started = bracketMatches.length > 0;
+  const round1 = bracketMatchesForRound(matches, 1);
+
+  const winnerInfo = (m) => {
+    const w = matchWinnerIndex(m);
+    if (w == null) return null;
+    return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0) };
+  };
+
+  const nextTable = (count) => (count % 3) + 1;
+
+  const registerRound1 = async () => {
+    if (registering) return;
+    const names = slotIdx.slice(0, size).map((idx) => roster[idx]).filter(Boolean);
+    if (names.length < size) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
+    if (!window.confirm(`決勝トーナメント（${size}人）の1回戦、${size / 2}試合を登録します。よろしいですか？`)) return;
+    setRegistering(true);
+    try {
+      const now = Date.now();
+      const next = {};
+      for (let i = 0; i < size / 2; i++) {
+        const p1 = names[i * 2], p2 = names[i * 2 + 1];
+        const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
+        const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
+        const id = randomMatchId();
+        next[id] = {
+          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
+          names: [p1.name, p2.name], table: nextTable(i),
+          r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+          createdAt: now + i, updatedAt: now,
+          bracket: true, bracketRound: 1, bracketPos: i, bracketSize: size,
+        };
+      }
+      await dbUpdate("matches", next);
+      setMsg({ ok: true, text: `1回戦 ${size / 2}試合を登録しました` });
+    } catch (e) {
+      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
+  const advanceRound = async (fromRound) => {
+    if (registering) return;
+    const prev = bracketMatchesForRound(matches, fromRound);
+    if (prev.length === 0 || prev.some((m) => !isMatchFinished(m))) { setMsg({ ok: false, text: "前のラウンドがまだ終わっていません" }); return; }
+    const winners = prev.map(winnerInfo);
+    if (winners.some((w) => !w)) { setMsg({ ok: false, text: "勝者が確定していない試合があります" }); return; }
+    const nextRound = fromRound + 1;
+    if (!window.confirm(`${nextRound}回戦、${winners.length / 2}試合を登録します。よろしいですか？`)) return;
+    setRegistering(true);
+    try {
+      const now = Date.now();
+      const next = {};
+      for (let i = 0; i < winners.length / 2; i++) {
+        const p1 = winners[i * 2], p2 = winners[i * 2 + 1];
+        const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, lenPct) : { rt1: 0, rt2: 0 };
+        const id = randomMatchId();
+        next[id] = {
+          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
+          names: [p1.name, p2.name], table: nextTable(i),
+          r1: p1.r, r2: p2.r, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+          createdAt: now + i, updatedAt: now,
+          bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
+        };
+      }
+      await dbUpdate("matches", next);
+      setMsg({ ok: true, text: `${nextRound}回戦 ${winners.length / 2}試合を登録しました` });
+    } catch (e) {
+      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
+  const roundLabel = (r) => (r === totalRounds ? "決勝" : totalRounds - r === 1 ? "準決勝" : `${r}回戦`);
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>決勝トーナメント</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>抽選で引いた番号順に枠へ入れて組みます</div>
+      </div>
+
+      {!started && (
+        <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[4, 8].map((n) => (
+              <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 8 }}>抽選番号ごとの選手</div>
+          {Array.from({ length: size }, (_, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ width: 28, textAlign: "center", fontSize: 14, fontWeight: 800, color: C.blue, flexShrink: 0 }}>{i + 1}</div>
+              <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1 }}>
+                {roster.map((p, ri) => <option key={p.id} value={ri}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
+              </select>
+            </div>
+          ))}
+
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>ボールハンデ</span>
+              <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+            </div>
+            <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+          </div>
+
+          <button onClick={registerRound1} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
+            {registering ? "登録中…" : `1回戦（${size / 2}試合）を登録する`}
+          </button>
+        </>
+      )}
+
+      {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 12 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+
+      {started && (
+        <div style={{ marginTop: started ? 0 : 16 }}>
+          {Array.from({ length: totalRounds }, (_, ri) => ri + 1).map((r) => {
+            const ms = bracketMatchesForRound(matches, r);
+            if (ms.length === 0) return null;
+            const allDone = ms.every((m) => isMatchFinished(m));
+            const isLastShown = r === Math.max(...bracketMatches.map((m) => m.bracketRound));
+            return (
+              <div key={r} style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
+                {ms.map((m) => {
+                  const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
+                  return (
+                    <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6 }}>
+                      {[0, 1].map((i) => (
+                        <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600, color: w === i ? C.win : w == null ? C.ink : C.sub }}>
+                          {m.names[i]}{isMatchFinished(m) && ` (${(m.tot || [0, 0])[i]})`}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                {allDone && isLastShown && r < totalRounds && (
+                  <button onClick={() => advanceRound(r)} disabled={registering} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
+                    {registering ? "登録中…" : `${roundLabel(r + 1)}を組む`}
+                  </button>
+                )}
+                {allDone && r === totalRounds && (
+                  <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win, marginTop: 6 }}>
+                    🏆 優勝：{ms[0].names[matchWinnerIndex(ms[0])]}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========= 接続診断：保存できない原因（通信・上限・データ量）をその場で確認する ========= */
 function ConnectionTest() {
   const [log, setLog] = useState(null);
@@ -840,6 +1025,7 @@ function ConnectionTest() {
 /* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
 function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [showSingle, setShowSingle] = useState(false);
+  const [showBracket, setShowBracket] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
 
@@ -880,6 +1066,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
         <BulkScheduleTab roster={roster} />
+      </div>
+      <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
+        <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
+          🏆 決勝トーナメント {showBracket ? "▲" : "▼"}
+        </button>
+        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={roster} /></div>}
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowSingle((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
