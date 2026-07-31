@@ -133,6 +133,14 @@ function backupRoster(roster) {
 function loadRosterBackup() {
   try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
 }
+// メンバーリストは大会に出ない人も含めた恒久リストとして持てるようにし、
+// 「抽選番号が入っている人」＝今大会の参加者、という判定にする。並び順はその番号順
+function getParticipants(roster) {
+  return (roster || [])
+    .filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null)
+    .slice()
+    .sort((a, b) => (parseInt(a.draw, 10) || 0) - (parseInt(b.draw, 10) || 0));
+}
 async function saveRoster(roster, allowEmpty) {
   // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
   if (!allowEmpty && (!roster || roster.length === 0)) {
@@ -275,7 +283,7 @@ function buildStandings(matches, roster) {
     if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
     return stats[name];
   };
-  roster.forEach((p) => { if (p.name) ensure(p.name); });
+  getParticipants(roster).forEach((p) => { if (p.name) ensure(p.name); });
 
   for (const id in matches) {
     const m = matches[id];
@@ -1147,19 +1155,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       </div>
       <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
-        <BulkScheduleTab roster={roster} />
+        <BulkScheduleTab roster={getParticipants(roster)} />
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🏆 決勝トーナメント {showBracket ? "▲" : "▼"}
         </button>
-        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={roster} /></div>}
+        {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={getParticipants(roster)} /></div>}
       </div>
       <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
         <button onClick={() => setShowSingle((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🎱 個別に対戦を追加する {showSingle ? "▲" : "▼"}
         </button>
-        {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={roster} /></div>}
+        {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={getParticipants(roster)} /></div>}
       </div>
     </div>
   );
@@ -1208,19 +1216,22 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   };
   // 当日の抽選番号順に並び替える。番号未入力の人は元の順序のまま最後にまとめる
   const sortByDraw = () => {
-    const numbered = roster.filter((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
+    const numbered = getParticipants(roster);
     const unnumbered = roster.filter((p) => !(p.draw !== undefined && p.draw !== "" && p.draw != null));
-    numbered.sort((a, b) => parseInt(a.draw, 10) - parseInt(b.draw, 10));
     setRoster([...numbered, ...unnumbered]);
     persist();
   };
   const hasAnyDraw = roster.some((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
+  const participantCount = getParticipants(roster).length;
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>メンバーリスト</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : "名前とファーゴレート（共有）"}</div>
+        <div style={{ fontSize: 12.5, color: C.blue, fontWeight: 700, marginTop: 6 }}>
+          今大会の参加者（抽選番号あり）：{participantCount}人 / 全メンバー{roster.length}人
+        </div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
 
@@ -1263,7 +1274,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         </button>
       )}
       <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
-        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
+        当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。抽選番号が入っている人だけが今大会の参加者として扱われるので、大会に出ない人は番号を空にしたままでリストに残しておけます。
       </div>
     </div>
   );
@@ -1276,9 +1287,11 @@ const BULK_TABLES = 3;
 function bulkMakePlan(N, G, relaxed) {
   const total = (N * G) / 2;
   if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
-  const slots = Math.ceil(total / BULK_TABLES);
+  // 少人数だと同時に3卓を埋められない（1試合に2人必要なので）。1コマあたりの卓数を人数に応じて制限する
+  const tablesPerSlot = Math.max(1, Math.min(BULK_TABLES, Math.floor(N / 2)));
+  const slots = Math.ceil(total / tablesPerSlot);
   const sizes = [];
-  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? BULK_TABLES : total - BULK_TABLES * (slots - 1));
+  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? tablesPerSlot : total - tablesPerSlot * (slots - 1));
   let lower = 0;
   for (let s = 0; s < slots - 1; s++) {
     const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
@@ -1311,6 +1324,8 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
   let cost = 0, nodes = 0, best = null;
 
   const viable = (s) => {
+    // 緩和モードでは「3連投禁止」を前提にした事前見積り自体が矛盾するので、枝刈りをせず素直に探索する
+    if (relaxed) return true;
     const left = slots - s - 1;
     for (let x = 1; x <= N; x++) {
       const need = G - deg[x];
@@ -1529,7 +1544,7 @@ function BulkScheduleTab({ roster }) {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
+        <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
         {relaxed ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
