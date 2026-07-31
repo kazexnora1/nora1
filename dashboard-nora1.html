@@ -398,7 +398,35 @@ function saveSettings(patch) {
   } catch {}
 }
 
-/* ========= ルート：タブ切替 ========= */
+/* ========= プレイヤータブ：成績・対戦表（総当たり表／決勝トーナメント込み）を統合。スマホ表示⇄PC表示を切り替え ========= */
+function PlayerTab() {
+  const [sub, setSub] = useState("standings"); // "standings" | "matches"
+  const [pc, setPc] = useState(false);
+
+  const btn = (active) => ({
+    background: active ? C.blue : "#fff", color: active ? "#fff" : C.ink,
+    border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "7px 14px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
+  });
+
+  return (
+    <div style={{ height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 16px", flexShrink: 0, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setSub("standings")} style={btn(sub === "standings")}>🏅 成績</button>
+          <button onClick={() => setSub("matches")} style={btn(sub === "matches")}>📋 対戦表</button>
+        </div>
+        <button onClick={() => setPc((v) => !v)} style={btn(pc)}>{pc ? "🖥 PC表示" : "📱 スマホ表示"}</button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: (pc || sub === "matches") ? "hidden" : "auto" }}>
+        <div style={{ maxWidth: pc ? 1600 : 820, margin: "0 auto", height: (pc || sub === "matches") ? "100%" : "auto" }}>
+          {sub === "standings" ? (pc ? <PcStandingsTab /> : <StandingsTab />) : <PcMatchGridTab />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function App() {
   const [tab, setTab] = useState("home");
   const [roster, setRoster] = useState([]);
@@ -426,10 +454,8 @@ function App() {
   }, []);
 
   const tabs = [
-    ["home", "🗓 タイムライン"],
-    ["standings", "🏅 成績"],
-    ["pcmatch", "🖥 PC対戦表"],
-    ["pcstand", "🖥 PC戦績"],
+    ["home", "🗓 テーブル"],
+    ["player", "🧑‍🤝‍🧑 プレイヤー"],
     ["settings", "⚙️ 設定"],
   ];
 
@@ -445,12 +471,10 @@ function App() {
           ))}
         </div>
       </div>
-      <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: tab === "home" ? "hidden" : "auto" }}>
-        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1600 : 820, margin: "0 auto", height: tab === "home" ? "100%" : "auto" }}>
+      <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
+        <div style={{ maxWidth: tab === "player" ? "none" : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && <HomeTab />}
-          {tab === "standings" && <StandingsTab />}
-          {tab === "pcmatch" && <PcMatchGridTab />}
-          {tab === "pcstand" && <PcStandingsTab />}
+          {tab === "player" && <PlayerTab />}
           {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
         </div>
       </div>
@@ -718,7 +742,7 @@ function PcMatchGridTab() {
   }, [matches, roster]);
 
   return (
-    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
@@ -881,7 +905,7 @@ function PcStandingsTab() {
   const tournamentName = loadSettings().tournamentName || "";
 
   return (
-    <div className="print-fit" style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div className="print-fit" style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexShrink: 0 }}>
