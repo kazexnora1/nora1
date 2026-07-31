@@ -420,7 +420,7 @@ function App() {
   ];
 
   return (
-    <div style={{ minHeight: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
           {tabs.map(([key, label]) => (
@@ -449,6 +449,27 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
   const w = st === "done" ? matchWinnerIndex(m) : null;
+
+  // 試合中の進行バー用：残り時間だけは時間経過そのものでも変わるので、定期的に再描画する
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (st !== "live") return;
+    const iv = setInterval(() => forceTick((t) => t + 1), 15000);
+    return () => clearInterval(iv);
+  }, [st]);
+  const scoreProgress = rt[0] > 0 && rt[1] > 0 ? Math.max(tot[0] / rt[0], tot[1] / rt[1]) : 0;
+  let timeProgress = 0;
+  if (m.startedAt && m.deadline && !m.finishedAt) {
+    const totalMs = m.deadline - m.startedAt;
+    const remainMs = m.deadline - Date.now();
+    timeProgress = totalMs > 0 ? Math.min(1, Math.max(0, 1 - remainMs / totalMs)) : 1;
+  }
+  const finishProgress = Math.max(scoreProgress, timeProgress);
+  const remainMin = m.deadline ? Math.max(0, (m.deadline - Date.now()) / 60000) : null;
+  // 片方でもヒル（目標まで14点以内）、または残り3分を切ったら「そろそろ終わる」の赤にする
+  const oneHill = rt[0] > 0 && rt[1] > 0 && ((rt[0] - tot[0] <= 14) || (rt[1] - tot[1] <= 14));
+  const urgent = oneHill || (remainMin != null && remainMin <= 3);
+  const finishColor = urgent ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
 
   // 終了した試合はここだけスコアを訂正できる（B1のこのカードから）。誤タップで数字を消さないよう、
   // カードを押すと専用のダイアログが開く方式にしている。他画面（B2/B3等）にもそのまま反映される
@@ -536,6 +557,12 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
           </div>
         ))}
       </div>
+
+      {st === "live" && (
+        <div style={{ height: 5, background: "rgba(0,0,0,0.1)", borderRadius: 3, overflow: "hidden", flexShrink: 0 }}>
+          <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 3, transition: "width 400ms ease" }} />
+        </div>
+      )}
 
       {editOpen && (
         <div onClick={(e) => { e.stopPropagation(); setEditOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
@@ -1554,7 +1581,12 @@ function HomeTab() {
 
     const nextAtThisTable = new Set(queues[ti][1] ? queues[ti][1].names : []);
     const nextAtOtherTable = new Set();
-    queues.forEach((q, qi) => { if (qi !== ti && q[1]) q[1].names.forEach((n) => nextAtOtherTable.add(n)); });
+    queues.forEach((q, qi) => {
+      if (qi === ti) return;
+      // 別卓で今まさに呼び出し中（まだ始まっていない）対戦の当事者も、もうすぐ試合が始まるので後回しにする
+      if (q[0] && !q[0].startedAt) q[0].names.forEach((n) => nextAtOtherTable.add(n));
+      if (q[1]) q[1].names.forEach((n) => nextAtOtherTable.add(n));
+    });
 
     return roster
       .filter((p) => p.name && !playingNow.has(p.name) && !refereeingNow.has(p.name))
