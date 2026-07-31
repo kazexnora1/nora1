@@ -518,52 +518,61 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
       padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
       overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
     }}>
-      {refereeEnabled && (st === "call" || st === "live") && (
-        <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
-          position: "absolute", top: 3, right: 3, zIndex: 2, background: "rgba(255,255,255,0.9)",
-          border: `1px solid ${C.line}`, borderRadius: 20, width: 22, height: 22, fontSize: 12,
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0,
-        }} title={m.referee ? `スコアラー：${m.referee}` : "スコアラーを選ぶ"}>📱</button>
-      )}
+      {/* 1: バッジ */}
       <div style={{ textAlign: "center" }}>
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
           border: st === "call" ? `1.5px solid ${C.blue}` : "none",
           borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
         }}>{style.badge}</span>
-        {st === "done" && <div style={{ fontSize: 11, marginTop: 2, opacity: 0.6 }}>✏️</div>}
       </div>
+
+      {/* 2: 選手名 */}
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-            <div style={{
-              fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
-              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
-              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            }}>{names[i]}</div>
+          <div key={i} style={{
+            flex: 1, minWidth: 0, textAlign: "center", fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+            color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>{names[i]}</div>
+        ))}
+      </div>
 
-            {st === "done" ? (
-              <>
-                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: won(i) ? C.win : C.sub }}>{tot[i]}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
-              </>
-            ) : st === "live" ? (
-              <>
-                <div style={{ fontSize: 26, fontWeight: 900, color: C.ink, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" }}>{tot[i]}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
-              </>
-            ) : (
-              <div style={{ fontSize: 23, fontWeight: 800, color: C.sub, lineHeight: 1.3, fontVariantNumeric: "tabular-nums" }}>{rt[i]}</div>
-            )}
+      {/* 3: スコア（呼び出し中・待機中は「-」） */}
+      <div style={{ display: "flex", gap: 3 }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{
+            flex: 1, minWidth: 0, textAlign: "center", lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
+            fontSize: st === "done" ? 24 : st === "live" ? 26 : 22, fontWeight: 900,
+            color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
+          }}>
+            {st === "done" || st === "live" ? tot[i] : "–"}
           </div>
         ))}
       </div>
 
-      {st === "live" && (
-        <div style={{ height: 5, background: "rgba(0,0,0,0.1)", borderRadius: 3, overflow: "hidden", flexShrink: 0 }}>
-          <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 3, transition: "width 400ms ease" }} />
-        </div>
-      )}
+      {/* 4: 目標点 */}
+      <div style={{ display: "flex", gap: 3 }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+        ))}
+      </div>
+
+      {/* 5: 中央揃えでアイコン（終了=✏️ヒント／呼び出し中=📱でスコアラー選択）かステータスバー（試合中） */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 18 }}>
+        {st === "done" && <span style={{ fontSize: 12, opacity: 0.6 }}>✏️</span>}
+        {st === "call" && refereeEnabled && (
+          <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
+            background: "none", border: `1px solid ${C.line}`, borderRadius: 20, width: 24, height: 24, fontSize: 13,
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0,
+          }} title={m.referee ? `スコアラー：${m.referee}` : "スコアラーを選ぶ"}>📱</button>
+        )}
+        {st === "live" && (
+          <div style={{ width: "100%", height: 5, background: "rgba(0,0,0,0.1)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 3, transition: "width 400ms ease" }} />
+          </div>
+        )}
+      </div>
 
       {editOpen && (
         <div onClick={(e) => { e.stopPropagation(); setEditOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
