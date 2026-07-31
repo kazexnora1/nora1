@@ -1273,7 +1273,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
 /* ========= 試合割りタブ：総当たり風スケジュールを自動生成して一括登録 ========= */
 const BULK_TABLES = 3;
 
-function bulkMakePlan(N, G) {
+function bulkMakePlan(N, G, relaxed) {
   const total = (N * G) / 2;
   if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
   const slots = Math.ceil(total / BULK_TABLES);
@@ -1283,8 +1283,8 @@ function bulkMakePlan(N, G) {
   for (let s = 0; s < slots - 1; s++) {
     const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
     const cap = Math.min(sizes[s], sizes[s + 1]);
-    if (need > cap) {
-      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。` };
+    if (!relaxed && need > cap) {
+      return { error: `この人数では成立しません。1コマに${sizes[s] * 2}人必要ですが、同じ卓でしか連投できないため次コマへ持ち越せるのは最大${cap}人です。条件緩和モードを試してください。` };
     }
     if (need > 0) lower += need;
   }
@@ -1299,7 +1299,7 @@ function bulkMulberry(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit) {
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
   const { total, slots, sizes } = plan;
   const pos = [];
   for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
@@ -1345,8 +1345,8 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit) {
         let carry = 0, ok = true;
         for (const x of [a, b]) {
           if (prev && prev.has(x)) {
-            if (prev.get(x) !== t) { ok = false; break; }
-            if (back && back.has(x)) { ok = false; break; }
+            if (!relaxed && prev.get(x) !== t) { ok = false; break; }
+            if (!relaxed && back && back.has(x)) { ok = false; break; }
             carry++;
           }
         }
@@ -1374,17 +1374,17 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit) {
   try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
   return best;
 }
-function bulkGenerate(N, G) {
-  const plan = bulkMakePlan(N, G);
+function bulkGenerate(N, G, relaxed) {
+  const plan = bulkMakePlan(N, G, relaxed);
   if (plan.error) return { error: plan.error };
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000);
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed);
     if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (best.cost <= plan.lower) break; }
   }
-  if (!best) return { error: "条件を満たす組み合わせが見つかりませんでした。人数か試合数を変えてください。" };
+  if (!best) return { error: relaxed ? "緩和モードでも組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。人数か試合数を変えるか、条件緩和モードを試してください。" };
   return { plan, board: best.board, cost: best.cost, optimal: best.cost <= plan.lower };
 }
 
@@ -1403,11 +1403,12 @@ function BulkScheduleTab({ roster }) {
   const [endM, setEndM] = useState(s0.endM || "00");
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
+  const [relaxed, setRelaxed] = useState(!!s0.relaxedSchedule);
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, relaxedSchedule: relaxed });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, relaxed]);
 
   const timeEstimate = useMemo(() => {
     if (!result || result.error) return null;
@@ -1450,9 +1451,12 @@ function BulkScheduleTab({ roster }) {
     return { pct: rounded };
   }, [result, startH, startM, endH, endM, changeoverMin, per100Min]);
 
+  // 条件緩和モードの時は「1人の試合数」を使わず、全員と1回ずつ当たる総当たり戦として組む
+  const effectiveGames = relaxed ? players - 1 : games;
+
   const run = () => {
     setBusy(true); setMsg(null);
-    setTimeout(() => { setResult(bulkGenerate(players, games)); setBusy(false); }, 20);
+    setTimeout(() => { setResult(bulkGenerate(players, effectiveGames, relaxed)); setBusy(false); }, 20);
   };
 
   const rows = useMemo(() => {
@@ -1526,7 +1530,28 @@ function BulkScheduleTab({ roster }) {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
-        <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+        {relaxed ? (
+          <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, textAlign: "center" }}>総当たり戦（{players - 1}）</div>
+          </div>
+        ) : (
+          <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+        )}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: relaxed ? C.lightBlue : C.zone, border: `1.5px solid ${relaxed ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>条件緩和モード</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>ONの間は総当たり戦（全員と1回ずつ）で組み、同卓縛り・3連投禁止も緩めます</div>
+        </div>
+        <button onClick={() => setRelaxed((v) => !v)} style={{
+          background: relaxed ? C.blue : C.line, color: relaxed ? "#fff" : C.sub,
+          border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+          cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+        }}>
+          {relaxed ? "ON" : "OFF"}
+        </button>
       </div>
 
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
