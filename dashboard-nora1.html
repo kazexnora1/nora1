@@ -7,6 +7,11 @@
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
+  @media print {
+    .no-print { display: none !important; }
+    .print-fit { height: auto !important; overflow: visible !important; }
+    body, html, #root { height: auto !important; overflow: visible !important; }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -430,7 +435,7 @@ function App() {
 
   return (
     <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
+      <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
         <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
           {tabs.map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
@@ -440,7 +445,7 @@ function App() {
           ))}
         </div>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: tab === "home" ? "hidden" : "auto" }}>
+      <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: tab === "home" ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1600 : 820, margin: "0 auto", height: tab === "home" ? "100%" : "auto" }}>
           {tab === "home" && <HomeTab />}
           {tab === "standings" && <StandingsTab />}
@@ -798,12 +803,18 @@ function PcStandingsTab() {
   const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster), [matches, roster]);
   const rowCount = Math.max(1, stRows.length);
   const gCell = { border: `1px solid ${C.line}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 4px" };
+  const tournamentName = loadSettings().tournamentName || "";
 
   return (
-    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div className="print-fit" style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
-      <div style={{
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexShrink: 0 }}>
+        <div style={{ fontSize: 18, fontWeight: 900 }}>{tournamentName ? `${tournamentName}　結果` : "成績結果"}</div>
+        <button className="no-print" onClick={() => window.print()} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>🖨 印刷する</button>
+      </div>
+
+      <div className="print-fit" style={{
         flex: 1, minHeight: 0, display: "grid",
         gridTemplateColumns: `52px minmax(100px, 1.1fr) repeat(${maxGames}, minmax(0, 1fr)) 76px 64px`,
         gridTemplateRows: `26px repeat(${rowCount}, 1fr)`,
