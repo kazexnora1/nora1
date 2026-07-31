@@ -243,6 +243,15 @@ function matchWinnerIndex(m) {
   if (r1) return 1;
   return null;
 }
+// タイムラインで点数を手直しした時、保存済みの m.winner に頼らず新しい点数から勝敗を計算し直す
+function recomputeWinner(raceTo, tot, hist) {
+  const r0 = raceTo[0] > 0 && tot[0] >= raceTo[0];
+  const r1 = raceTo[1] > 0 && tot[1] >= raceTo[1];
+  if (r0 && r1) { const last = (hist || []).slice(-1)[0]; return last ? last.w : 0; }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
 // 成績集計
 // ・勝ちがつかなかった試合は、目標点に対する取得点の割合（達成率、上限100%）を記録
 // ・時間切れでどちらも目標に届かなかった試合は両者負け扱いで、双方に達成率を記録
@@ -486,6 +495,20 @@ function TimelineSlotCard({ m, st }) {
   const rt = m.raceTo || [0, 0];
   const w = st === "done" ? matchWinnerIndex(m) : null;
 
+  // 終了した試合はここだけスコアを直接編集できる（B1のこのカードから）。他画面（B2/B3等）にもそのまま反映される
+  const [editVal, setEditVal] = useState([String(tot[0]), String(tot[1])]);
+  useEffect(() => { setEditVal([String(tot[0]), String(tot[1])]); }, [m.id, tot[0], tot[1]]);
+  const commitScore = async (i, raw) => {
+    const v = Math.max(0, Math.min(999, parseInt(raw, 10) || 0));
+    const newTot = i === 0 ? [v, tot[1]] : [tot[0], v];
+    const newWinner = recomputeWinner(rt, newTot, m.hist);
+    try {
+      await dbUpdate("matches/" + m.id, {
+        tot: newTot, winner: newWinner, version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+    } catch {}
+  };
+
   const style =
     st === "done"
       ? (m.bothLose
@@ -524,9 +547,23 @@ function TimelineSlotCard({ m, st }) {
             }}>{names[i]}</div>
 
             {st === "done" ? (
-              <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.3, color: won(i) ? C.win : C.sub }}>
-                {won(i) ? "勝" : "負"}
-              </div>
+              <>
+                <input
+                  type="text" inputMode="numeric" value={editVal[i]}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 3);
+                    setEditVal((arr) => (i === 0 ? [v, arr[1]] : [arr[0], v]));
+                  }}
+                  onBlur={(e) => commitScore(i, e.target.value)}
+                  style={{
+                    width: "100%", textAlign: "center", border: "none", borderBottom: `1px dotted ${C.line}`, background: "none", outline: "none",
+                    fontSize: 24, fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
+                    color: won(i) ? C.win : C.sub, fontFamily: FONT, padding: 0,
+                  }}
+                />
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+              </>
             ) : st === "live" ? (
               <>
                 <div style={{ fontSize: 26, fontWeight: 900, color: C.ink, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" }}>{tot[i]}</div>
