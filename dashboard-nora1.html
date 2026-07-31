@@ -404,8 +404,7 @@ function App() {
     ["home", "📊 ダッシュボード"],
     ["timeline", "🗓 タイムライン"],
     ["standings", "🏅 成績"],
-    ["pcmatch", "🖥 PC対戦表"],
-    ["pcstand", "🖥 PC戦績"],
+    ["pc", "🖥 PC"],
     ["settings", "⚙️ 設定"],
   ];
 
@@ -422,12 +421,11 @@ function App() {
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ maxWidth: (tab === "pcmatch" || tab === "pcstand") ? 1200 : 820, margin: "0 auto" }}>
+        <div style={{ maxWidth: tab === "pc" ? 1500 : 820, margin: "0 auto" }}>
           {tab === "home" && <HomeTab />}
           {tab === "timeline" && <TimelineTab />}
           {tab === "standings" && <StandingsTab />}
-          {tab === "pcmatch" && <PcMatchGridTab />}
-          {tab === "pcstand" && <PcStandingsTab />}
+          {tab === "pc" && <PcTab />}
           {tab === "settings" && <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError} />}
         </div>
       </div>
@@ -581,103 +579,8 @@ function StandingsTab() {
 
 /* ========= PC表示タブ：対戦一覧（左）と戦績（右）を1画面に収めて開きっぱなしにする用。
    紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
-function PcMatchGridTab() {
-  const [matches, setMatches] = useState({});
-  const [err, setErr] = useState(null);
-
-  useEffect(() => dbSubscribe("matches",
-    (m) => { setMatches(m || {}); setErr(null); },
-    (e) => setErr(e)), []);
-
-  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
-  const tableCount = 3;
-
-  const cellStyle = (m) => {
-    if (!m) return { background: "#fff" };
-    const done = isMatchFinished(m);
-    if (done) return { background: "#DADDE1" }; // 終了：灰色
-    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
-    return { background: "#fff" }; // 未開始：白
-  };
-
-  const rowCount = Math.max(1, rounds.length);
-
-  return (
-    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "8px 14px 10px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      {err && <Notice>データを取得できません：{err}</Notice>}
-
-      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 6, fontSize: 12, flexShrink: 0 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 13, height: 13, background: "#DADDE1", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />終了
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 13, height: 13, background: "#FFF3B0", border: "1px solid #E8C400", borderRadius: 3, display: "inline-block" }} />対戦中
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 13, height: 13, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />未開始
-        </span>
-      </div>
-
-      {/* 縦=回転、横=卓のグリッド。行の高さは1frで均等割りするので、回転数がいくつでも画面内に収まりスクロール不要 */}
-      <div style={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: "44px repeat(3, 1fr)",
-        gridTemplateRows: `32px repeat(${rowCount}, 1fr)`,
-        border: `1px solid ${C.line}`, boxSizing: "border-box",
-      }}>
-        <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
-        {Array.from({ length: tableCount }, (_, i) => (
-          <div key={i} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.sub }}>
-            {i + 1}卓
-          </div>
-        ))}
-
-        {rounds.map(({ slot, matches: ms }) => (
-          <React.Fragment key={slot}>
-            <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.sub }}>
-              {slot + 1}
-            </div>
-            {Array.from({ length: tableCount }, (_, ti) => {
-              const m = ms.find((x) => (x.table || 0) === ti + 1);
-              const names = m ? (m.names || ["", ""]) : null;
-              return (
-                <div key={ti} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, overflow: "hidden", padding: "0 4px", textAlign: "center" }}>
-                  {names ? `${names[0]}－${names[1]}` : ""}
-                </div>
-              );
-            })}
-          </React.Fragment>
-        ))}
-
-        {rounds.length === 0 && (
-          <div style={{ gridColumn: `1 / span ${tableCount + 1}`, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 14 }}>
-            対戦がまだ登録されていません
-          </div>
-        )}
-      </div>
-
-      {extra.length > 0 && (
-        <div style={{ marginTop: 8, flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.sub, marginBottom: 4 }}>個別追加分</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {extra.map((m) => {
-              const names = m.names || ["", ""];
-              return (
-                <div key={m.id} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 10px", fontSize: 13, fontWeight: 700 }}>
-                  {names[0]}－{names[1]}（卓{m.table}）
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-/* ========= PC戦績タブ：対戦相手つきの戦績を単体で表示（開きっぱなし用） ========= */
-function PcStandingsTab() {
+/* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
+function PcTab() {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
@@ -686,62 +589,143 @@ function PcStandingsTab() {
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
     (e) => setErr(e)), []);
 
+  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
   const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster), [matches, roster]);
-  const rowCount = Math.max(1, stRows.length);
+
+  const tableCount = 3;
+  const matchRowCount = Math.max(1, rounds.length);
+  const standRowCount = Math.max(1, stRows.length);
+
+  const cellStyle = (m) => {
+    if (!m) return { background: "#fff" };
+    const done = isMatchFinished(m);
+    if (done) return { background: "#DADDE1" }; // 終了：灰色
+    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
+    return { background: "#fff" }; // 未開始：白
+  };
   const gCell = { border: `1px solid ${C.line}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 3px" };
 
   return (
-    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "8px 14px 10px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      {err && <Notice>データを取得できません：{err}</Notice>}
+    <div style={{ height: "calc(100vh - 56px)", boxSizing: "border-box", padding: "8px 14px 10px", color: C.ink, fontFamily: FONT, display: "flex", gap: 16 }}>
+      {err && <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 10 }}><Notice>データを取得できません：{err}</Notice></div>}
 
-      {/* 縦=選手、横=順位・名前・対戦相手ごとの結果・W-L・率のグリッド。行の高さは1frで均等割りするので、
-          人数がいくつでも画面内に収まりスクロール不要 */}
-      <div style={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: `36px minmax(70px, 1fr) repeat(${maxGames}, minmax(0, 1fr)) 50px 42px`,
-        gridTemplateRows: `30px repeat(${rowCount}, 1fr)`,
-        border: `1px solid ${C.line}`, boxSizing: "border-box", fontSize: 13,
-      }}>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>順位</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>名前</div>
-        {Array.from({ length: maxGames }, (_, i) => (
-          <div key={i} style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>{i + 1}</div>
-        ))}
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>W-L</div>
-        <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>率</div>
+      {/* ===== 左：対戦一覧 ===== */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 6, fontSize: 12, flexShrink: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginRight: 4 }}>対戦一覧</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 12, background: "#DADDE1", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />終了
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 12, background: "#FFF3B0", border: "1px solid #E8C400", borderRadius: 3, display: "inline-block" }} />対戦中
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 12, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 3, display: "inline-block" }} />未開始
+          </span>
+        </div>
 
-        {stRows.map((r) => (
-          <React.Fragment key={r.name}>
-            <div style={{ ...gCell, fontWeight: 700 }}>{r.rank}</div>
-            <div style={{ ...gCell, fontWeight: 700, alignItems: "flex-start", textAlign: "left" }}>{r.name}</div>
-            {Array.from({ length: maxGames }, (_, i) => {
-              const g = r.games[i];
-              return (
-                <div key={i} style={gCell}>
-                  {g ? (
-                    <>
-                      <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.2 }}>{g.opponent}</div>
-                      <div style={{ fontSize: 12.5, fontWeight: g.isWin ? 800 : 600, color: g.pending ? C.sub : g.isWin ? C.win : C.ink, lineHeight: 1.2 }}>
-                        {g.pending ? "―" : g.display}
-                      </div>
-                    </>
-                  ) : "–"}
-                </div>
-              );
-            })}
-            <div style={gCell}>{r.win}-{r.loss}</div>
-            <div style={gCell}>{r.avgRate == null ? "–" : Math.round(r.avgRate * 100)}</div>
-          </React.Fragment>
-        ))}
+        <div style={{
+          flex: 1, minHeight: 0, display: "grid",
+          gridTemplateColumns: "40px repeat(3, 1fr)",
+          gridTemplateRows: `30px repeat(${matchRowCount}, 1fr)`,
+          border: `1px solid ${C.line}`, boxSizing: "border-box",
+        }}>
+          <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
+          {Array.from({ length: tableCount }, (_, i) => (
+            <div key={i} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub }}>
+              {i + 1}卓
+            </div>
+          ))}
 
-        {stRows.length === 0 && (
-          <div style={{ gridColumn: `1 / span ${maxGames + 4}`, ...gCell, color: C.sub }}>まだ結果がありません</div>
+          {rounds.map(({ slot, matches: ms }) => (
+            <React.Fragment key={slot}>
+              <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.sub }}>
+                {slot + 1}
+              </div>
+              {Array.from({ length: tableCount }, (_, ti) => {
+                const m = ms.find((x) => (x.table || 0) === ti + 1);
+                const names = m ? (m.names || ["", ""]) : null;
+                return (
+                  <div key={ti} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, overflow: "hidden", padding: "0 4px", textAlign: "center" }}>
+                    {names ? `${names[0]}－${names[1]}` : ""}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
+
+          {rounds.length === 0 && (
+            <div style={{ gridColumn: `1 / span ${tableCount + 1}`, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 13 }}>
+              対戦がまだ登録されていません
+            </div>
+          )}
+        </div>
+
+        {extra.length > 0 && (
+          <div style={{ marginTop: 6, flexShrink: 0 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {extra.map((m) => {
+                const names = m.names || ["", ""];
+                return (
+                  <div key={m.id} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 8px", fontSize: 11.5, fontWeight: 700 }}>
+                    {names[0]}－{names[1]}（卓{m.table}）
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
+      </div>
+
+      {/* ===== 右：戦績 ===== */}
+      <div style={{ flex: 1.3, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6, flexShrink: 0 }}>戦績</div>
+        <div style={{
+          flex: 1, minHeight: 0, display: "grid",
+          gridTemplateColumns: `36px minmax(70px, 1fr) repeat(${maxGames}, minmax(0, 1fr)) 50px 42px`,
+          gridTemplateRows: `30px repeat(${standRowCount}, 1fr)`,
+          border: `1px solid ${C.line}`, boxSizing: "border-box", fontSize: 13,
+        }}>
+          <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>順位</div>
+          <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>名前</div>
+          {Array.from({ length: maxGames }, (_, i) => (
+            <div key={i} style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>{i + 1}</div>
+          ))}
+          <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>W-L</div>
+          <div style={{ ...gCell, background: "#fafafa", fontWeight: 800, color: C.sub }}>率</div>
+
+          {stRows.map((r) => (
+            <React.Fragment key={r.name}>
+              <div style={{ ...gCell, fontWeight: 700 }}>{r.rank}</div>
+              <div style={{ ...gCell, fontWeight: 700, alignItems: "flex-start", textAlign: "left" }}>{r.name}</div>
+              {Array.from({ length: maxGames }, (_, i) => {
+                const g = r.games[i];
+                return (
+                  <div key={i} style={gCell}>
+                    {g ? (
+                      <>
+                        <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.2 }}>{g.opponent}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: g.isWin ? 800 : 600, color: g.pending ? C.sub : g.isWin ? C.win : C.ink, lineHeight: 1.2 }}>
+                          {g.pending ? "―" : g.display}
+                        </div>
+                      </>
+                    ) : "–"}
+                  </div>
+                );
+              })}
+              <div style={gCell}>{r.win}-{r.loss}</div>
+              <div style={gCell}>{r.avgRate == null ? "–" : Math.round(r.avgRate * 100)}</div>
+            </React.Fragment>
+          ))}
+
+          {stRows.length === 0 && (
+            <div style={{ gridColumn: `1 / span ${maxGames + 4}`, ...gCell, color: C.sub }}>まだ結果がありません</div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
 
 /* ========= 接続診断：保存できない原因（通信・上限・データ量）をその場で確認する ========= */
 function ConnectionTest() {
