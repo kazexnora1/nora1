@@ -72,6 +72,9 @@ function computeRace(R1, R2, lenPct) {
 }
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+// 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
+const APP_VERSION = "1.123";
+const BUILD_TIME = "2026-08-01 09:29";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1295,6 +1298,9 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
           🎱 個別に対戦を追加する {showSingle ? "▲" : "▼"}
         </button>
         {showSingle && <div style={{ marginTop: 8 }}><ScheduleTab roster={roster} /></div>}
+      </div>
+      <div style={{ textAlign: "center", padding: "18px 0 28px", fontSize: 11.5, color: C.sub }}>
+        カゼログ ver{APP_VERSION}　{BUILD_TIME}
       </div>
     </div>
   );
