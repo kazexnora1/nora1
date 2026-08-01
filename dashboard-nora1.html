@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.123";
-const BUILD_TIME = "2026-08-01 09:29";
+const APP_VERSION = "1.124";
+const BUILD_TIME = "2026-08-01 09:36";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -408,6 +408,7 @@ function App() {
   const [rosterError, setRosterError] = useState(null);
   const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
   const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
+  const [pcPlayerView, setPcPlayerView] = useState("matrix"); // "matrix" | "standings"（PC表示・総当たりモード時のみ使用）
   const isPc = deviceMode === "pc";
 
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
@@ -437,17 +438,25 @@ function App() {
   ];
 
   const playerContent = isPc ? (
-    <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
-      {roundRobin && (
-        <div style={{ flexShrink: 0, maxHeight: "42%", overflowY: "auto" }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 8 }}>対戦表（総当たり）</div>
-          <RoundRobinMatrix />
+    roundRobin ? (
+      <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
+          <button onClick={() => setPcPlayerView("matrix")} style={{
+            background: pcPlayerView === "matrix" ? C.blue : "#fff", color: pcPlayerView === "matrix" ? "#fff" : C.ink,
+            border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+          }}>対戦表（総当たり）</button>
+          <button onClick={() => setPcPlayerView("standings")} style={{
+            background: pcPlayerView === "standings" ? C.blue : "#fff", color: pcPlayerView === "standings" ? "#fff" : C.ink,
+            border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+          }}>個人成績</button>
         </div>
-      )}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <PcStandingsTab />
+        <div style={{ flex: 1, minHeight: 0, overflowY: pcPlayerView === "matrix" ? "auto" : "hidden" }}>
+          {pcPlayerView === "matrix" ? <RoundRobinMatrix /> : <PcStandingsTab />}
+        </div>
       </div>
-    </div>
+    ) : (
+      <div style={{ height: "100%" }}><PcStandingsTab /></div>
+    )
   ) : (
     <div style={{ height: "100%", overflowY: "auto" }}>
       {roundRobin && (
