@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.124";
-const BUILD_TIME = "2026-08-01 09:36";
+const APP_VERSION = "1.125";
+const BUILD_TIME = "2026-08-01 09:50";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -483,7 +483,7 @@ function App() {
       </div>
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
-          {tab === "home" && (isPc ? <PcMatchGridTab /> : <HomeTab />)}
+          {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
           {tab === "player" && playerContent}
           {tab === "settings" && (
             <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError}
@@ -789,10 +789,11 @@ function RoundRobinMatrix({ compact }) {
 
 /* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
 /* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
-function PcMatchGridTab() {
+function PcMatchGridTab({ simple }) {
   const [matches, setMatches] = useState({});
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim"); // "prelim" | "matrix" | "bracket"
+  const effectiveView = simple ? "prelim" : view;
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
@@ -819,6 +820,7 @@ function PcMatchGridTab() {
     <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
+      {!simple && (
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
         <button onClick={() => setView("prelim")} style={{
           background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
@@ -834,8 +836,9 @@ function PcMatchGridTab() {
           cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
         }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
       </div>
+      )}
 
-      {view === "prelim" ? (
+      {effectiveView === "prelim" ? (
         <>
       <div style={{
         flex: 1, minHeight: 0, display: "grid",
