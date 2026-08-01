@@ -1411,9 +1411,11 @@ const BULK_TABLES = 3;
 function bulkMakePlan(N, G, relaxed) {
   const total = (N * G) / 2;
   if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
-  const slots = Math.ceil(total / BULK_TABLES);
+  const cap0 = Math.min(BULK_TABLES, Math.floor(N / 2));
+  if (cap0 < 1) return { error: "人数が少なすぎて試合を組めません（最低3人必要です）。" };
+  const slots = Math.ceil(total / cap0);
   const sizes = [];
-  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? BULK_TABLES : total - BULK_TABLES * (slots - 1));
+  for (let s = 0; s < slots; s++) sizes.push(s < slots - 1 ? cap0 : total - cap0 * (slots - 1));
   let lower = 0;
   for (let s = 0; s < slots - 1; s++) {
     const need = sizes[s] * 2 + sizes[s + 1] * 2 - N;
@@ -1446,6 +1448,7 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
   let cost = 0, nodes = 0, best = null;
 
   const viable = (s) => {
+    if (relaxed) return true; // 緩和モードでは「毎回全員が対戦する」総当たりも組むため、この事前枝刈りの前提が成立しない
     const left = slots - s - 1;
     for (let x = 1; x <= N; x++) {
       const need = G - deg[x];
@@ -1533,7 +1536,7 @@ function bulkGenerateAuto(N, G) {
 
 function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const s0 = useMemo(() => loadSettings(), []);
-  const [players, setPlayers] = useState(s0.players || Math.max(6, Math.min(16, roster.length || 12)));
+  const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
   const [lenPct, setLenPct] = useState(s0.lenPct || 100);
   const [result, setResult] = useState(null);
@@ -1671,7 +1674,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <BulkStepper label="人数" value={players} min={6} max={16} onChange={setPlayers} />
+        <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
         {roundRobin ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
