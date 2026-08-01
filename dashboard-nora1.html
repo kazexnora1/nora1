@@ -7,6 +7,16 @@
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
+  /* PC表示用：どの試合のQRをサブ画面（B4）に出しているかを、対戦カードの点滅で示す */
+  @keyframes qrPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(46,109,181,0.55); }
+    70%  { box-shadow: 0 0 0 7px rgba(46,109,181,0); }
+    100% { box-shadow: 0 0 0 0 rgba(46,109,181,0); }
+  }
+  .qr-active { animation: qrPulse 1.3s ease-out infinite; border-color: #2E6DB5 !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .qr-active { animation: none; box-shadow: 0 0 0 3px rgba(46,109,181,0.45); }
+  }
   @media print {
     .no-print { display: none !important; }
     .print-fit { height: auto !important; overflow: visible !important; }
@@ -73,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.128";
-const BUILD_TIME = "2026-08-01 20:05";
+const APP_VERSION = "1.129";
+const BUILD_TIME = "2026-08-01 20:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -152,6 +162,39 @@ async function saveMatch(matchId, state) {
 function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
+
+/* ========= QRの共有（B4: qr-nora1.html に表示させる） =========
+   スマホ操作用・PC表示用のどちらからも呼べるよう、ここに置いている。
+   matchId を一緒に載せているので、受け取った側は「どの試合のQRが出ているか」を判定できる */
+const QR_ACTIVE_MS = 60000; // B4のQR表示時間（1分）。PC側の点滅もこれに合わせて止める
+function matchQrUrl(m) {
+  const rt = m.raceTo || [0, 0];
+  const url = new URL(B2_URL);
+  url.searchParams.set("m", m.id);
+  url.searchParams.set("p1", m.names[0]);
+  url.searchParams.set("p2", m.names[1]);
+  url.searchParams.set("r1", 0);
+  url.searchParams.set("r2", 0);
+  url.searchParams.set("len", 100);
+  url.searchParams.set("t", m.table);
+  url.searchParams.set("rt1", rt[0]);
+  url.searchParams.set("rt2", rt[1]);
+  return url.toString();
+}
+async function publishQr(payload) {
+  try { await dbSet("activeCall", { ...payload, publishedAt: Date.now() }); } catch {}
+}
+async function clearQr() {
+  try { await dbSet("activeCall", null); } catch {}
+}
+/* 試合の呼び出しQRをB4へ送る。names はB4の見出しに出る文字列 */
+function publishMatchQr(m, heading, names) {
+  return publishQr({
+    matchId: m.id, url: matchQrUrl(m), heading,
+    names: names || `${m.names[0]} 対 ${m.names[1]}`,
+  });
+}
+
 const STALE_MS = 1000 * 60 * 60 * 6;
 /* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
 function normalizeMatch(m) {
@@ -224,6 +267,10 @@ function getAllForTable(matches, tableNum) {
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
+}
+// 予選だけ（決勝トーナメントは専用の表示があるので外す）。PC表示用の対戦表で使う
+function getPrelimForTable(matches, tableNum) {
+  return getAllForTable(matches, tableNum).filter((m) => !m.bracket);
 }
 // 卓ごとの一覧に状態を付ける。
 // 終了／試合中（スコアラーがバンキング勝者を選んだ）／呼び出し中（次に始める1試合だけ）／待機中（それより先）
@@ -315,7 +362,6 @@ function buildStandings(matches, roster) {
     return (b.pf - b.pa) - (a.pf - a.pa);
   });
   // 同着は同じ順位にし、次の順位は同着人数ぶん飛ばす（一般的な順位付け）
-  let rank = 1;
   rows.forEach((r, i) => {
     if (i > 0) {
       const p = rows[i - 1];
@@ -329,7 +375,7 @@ function buildStandings(matches, roster) {
 }
 const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
 
-// 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら自分の取得点）を並べる。
+// 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら達成率）を並べる。
 // 「戦績（対戦相手つき）」PC表示用
 function buildDetailedStandings(matches, roster) {
   const base = buildStandings(matches, roster);
@@ -366,25 +412,6 @@ function buildDetailedStandings(matches, roster) {
   rows.sort((a, b) => a.rank - b.rank);
   const maxGames = rows.reduce((m, r) => Math.max(m, r.games.length), 0);
   return { rows, maxGames };
-}
-
-// 対戦一覧（PC表示用）：回転（slot）ごとに卓順で並べる。slotの無い対戦（個別追加分）は末尾に作成順で added
-function buildMatchList(matches) {
-  const all = Object.values(matches || {}).filter((m) => m && Array.isArray(m.names));
-  const withSlot = all.filter((m) => m.slot != null);
-  // 決勝トーナメントの対戦は専用の表示があるので、ここでの「個別追加分」には含めない
-  const withoutSlot = all.filter((m) => m.slot == null && !m.bracket).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-
-  const bySlot = new Map();
-  withSlot.forEach((m) => {
-    if (!bySlot.has(m.slot)) bySlot.set(m.slot, []);
-    bySlot.get(m.slot).push(m);
-  });
-  const rounds = [...bySlot.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([slot, ms]) => ({ slot, matches: ms.sort((a, b) => (a.table || 0) - (b.table || 0)) }));
-
-  return { rounds, extra: withoutSlot };
 }
 let _id = 1;
 const nid = () => _id++;
@@ -698,7 +725,7 @@ function StandingsTab() {
         <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
       </div>
       {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 15, color: C.sub, padding: "28px 0" }}>まだ結果がありません</div>}
-      {rows.map((r, i) => {
+      {rows.map((r) => {
         const top = r.rank <= 8 && r.played > 0;
         return (
           <div key={r.name} style={{
@@ -815,106 +842,156 @@ function RoundRobinMatrix({ compact, fill }) {
   );
 }
 
-/* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
+/* ========= PC対戦表タブ：列＝卓、行＝コマ（下に行くほど後の試合）。
+   1試合＝1カードで、対戦相手を上下に並べる。行は 1fr なので、コマ数が変わっても常に1画面に収まる。
+   カードを押すとサブ画面（B4）に呼び出しQRが出て、そのカードが点滅する（このPC画面にQRは出さない） ========= */
+function PcMatchCard({ m, st, active, onClick }) {
+  const names = m.names || ["", ""];
+  const tot = m.tot || [0, 0];
+  const rt = m.raceTo || [0, 0];
+  const w = st === "done" ? matchWinnerIndex(m) : null;
+  const clickable = st === "call" || st === "live";
+
+  const box =
+    st === "done" ? { background: "#EFF1F3", border: `1px solid ${C.line}` }
+    : st === "live" ? { background: "#FFF8D6", border: "2px solid #D8B54A" }
+    : st === "call" ? { background: "#fff", border: `2px solid ${C.blue}` }
+    : { background: "#fff", border: `1px solid ${C.line}` };
+  const divider = st === "live" ? "#D8B54A" : C.line;
+
+  const nameColor = (i) =>
+    st === "done" ? (w === i ? C.win : C.sub) : st === "queued" ? C.sub : C.ink;
+
+  return (
+    <div className={active ? "qr-active" : ""} onClick={clickable ? onClick : undefined} style={{
+      ...box, borderRadius: 12, display: "flex", alignItems: "stretch", overflow: "hidden",
+      minHeight: 0, position: "relative", cursor: clickable ? "pointer" : "default",
+    }}>
+      <div style={{
+        flex: "0 0 46px", display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, fontWeight: 900, color: C.sub, borderRight: `1px solid ${divider}`,
+      }}>卓{m.table}</div>
+
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "4px 12px", gap: 2 }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 18, fontWeight: w === i ? 900 : 700, color: nameColor(i),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</span>
+            {st === "done" || st === "live" ? (
+              <span style={{
+                fontSize: 21, fontWeight: 900, fontVariantNumeric: "tabular-nums",
+                color: st === "done" ? (w === i ? C.win : C.sub) : C.ink,
+              }}>{tot[i]}</span>
+            ) : (
+              <span style={{ fontSize: 19, fontWeight: 800, color: C.sub }}>–</span>
+            )}
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.sub, fontVariantNumeric: "tabular-nums", minWidth: 30, textAlign: "right" }}>/{rt[i]}</span>
+          </div>
+        ))}
+      </div>
+
+      {active && (
+        <div style={{ position: "absolute", top: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>📣 QR表示中</div>
+      )}
+      {st === "done" && m.bothLose && (
+        <div style={{ position: "absolute", bottom: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.hill, whiteSpace: "nowrap" }}>両者負け</div>
+      )}
+    </div>
+  );
+}
+
 function PcMatchGridTab({ simple }) {
   const [matches, setMatches] = useState({});
+  const [activeCall, setActiveCall] = useState(null);
   const [err, setErr] = useState(null);
-  const [view, setView] = useState("prelim"); // "prelim" | "matrix" | "bracket"
+  const [view, setView] = useState("prelim"); // "prelim" | "bracket"
   const effectiveView = simple ? "prelim" : view;
+  // 点滅は publishedAt から60秒で止める。時間経過だけで見た目が変わるので定期的に描き直す
+  const [, forceTick] = useState(0);
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("activeCall", (v) => setActiveCall(v || null), () => {}), []);
+  useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 1000); return () => clearInterval(iv); }, []);
 
-  const { rounds, extra } = useMemo(() => buildMatchList(matches), [matches]);
+  const cols = useMemo(() => [1, 2, 3].map((t) => annotateColumn(getPrelimForTable(matches, t))), [matches]);
+  const rowCount = Math.max(1, ...cols.map((c) => c.length));
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const hasBracket = bracketMatches.length > 0;
   const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
   const bracketTotal = bracketTotalRounds(bracketSize);
-  const tableCount = 3;
-  const rowCount = Math.max(1, rounds.length);
-
-  const cellStyle = (m) => {
-    if (!m) return { background: "#fff" };
-    const done = isMatchFinished(m);
-    if (done) return { background: "#DADDE1" }; // 終了：灰色
-    if (m.startedAt) return { background: "#FFF3B0" }; // 対戦中：黄色
-    return { background: "#fff" }; // 未開始：白
-  };
   const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
+
+  const activeMatchId =
+    activeCall && activeCall.matchId && Date.now() - (activeCall.publishedAt || 0) < QR_ACTIVE_MS
+      ? activeCall.matchId : null;
+
+  // 押すたびに「QRを出す／消す」を切り替える。QRはこの画面には出さず、サブ画面（B4）にだけ出る
+  const handleCard = (m) => {
+    if (activeMatchId === m.id) clearQr();
+    else publishMatchQr(m, `📣 卓${m.table} 呼び出し`);
+  };
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {err && <Notice>データを取得できません：{err}</Notice>}
 
       {!simple && (
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
-        <button onClick={() => setView("prelim")} style={{
-          background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
-          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-        }}>予選（表）</button>
-        <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
-          background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
-          border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
-          cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
-        }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
-      </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexShrink: 0 }}>
+          <button onClick={() => setView("prelim")} style={{
+            background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
+            border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+          }}>予選（表）</button>
+          <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
+            background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
+            border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
+            cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
+          }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
+          {effectiveView === "prelim" && (
+            <span style={{ marginLeft: "auto", fontSize: 12, color: C.sub }}>
+              カードを押すとサブ画面に呼び出しQRが出ます（もう一度押すと消えます）
+            </span>
+          )}
+        </div>
       )}
 
       {effectiveView === "prelim" ? (
-        <>
-      <div style={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: "60px repeat(3, 1fr)",
-        gridTemplateRows: `44px repeat(${rowCount}, 1fr)`,
-        border: `1px solid ${C.line}`, boxSizing: "border-box",
-      }}>
-        <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
-        {Array.from({ length: tableCount }, (_, i) => (
-          <div key={i} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: C.sub }}>
-            {i + 1}卓
-          </div>
-        ))}
-
-        {rounds.map(({ slot, matches: ms }) => (
-          <React.Fragment key={slot}>
-            <div style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: C.sub }}>
-              {slot + 1}
+        <div style={{
+          flex: 1, minHeight: 0, display: "grid",
+          gridTemplateColumns: "22px repeat(3, 1fr)",
+          gridTemplateRows: `repeat(${rowCount}, 1fr)`,
+          columnGap: 10, rowGap: 8,
+        }}>
+          {Array.from({ length: rowCount }, (_, s) => (
+            <React.Fragment key={s}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              {[0, 1, 2].map((ti) => {
+                const e = cols[ti][s];
+                if (!e) {
+                  return (
+                    <div key={ti} style={{
+                      background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12,
+                      display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 13, minHeight: 0,
+                    }}>空き</div>
+                  );
+                }
+                return (
+                  <PcMatchCard key={ti} m={e.m} st={e.st}
+                    active={activeMatchId === e.m.id}
+                    onClick={() => handleCard(e.m)} />
+                );
+              })}
+            </React.Fragment>
+          ))}
+          {rowCount === 1 && cols.every((c) => c.length === 0) && (
+            <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 16 }}>
+              対戦がまだ登録されていません
             </div>
-            {Array.from({ length: tableCount }, (_, ti) => {
-              const m = ms.find((x) => (x.table || 0) === ti + 1);
-              const names = m ? (m.names || ["", ""]) : null;
-              return (
-                <div key={ti} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700, overflow: "hidden", padding: "0 6px", textAlign: "center" }}>
-                  {names ? `${names[0]}－${names[1]}` : ""}
-                </div>
-              );
-            })}
-          </React.Fragment>
-        ))}
-
-        {rounds.length === 0 && (
-          <div style={{ gridColumn: `1 / span ${tableCount + 1}`, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 16 }}>
-            対戦がまだ登録されていません
-          </div>
-        )}
-      </div>
-
-      {extra.length > 0 && (
-        <div style={{ marginTop: 10, flexShrink: 0 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {extra.map((m) => {
-              const names = m.names || ["", ""];
-              return (
-                <div key={m.id} style={{ ...cellStyle(m), border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 14px", fontSize: 16, fontWeight: 700 }}>
-                  {names[0]}－{names[1]}（卓{m.table}）
-                </div>
-              );
-            })}
-          </div>
+          )}
         </div>
-      )}
-        </>
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
           {Array.from({ length: bracketTotal }, (_, ri) => ri + 1).map((r) => {
@@ -1032,7 +1109,6 @@ function BracketTab({ roster }) {
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const totalRounds = bracketTotalRounds(size);
   const started = bracketMatches.length > 0;
-  const round1 = bracketMatchesForRound(matches, 1);
 
   const winnerInfo = (m) => {
     const w = matchWinnerIndex(m);
@@ -1695,6 +1771,8 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
       await dbSet("matches", next);
       // 対戦表を組み直したら、スコアラーの担当回数も新しい大会として0からやり直す
       await dbSet("refereeCounts", {});
+      // 直前まで出していた呼び出しQRも消しておく（消えた対戦を指したままにしない）
+      await dbSet("activeCall", null);
       // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
       const savedMatches = (await dbGet("matches")) || {};
       const saved = Object.keys(savedMatches).filter((id) => next[id]).length;
@@ -2024,7 +2102,6 @@ function planMatchUpdate(updates, qm, lenPct, minutes, now) {
   updates[qm.id + "/version"] = (qm.version || 1) + 1;
   updates[qm.id + "/updatedAt"] = now;
 }
-const homeStepBtn = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 20, cursor: "pointer", fontFamily: FONT, touchAction: "manipulation" };
 
 function HomeTab() {
   const [queues, setQueues] = useState([[], [], []]);
@@ -2120,7 +2197,7 @@ function HomeTab() {
       await dbSet("refereeCounts/" + name, prevCount + 1);
       setRefModalMatch(null);
       setRefereeQR({ name, match: target });
-      publishQr({ url: urlFor(target), heading: `📝 卓${target.table} スコアラー呼び出し`, names: `${name} さん` });
+      publishMatchQr(target, `📝 卓${target.table} スコアラー呼び出し`, `${name} さん`);
       refresh();
     } catch {}
     setRefereeBusy(false);
@@ -2361,35 +2438,12 @@ function HomeTab() {
     setGlobalBusy(false);
   };
 
-  const urlFor = (m) => {
-    const rt = m.raceTo || [0, 0];
-    const url = new URL(B2_URL);
-    url.searchParams.set("m", m.id);
-    url.searchParams.set("p1", m.names[0]);
-    url.searchParams.set("p2", m.names[1]);
-    url.searchParams.set("r1", 0);
-    url.searchParams.set("r2", 0);
-    url.searchParams.set("len", 100);
-    url.searchParams.set("t", m.table);
-    url.searchParams.set("rt1", rt[0]);
-    url.searchParams.set("rt2", rt[1]);
-    return url.toString();
-  };
-
   const [qrMatch, setQrMatch] = useState(null); // 次戦以降のQRのみを表示する軽量モーダル
 
-  // 別画面（B4: qr-nora1.html）にもQRを表示させる。1つだけ共有し、B4側は1分経つと自動で消す
-  const publishQr = async (payload) => {
-    try { await dbSet("activeCall", { ...payload, publishedAt: Date.now() }); } catch {}
-  };
+  // このスマホ画面ではQRモーダルを出しつつ、サブ画面（B4）にも同じQRを送る
   const openQr = (m) => {
     setQrMatch(m);
-    publishQr({ url: urlFor(m), heading: `📣 卓${m.table} 呼び出し`, names: `${m.names[0]} 対 ${m.names[1]}` });
-  };
-  // 卓のカードをタップ：現在対戦の調整パネルをその場で展開／格納
-  const toggleExpand = (ti) => {
-    if (tableAdjust === ti) { setTableAdjust(null); return; }
-    openTableAdjust(ti);
+    publishMatchQr(m, `📣 卓${m.table} 呼び出し`);
   };
 
   const toggleGlobalAdjust = () => {
@@ -2402,9 +2456,6 @@ function HomeTab() {
     setTPer100(parseInt(cfg.per100Min, 10) || 60);
     setShowGlobalAdjust(true);
   };
-
-  const _cfg = loadSettings();
-  const sharedEnd = (_cfg.endH && _cfg.endM) ? `${_cfg.endH}:${_cfg.endM}` : "未設定";
 
   const slots = Math.max(0, ...cols.map((c) => c.length));
   const totalMatches = cols.reduce((s, c) => s + c.length, 0);
@@ -2608,7 +2659,7 @@ function HomeTab() {
         <div onClick={() => setQrMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
             <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{qrMatch.table}：{qrMatch.names.join(" 対 ")}</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(urlFor(qrMatch))}`} style={{ width: 200, height: 200, margin: "0 auto" }} />
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(matchQrUrl(qrMatch))}`} style={{ width: 200, height: 200, margin: "0 auto" }} />
             <button onClick={() => setQrMatch(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
@@ -2621,7 +2672,7 @@ function HomeTab() {
             <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　スコアラー呼び出し</div>
             <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>📝 {refereeQR.name} さん</div>
             <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>このQRを読み込んでください</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(urlFor(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(matchQrUrl(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
             <button onClick={() => setRefereeQR(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
