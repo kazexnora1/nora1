@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.126";
-const BUILD_TIME = "2026-08-01 10:02";
+const APP_VERSION = "1.128";
+const BUILD_TIME = "2026-08-01 20:05";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -590,9 +590,9 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
 
   return (
     <div onClick={clickable ? handleClick : undefined} style={{
-      position: "relative", height: 128, boxSizing: "border-box", background: style.bg,
+      position: "relative", height: 138, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
-      padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
+      padding: "8px 5px", display: "flex", flexDirection: "column", justifyContent: "space-between",
       overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
     }}>
       {refereeEnabled && (st === "call" || st === "live") && (
@@ -607,7 +607,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
           border: st === "call" ? `1.5px solid ${C.blue}` : "none",
-          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
+          borderRadius: 12, padding: "3px 10px", fontSize: 14.5, fontWeight: 800, whiteSpace: "nowrap",
         }}>{style.badge}</span>
       </div>
 
@@ -615,7 +615,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
           <div key={i} style={{
-            flex: 1, minWidth: 0, textAlign: "center", fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+            flex: 1, minWidth: 0, textAlign: "center", fontSize: 16.5, fontWeight: won(i) ? 900 : 700,
             color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>{names[i]}</div>
@@ -627,7 +627,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
         {[0, 1].map((i) => (
           <div key={i} style={{
             flex: 1, minWidth: 0, textAlign: "center", lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
-            fontSize: st === "done" ? 24 : st === "live" ? 26 : 22, fontWeight: 900,
+            fontSize: st === "done" ? 26 : st === "live" ? 28 : 24, fontWeight: 900,
             color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
           }}>
             {st === "done" || st === "live" ? tot[i] : "–"}
@@ -638,7 +638,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
       {/* 4: 目標点 */}
       <div style={{ display: "flex", gap: 3 }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 12.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
+          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 13.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
         ))}
       </div>
 
@@ -722,8 +722,6 @@ function StandingsTab() {
   );
 }
 
-/* ========= PC表示タブ：対戦一覧（左）と戦績（右）を1画面に収めて開きっぱなしにする用。
-   紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
 /* ========= 総当たり表：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）。
    単体でも他タブに埋め込んでも使えるよう、自前でデータ購読する ========= */
 function RoundRobinMatrix({ compact, fill }) {
@@ -817,7 +815,6 @@ function RoundRobinMatrix({ compact, fill }) {
   );
 }
 
-/* ========= PCタブ：左に対戦一覧、右に戦績を1画面に並べて表示する（開きっぱなし用） ========= */
 /* ========= PC対戦表タブ：卓×回転の格子。分かりやすさ優先で単体表示・大きめの文字 ========= */
 function PcMatchGridTab({ simple }) {
   const [matches, setMatches] = useState({});
@@ -1018,8 +1015,6 @@ function PcStandingsTab() {
     </div>
   );
 }
-
-
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
 function BracketTab({ roster }) {
@@ -1263,7 +1258,16 @@ function ConnectionTest() {
   );
 }
 
-/* ========= 設定タブ：メンバー（常時）＋試合割り＋個別に対戦を追加 ========= */
+/* 設定タブの見出し（基本設定／メンバーリスト／試合の設定を仕切る小さなラベル） */
+function SectionLabel({ children }) {
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "18px 16px 0" }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, letterSpacing: "0.08em" }}>{children}</div>
+    </div>
+  );
+}
+
+/* ========= 設定タブ：基本設定／メンバーリスト／試合の設定 の3セクション ========= */
 function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMode, onSetDeviceMode, roundRobin, onSetRoundRobin }) {
   const [showSingle, setShowSingle] = useState(false);
   const [showBracket, setShowBracket] = useState(false);
@@ -1282,8 +1286,9 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
   return (
     <div>
-      <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 0", color: C.ink }}>
-        <div style={{ display: "flex", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 4, marginBottom: 16 }}>
+      <SectionLabel>⚙️ 基本設定</SectionLabel>
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 0", color: C.ink }}>
+        <div style={{ display: "flex", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: 4, marginBottom: 16 }}>
           <button onClick={() => onSetDeviceMode("mobile")} style={{
             flex: 1, background: deviceMode !== "pc" ? "#fff" : "none", color: deviceMode !== "pc" ? C.blue : C.sub,
             border: "none", borderRadius: 9, padding: "10px 4px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
@@ -1317,17 +1322,22 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
         <ConnectionTest />
       </div>
-      <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
+      <div style={{ borderTop: `8px solid ${C.zone}`, marginTop: 4 }}>
+        <SectionLabel>👥 メンバーリスト</SectionLabel>
+        <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
+      </div>
+
       <div style={{ borderTop: `8px solid ${C.zone}` }}>
+        <SectionLabel>🎱 試合の設定</SectionLabel>
         <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
       </div>
-      <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
+      <div style={{ borderTop: `1px solid ${C.line}`, padding: "16px" }}>
         <button onClick={() => setShowBracket((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🏆 決勝トーナメント {showBracket ? "▲" : "▼"}
         </button>
         {showBracket && <div style={{ marginTop: 8 }}><BracketTab roster={roster} /></div>}
       </div>
-      <div style={{ borderTop: `8px solid ${C.zone}`, padding: "16px" }}>
+      <div style={{ borderTop: `1px solid ${C.line}`, padding: "16px" }}>
         <button onClick={() => setShowSingle((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>
           🎱 個別に対戦を追加する {showSingle ? "▲" : "▼"}
         </button>
@@ -1392,9 +1402,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const hasAnyDraw = roster.some((p) => p.draw !== undefined && p.draw !== "" && p.draw != null);
 
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 24px", color: C.ink }}>
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>メンバーリスト</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : "名前とファーゴレート（共有）"}</div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
@@ -1444,7 +1453,6 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   );
 }
 
-/* ========= 対戦表タブ（対戦作成＝実質のB1本体） ========= */
 /* ========= 試合割りタブ：総当たり風スケジュールを自動生成して一括登録 ========= */
 const BULK_TABLES = 3;
 
@@ -2004,8 +2012,6 @@ function Notice({ children }) {
 }
 const selectStyle = { width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT };
 
-/* ========= QR発行タブ ========= */
-
 // 対戦の「試合の長さ・持ち時間・目標点」だけを部分更新するための組み立て。
 // 対戦データ全体を書き戻さないので、スコアラーが入力中のスコアを消してしまわない
 function planMatchUpdate(updates, qm, lenPct, minutes, now) {
@@ -2418,7 +2424,7 @@ function HomeTab() {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", color: C.ink }}>
       {/* ===== 固定エリア：進捗・卓見出し・卓調整 ===== */}
-      <div style={{ flexShrink: 0, padding: "14px 12px 10px", borderBottom: `2px solid ${C.line}`, background: C.bg }}>
+      <div style={{ flexShrink: 0, padding: "14px 8px 10px", borderBottom: `2px solid ${C.line}`, background: C.bg }}>
         {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 10 }}>
           <div style={{ textAlign: "center" }}>
@@ -2430,7 +2436,7 @@ function HomeTab() {
           <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
           <div />
           {tinfo.map(({ ti }) => (
             <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>卓{ti + 1}</div>
@@ -2468,8 +2474,8 @@ function HomeTab() {
       </div>
 
       {/* ===== スクロールエリア：ラウンドごとのタイムライン ===== */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 12px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 8px 24px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 9 }}>
           {Array.from({ length: slots }, (_, s) => (
             <React.Fragment key={s}>
               {s === bracketStartRow && (
@@ -2479,7 +2485,7 @@ function HomeTab() {
                   <div style={{ flex: 1, height: 2, background: C.blue }} />
                 </div>
               )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</div>
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
                 return (
@@ -2487,7 +2493,7 @@ function HomeTab() {
                     {e ? (
                       <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onOpenQr={openQr} onEditReferee={(m) => setRefModalMatch(m)} />
                     ) : (
-                      <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
+                      <div style={{ height: 138, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
                     )}
                   </div>
                 );
