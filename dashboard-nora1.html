@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.125";
-const BUILD_TIME = "2026-08-01 09:50";
+const APP_VERSION = "1.126";
+const BUILD_TIME = "2026-08-01 10:02";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -410,6 +410,20 @@ function App() {
   const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
   const [pcPlayerView, setPcPlayerView] = useState("matrix"); // "matrix" | "standings"（PC表示・総当たりモード時のみ使用）
   const isPc = deviceMode === "pc";
+  const fillScrollRef = useRef(null);
+  const fillTargetRef = useRef(null);
+  const fillMode = isPc && roundRobin && tab === "player"; // タブバー・切替ボタンを画面外へスクロールし、内容だけを画面いっぱいに見せるモード
+
+  // fillMode に入った時／表示（対戦表⇄個人成績）を切り替えた時、内容が画面いっぱいになる位置まで自動スクロール
+  useEffect(() => {
+    if (!fillMode) return;
+    const t = setTimeout(() => {
+      if (fillScrollRef.current && fillTargetRef.current) {
+        fillScrollRef.current.scrollTo({ top: fillTargetRef.current.offsetTop, behavior: "auto" });
+      }
+    }, 30);
+    return () => clearTimeout(t);
+  }, [fillMode, pcPlayerView]);
 
   const _idsOf = (rs) => rs.map((p) => p.id || 0);
   const refreshRoster = async () => {
@@ -437,23 +451,39 @@ function App() {
     ["settings", "⚙️ 設定"],
   ];
 
+  const tabBarJsx = (
+    <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+      <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
+        {tabs.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   const playerContent = isPc ? (
     roundRobin ? (
-      <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
-          <button onClick={() => setPcPlayerView("matrix")} style={{
-            background: pcPlayerView === "matrix" ? C.blue : "#fff", color: pcPlayerView === "matrix" ? "#fff" : C.ink,
-            border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-          }}>対戦表（総当たり）</button>
-          <button onClick={() => setPcPlayerView("standings")} style={{
-            background: pcPlayerView === "standings" ? C.blue : "#fff", color: pcPlayerView === "standings" ? "#fff" : C.ink,
-            border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-          }}>個人成績</button>
+      fillMode ? (
+        <div ref={fillScrollRef} style={{ height: "100%", overflowY: "auto", background: C.bg, fontFamily: FONT }}>
+          {tabBarJsx}
+          <div style={{ display: "flex", gap: 8, padding: "12px 20px 0", maxWidth: 1600, margin: "0 auto" }}>
+            <button onClick={() => setPcPlayerView("matrix")} style={{
+              background: pcPlayerView === "matrix" ? C.blue : "#fff", color: pcPlayerView === "matrix" ? "#fff" : C.ink,
+              border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            }}>対戦表（総当たり）</button>
+            <button onClick={() => setPcPlayerView("standings")} style={{
+              background: pcPlayerView === "standings" ? C.blue : "#fff", color: pcPlayerView === "standings" ? "#fff" : C.ink,
+              border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            }}>個人成績</button>
+          </div>
+          <div ref={fillTargetRef} style={{ height: "100vh", boxSizing: "border-box", padding: "12px 20px 20px", maxWidth: 1600, margin: "0 auto" }}>
+            {pcPlayerView === "matrix" ? <RoundRobinMatrix fill /> : <PcStandingsTab />}
+          </div>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: pcPlayerView === "matrix" ? "auto" : "hidden" }}>
-          {pcPlayerView === "matrix" ? <RoundRobinMatrix /> : <PcStandingsTab />}
-        </div>
-      </div>
+      ) : null
     ) : (
       <div style={{ height: "100%" }}><PcStandingsTab /></div>
     )
@@ -469,18 +499,13 @@ function App() {
     </div>
   );
 
+  if (fillMode) {
+    return playerContent;
+  }
+
   return (
     <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-      <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
-          {tabs.map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)}
-              style={{ flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {tabBarJsx}
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
@@ -701,7 +726,7 @@ function StandingsTab() {
    紙の進行表・成績表の見やすさを保つため、あえて地味な白黒基調の表組みにしている ========= */
 /* ========= 総当たり表：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）。
    単体でも他タブに埋め込んでも使えるよう、自前でデータ購読する ========= */
-function RoundRobinMatrix({ compact }) {
+function RoundRobinMatrix({ compact, fill }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
@@ -745,9 +770,14 @@ function RoundRobinMatrix({ compact }) {
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div style={{ overflowX: "auto", height: fill ? "100%" : "auto", boxSizing: "border-box" }}>
       {err && <div style={{ color: C.minus, fontSize: 12, marginBottom: 6 }}>同期エラー: {err}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: `${compact ? 60 : 84}px repeat(${matrix.names.length}, minmax(${compact ? 44 : 64}px, 1fr))`, border: `1px solid ${C.line}`, boxSizing: "border-box" }}>
+      <div style={{
+        display: "grid", height: fill ? "100%" : "auto",
+        gridTemplateColumns: `${compact ? 60 : 84}px repeat(${matrix.names.length}, minmax(${compact ? 44 : 64}px, 1fr))`,
+        gridTemplateRows: fill ? `${compact ? 28 : 34}px repeat(${matrix.names.length}, 1fr)` : undefined,
+        border: `1px solid ${C.line}`, boxSizing: "border-box",
+      }}>
         <div style={{ border: `1px solid ${C.line}`, background: "#fafafa" }} />
         {matrix.names.map((n, j) => (
           <div key={"h" + j} style={{ border: `1px solid ${C.line}`, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", fontSize: headFont, fontWeight: 800, color: C.sub, padding: "5px 2px", textAlign: "center", wordBreak: "break-all" }}>
@@ -775,7 +805,7 @@ function RoundRobinMatrix({ compact }) {
               const w = done ? matchWinnerIndex(m) : null;
               const win = w != null && w === mine;
               return (
-                <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: cellFont, fontWeight: win ? 900 : 600, color: win ? C.win : C.ink, minHeight: cellH }}>
+                <div key={"c" + j} style={{ border: `1px solid ${C.line}`, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: cellFont, fontWeight: win ? 900 : 600, color: win ? C.win : C.ink, minHeight: fill ? 0 : cellH }}>
                   {done ? `${tot[mine]}-${tot[1 - mine]}` : live ? "●" : ""}
                 </div>
               );
@@ -826,10 +856,6 @@ function PcMatchGridTab({ simple }) {
           background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
           border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
         }}>予選（表）</button>
-        <button onClick={() => setView("matrix")} style={{
-          background: view === "matrix" ? C.blue : "#fff", color: view === "matrix" ? "#fff" : C.ink,
-          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-        }}>対戦表（総当たり）</button>
         <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
           background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
           border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
@@ -892,10 +918,6 @@ function PcMatchGridTab({ simple }) {
         </div>
       )}
         </>
-      ) : view === "matrix" ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          <RoundRobinMatrix />
-        </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 18 }}>
           {Array.from({ length: bracketTotal }, (_, ri) => ri + 1).map((r) => {
