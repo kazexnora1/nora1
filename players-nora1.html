@@ -494,6 +494,172 @@ function TablePanel({ tableNum, m }) {
   );
 }
 
+/* ========= スケジュールタブ：選手ごとの予定表 =========
+   自分の名前を1度選ぶと端末に覚える。出場する試合とスコアラー担当を時系列に並べて出す */
+const MYNAME_KEY = "jcl9_b2_myname_v1";
+function subscribeRoster(onValue) {
+  const ref = db.ref("roster");
+  const handler = ref.on("value", (snap) => onValue(Array.isArray(snap.val()) ? snap.val() : []));
+  return () => ref.off("value", handler);
+}
+// コマ（slot）がある対戦はその順、無い対戦は作成順で後ろに並べる
+function scheduleOrder(m) {
+  return m.slot != null ? m.slot : 9999;
+}
+
+function ScheduleTab() {
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
+  const [me, setMe] = useState(() => { try { return localStorage.getItem(MYNAME_KEY) || ""; } catch { return ""; } });
+  const [picking, setPicking] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => subscribeAllMatches((m) => { setMatches(m || {}); setErr(null); }, (e) => setErr(e)), []);
+  useEffect(() => subscribeRoster(setRoster), []);
+
+  const choose = (name) => {
+    setMe(name);
+    try { localStorage.setItem(MYNAME_KEY, name); } catch {}
+    setPicking(false);
+  };
+
+  const rows = React.useMemo(() => {
+    const all = [];
+    [1, 2, 3].forEach((t) => annotateColumn(getAllForTable(matches, t)).forEach((e) => all.push(e)));
+    all.sort((a, b) => (scheduleOrder(a.m) - scheduleOrder(b.m)) || ((a.m.createdAt || 0) - (b.m.createdAt || 0)));
+    if (!me) return [];
+    return all
+      .filter((e) => (e.m.names || []).includes(me) || e.m.referee === me)
+      .map((e) => ({ ...e, role: (e.m.names || []).includes(me) ? "play" : "referee" }));
+  }, [matches, me]);
+
+  const playRows = rows.filter((r) => r.role === "play");
+  const remain = playRows.filter((r) => r.st !== "done").length;
+  const upNext = rows.find((r) => r.st !== "done") || null;
+
+  const nameList = roster.map((p) => p && p.name).filter(Boolean);
+
+  if (!me || picking) {
+    return (
+      <div style={{ padding: "22px 16px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ fontSize: 19, fontWeight: 800, textAlign: "center", marginBottom: 6 }}>自分の名前を選んでください</div>
+        <div style={{ fontSize: 13, color: C.sub, textAlign: "center", marginBottom: 18, lineHeight: 1.7 }}>
+          この端末に覚えておきます。あとから変更できます
+        </div>
+        {nameList.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 14 }}>メンバーがまだ登録されていません</div>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+          {nameList.map((n) => (
+            <button key={n} onClick={() => choose(n)} style={{
+              background: n === me ? C.blue : "#fff", color: n === me ? "#fff" : C.ink,
+              border: `1.5px solid ${n === me ? C.blue : C.line}`, borderRadius: 12,
+              padding: "12px 16px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            }}>{n}</button>
+          ))}
+        </div>
+        {me && (
+          <button onClick={() => setPicking(false)} style={{
+            width: "100%", marginTop: 20, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12,
+            padding: "12px 0", fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT,
+          }}>キャンセル</button>
+        )}
+      </div>
+    );
+  }
+
+  const stLabel = (st) => (st === "done" ? "終了" : st === "live" ? "試合中" : st === "call" ? "呼び出し中" : "待機中");
+  const stColor = (st) => (st === "done" ? C.sub : st === "live" ? C.blue : st === "call" ? C.win : C.sub);
+
+  return (
+    <div style={{ padding: "16px 12px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>{me} さんの予定</div>
+          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>
+            残り {remain} 試合 ／ 全 {playRows.length} 試合
+          </div>
+        </div>
+        <button onClick={() => setPicking(true)} style={{
+          background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 12px",
+          fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+        }}>名前を変更</button>
+      </div>
+
+      {upNext && (
+        <div style={{
+          background: upNext.role === "referee" ? "#FFF3E0" : C.lightBlue,
+          border: `2px solid ${upNext.role === "referee" ? C.hill : C.blue}`,
+          borderRadius: 14, padding: "12px 14px", marginBottom: 14,
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: upNext.role === "referee" ? C.hill : C.blue, marginBottom: 4 }}>
+            {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>
+            卓{upNext.m.table}　
+            {upNext.role === "referee"
+              ? `${(upNext.m.names || ["", ""])[0]} 対 ${(upNext.m.names || ["", ""])[1]}`
+              : `対 ${(upNext.m.names || ["", ""]).filter((n) => n !== me)[0] || ""}`}
+          </div>
+          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{stLabel(upNext.st)}</div>
+        </div>
+      )}
+
+      {rows.length === 0 && (
+        <div style={{ textAlign: "center", color: C.sub, fontSize: 14, padding: "28px 0" }}>予定されている試合がありません</div>
+      )}
+
+      {rows.map((r, idx) => {
+        const names = r.m.names || ["", ""];
+        const meIdx = names.indexOf(me);
+        const opp = r.role === "play" ? (names[1 - meIdx] || "") : `${names[0]} 対 ${names[1]}`;
+        const tot = r.m.tot || [0, 0];
+        const rtArr = r.m.raceTo || [0, 0];
+        const w = r.st === "done" ? matchWinnerIndex(r.m) : null;
+        const iWon = r.role === "play" && w === meIdx;
+        return (
+          <div key={r.m.id || idx} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            background: r.st === "done" ? C.zone : "#fff",
+            border: `1.5px solid ${r.role === "referee" ? C.hill : r.st === "done" ? C.line : C.line}`,
+            borderRadius: 12, padding: "10px 12px", marginBottom: 8,
+          }}>
+            <div style={{ width: 34, textAlign: "center", flexShrink: 0 }}>
+              <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>{r.m.slot != null ? `${r.m.slot + 1}コマ` : "追加"}</div>
+              <div style={{ fontSize: 14, fontWeight: 900, color: C.ink }}>卓{r.m.table}</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: r.role === "referee" ? C.hill : C.sub }}>
+                {r.role === "referee" ? "📝 スコアラー担当" : "対戦相手"}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{opp}</div>
+            </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              {r.role === "play" && r.st === "done" ? (
+                <>
+                  <div style={{ fontSize: 15, fontWeight: 900, color: r.m.bothLose ? C.hill : iWon ? C.win : C.sub }}>
+                    {r.m.bothLose ? "両者負け" : iWon ? "勝ち" : "負け"}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
+                    {tot[meIdx]} - {tot[1 - meIdx]}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: stColor(r.st) }}>{stLabel(r.st)}</div>
+                  {r.role === "play" && rtArr[meIdx] > 0 && (
+                    <div style={{ fontSize: 11.5, color: C.sub }}>目標 {rtArr[meIdx]}</div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {err && <div style={{ textAlign: "center", fontSize: 12.5, color: C.minus, marginTop: 10 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+
 /* ========= スコアラー未選択の画面 =========
    以前はQRを読み取って対戦を特定していたが、対戦表のカードから直接入る方式に変更した。
    カメラの許可も外部ライブラリも要らず、会場の明るさにも左右されない */
@@ -514,8 +680,8 @@ function ScorerEmpty({ onGoTimeline }) {
 }
 
 /* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
-   スコアラーの中身（QR未読込ならカメラ画面、読込済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
-const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブルの様子"], ["scorer", "🎯 スコアラー"]];
+   スコアラーの中身（未選択なら案内画面、選択済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"], ["schedule", "📋 予定表"], ["scorer", "🎯 スコアラー"]];
 function Shell() {
   const params = new URLSearchParams(window.location.search);
   const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
@@ -536,7 +702,7 @@ function Shell() {
 
   // 対戦表のカードから、その試合のスコアラーとして入る
   const handlePick = (m) => {
-    setSetupInfo2({
+    applyPickedMatch({
       matchId: m.id,
       names: m.names || ["P1", "P2"],
       ratings: [Number(m.r1) || 0, Number(m.r2) || 0],
@@ -546,7 +712,7 @@ function Shell() {
     });
   };
   // 選んだ対戦をURLにも書き込んでおく（リロードしても同じ試合に戻れる）
-  const setSetupInfo2 = (info) => {
+  const applyPickedMatch = (info) => {
     // 再読み込みしても復元できるよう、URLにも同じ情報を反映しておく
     const url = new URL(window.location.href);
     url.searchParams.set("m", info.matchId);
@@ -561,7 +727,7 @@ function Shell() {
     setSetupInfo(info);
     setTab("scorer");
   };
-  // 試合が終わって「終了」を押した時に呼ばれる。カメラ待ち受け画面に戻す
+  // 試合が終わって「終了」を押した時に呼ばれる。対戦表から選び直す画面に戻す
   const handleExit = () => {
     window.history.replaceState({}, "", window.location.pathname);
     setSetupInfo(null);
@@ -572,7 +738,7 @@ function Shell() {
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: 13, fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(10.5px, 3.2vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
@@ -583,6 +749,9 @@ function Shell() {
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
           <TablesTab />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" }}>
+          <ScheduleTab />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
           {setupInfo
@@ -607,7 +776,6 @@ function MatchScreen({ setupInfo, onExit }) {
     : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
   const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
   const [loaded, setLoaded] = useState(false);
-  const [showQR, setShowQR] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [nowTs, setNowTs] = useState(Date.now());
   useEffect(() => {
@@ -844,8 +1012,6 @@ function MatchScreen({ setupInfo, onExit }) {
   let cum = [0, 0];
   const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
 
-  const appUrl = window.location.href;
-
   if (!loaded) {
     return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
   }
@@ -855,11 +1021,11 @@ function MatchScreen({ setupInfo, onExit }) {
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>この対戦はリセットされました</div>
         <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.7 }}>
-          本部が対戦表を組み直したようです。お手数ですが、本部で新しく表示されたQRを読み込み直してください。
+          本部が対戦表を組み直したようです。お手数ですが、「対戦表」から担当する試合を選び直してください。
         </div>
         {onExit && (
           <button onClick={onExit} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-            📷 カメラ画面にもどる
+            🗓 対戦表にもどる
           </button>
         )}
       </div>
@@ -881,9 +1047,8 @@ function MatchScreen({ setupInfo, onExit }) {
         <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
           持ち時間 <b style={{ fontSize: 20, color: C.ink }}>{state.matchMinutes || DEFAULT_MATCH_MINUTES}分</b>（先攻を選んだ時点から計測開始）
         </div>
-        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 700, padding: "10px 16px", cursor: "pointer", fontFamily: FONT }}>📱 相手の端末に共有（QR）</button>
+        <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.7 }}>もう1台で同じ試合を開くときは、その端末の「対戦表」から同じカードを押してください</div>
         {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
-        {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
       </div>
     );
   }
@@ -891,7 +1056,7 @@ function MatchScreen({ setupInfo, onExit }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button onClick={() => setShowQR(true)} style={{ background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 8, fontSize: 12.5, color: C.blue, cursor: "pointer", fontWeight: 700, padding: "5px 10px" }}>📱 引き継ぎ用QR</button>
+        <span style={{ width: 90 }} />
         <div style={{
           position: "absolute", left: "50%", transform: "translateX(-50%)",
           display: "flex", alignItems: "center", pointerEvents: "none",
@@ -1032,20 +1197,6 @@ function MatchScreen({ setupInfo, onExit }) {
         </div>
       )}
 
-      {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
-    </div>
-  );
-}
-
-function QRModal({ url, onClose }) {
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>相手の端末でこのQRを読む</div>
-        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`} alt="QR" style={{ width: 240, height: 240, margin: "0 auto", display: "block" }} />
-        <div style={{ fontSize: 10.5, color: C.sub, wordBreak: "break-all", marginTop: 12 }}>{url}</div>
-        <button onClick={onClose} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
-      </div>
     </div>
   );
 }
