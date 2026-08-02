@@ -541,7 +541,7 @@ const fmtClock = (ms) => {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
-function ScheduleTab() {
+function ScheduleTab({ onPick }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [me, setMe] = useState(() => { try { return localStorage.getItem(MYNAME_KEY) || ""; } catch { return ""; } });
@@ -611,6 +611,15 @@ function ScheduleTab() {
     );
   }
 
+  // 呼び出し中・試合中の予定は、そのままスコアリング画面に入れる
+  const canOpen = (r) => (r.st === "call" || r.st === "live") && !!onPick;
+  const openMatch = (r) => {
+    if (!canOpen(r)) return;
+    const nm = r.m.names || ["", ""];
+    if (!window.confirm(`卓${r.m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
+    onPick(r.m);
+  };
+
   const stLabel = (st) => (st === "done" ? "終了" : st === "live" ? "試合中" : st === "call" ? "呼び出し中" : "待機中");
   const stColor = (st) => (st === "done" ? C.sub : st === "live" ? C.blue : st === "call" ? C.win : C.sub);
 
@@ -631,10 +640,11 @@ function ScheduleTab() {
       </div>
 
       {upNext && (
-        <div style={{
+        <div onClick={() => openMatch(upNext)} style={{
           background: upNext.role === "referee" ? "#FFF3E0" : C.lightBlue,
           border: `2px solid ${upNext.role === "referee" ? C.hill : C.blue}`,
           borderRadius: 14, padding: "12px 14px", marginBottom: 14,
+          cursor: canOpen(upNext) ? "pointer" : "default",
         }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: upNext.role === "referee" ? C.hill : C.blue, marginBottom: 4 }}>
             {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
@@ -651,6 +661,9 @@ function ScheduleTab() {
               ? `　終了 ${fmtClock(eta[upNext.m.id].end)}頃`
               : `　${fmtClock(eta[upNext.m.id].start)}頃 開始`)}
           </div>
+          {canOpen(upNext) && (
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.blue, marginTop: 6 }}>▶ タップしてスコア画面へ</div>
+          )}
         </div>
       )}
 
@@ -667,12 +680,13 @@ function ScheduleTab() {
         const w = r.st === "done" ? matchWinnerIndex(r.m) : null;
         const iWon = r.role === "play" && w === meIdx;
         return (
-          <div key={r.m.id || idx} style={{
-            display: "flex", alignItems: "center", gap: 10,
+          <div key={r.m.id || idx} onClick={() => openMatch(r)} style={{
             background: r.st === "done" ? C.zone : "#fff",
-            border: `1.5px solid ${r.role === "referee" ? C.hill : r.st === "done" ? C.line : C.line}`,
+            border: `1.5px solid ${r.role === "referee" ? C.hill : C.line}`,
             borderRadius: 12, padding: "10px 12px", marginBottom: 8,
+            cursor: canOpen(r) ? "pointer" : "default",
           }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 34, textAlign: "center", flexShrink: 0 }}>
               <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>{r.m.slot != null ? `${r.m.slot + 1}コマ` : "追加"}</div>
               <div style={{ fontSize: 14, fontWeight: 900, color: C.ink }}>卓{r.m.table}</div>
@@ -707,6 +721,10 @@ function ScheduleTab() {
                 </>
               )}
             </div>
+            </div>
+            {canOpen(r) && (
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, textAlign: "right", marginTop: 6 }}>▶ タップしてスコア画面へ</div>
+            )}
           </div>
         );
       })}
@@ -807,7 +825,7 @@ function Shell() {
           <TablesTab />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" }}>
-          <ScheduleTab />
+          <ScheduleTab onPick={handlePick} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
           {setupInfo
