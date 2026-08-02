@@ -2,7 +2,11 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover" />
+<!-- ホーム画面から起動するとSafariのバーが消えて全画面になる（プロジェクター投影用） -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="スコア表示" />
 <title>JCL9Match B3 観戦ディスプレイ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,9 +40,13 @@
 const { useState, useEffect, useRef } = React;
 
 const FONT = "'M PLUS Rounded 1c', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif";
+/* ===== 明るい部屋でのプロジェクター投影に合わせた配色 =====
+   ・背景は白のまま（明るい室内では黒背景が灰色に浮いて逆に読めなくなるため）
+   ・薄いグレーの面と細い線は投影で消えるので使わない。区切りは太い黒線で表現する
+   ・文字は白抜き・フチ取り・影を使わず、黒か濃色のベタ塗りで出す */
 const C = {
-  bg: "#FFFFFF", panel: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
-  blue: "#2E6DB5", red: "#C6392E", win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0",
+  bg: "#FFFFFF", ink: "#0E1216", sub: "#3C454E", line: "#0E1216", lineSoft: "#B8BFC6",
+  blue: "#12508F", red: "#A3211A", win: "#1E6B36", hill: "#8A4B0B",
 };
 
 /* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用） =========
@@ -97,11 +105,36 @@ function getQueueForTable(matches, tableNum) {
   return list;
 }
 
+/* 投影中に画面が消えるとプロジェクターも真っ暗になるので、スリープを止める。
+   iOS 16.4以降のSafariで有効。効かない端末では「設定 → 画面表示と明るさ → 自動ロック → なし」で運用する */
+function useKeepAwake() {
+  useEffect(() => {
+    let lock = null;
+    const request = async () => {
+      try {
+        if (navigator.wakeLock && document.visibilityState === "visible") {
+          lock = await navigator.wakeLock.request("screen");
+        }
+      } catch {}
+    };
+    request();
+    // 一度バックグラウンドに行くと解除されるので、戻ってきたら取り直す
+    const onVisible = () => { if (document.visibilityState === "visible") request(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      if (lock) { try { lock.release(); } catch {} }
+    };
+  }, []);
+}
+
 function App() {
   const [queues, setQueues] = useState([[], [], []]);
   const [err, setErr] = useState(null);
+  useKeepAwake();
 
-  // 縦画面なら3段（テーブルを縦に積む）、横画面なら従来の2x2レイアウト
+  // 縦画面なら3段（テーブルを縦に積む）、横画面なら従来の2x2レイアウト。
+  // プロジェクターへは横向きで繋ぐと画面いっぱいに映る（縦だと左右に黒帯が出て小さくなる）
   const [portrait, setPortrait] = useState(() => window.innerHeight >= window.innerWidth);
   useEffect(() => {
     const onResize = () => setPortrait(window.innerHeight >= window.innerWidth);
@@ -219,21 +252,21 @@ function App() {
     .filter(Boolean);
 
   return (
-    <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "18px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: 10, right: 14, display: "flex", gap: 6, zIndex: 10 }}>
+    <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "10px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 6, right: 8, display: "flex", gap: 6, zIndex: 10 }}>
         <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
         <button onClick={resetZoom} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(scale * 100)}%</button>
         <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
       </div>
 
       {/* ここから下が、好きな場所を好きなだけピンチで拡大・1本指でドラッグして動かせる範囲 */}
-      <div ref={viewportRef} style={{ position: "relative", width: "100%", height: "calc(100vh - 36px)", overflow: "hidden", touchAction: "none" }}>
+      <div ref={viewportRef} style={{ position: "relative", width: "100%", height: "calc(100vh - 20px)", overflow: "hidden", touchAction: "none" }}>
         <div style={{
           position: "absolute", left: 0, top: 0, width: "100%", height: "100%",
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "0 0",
         }}>
           {portrait ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", maxWidth: 900, margin: "0 auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", maxWidth: 900, margin: "0 auto" }}>
               <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
               <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
               <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
@@ -241,7 +274,7 @@ function App() {
           ) : (
             <div style={{
               display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-              gridTemplateAreas: `"t1 t2" "next t3"`, gap: 16,
+              gridTemplateAreas: `"t1 t2" "next t3"`, gap: 10,
               height: "100%", maxWidth: 1600, margin: "0 auto",
             }}>
               <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
@@ -252,27 +285,37 @@ function App() {
           )}
         </div>
       </div>
-      {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 8, color: C.red, textAlign: "center", fontSize: 13, zIndex: 10 }}>同期エラー: {err}</div>}
+      {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 4, color: C.red, textAlign: "center", fontSize: 14, fontWeight: 800, zIndex: 10 }}>同期エラー: {err}</div>}
     </div>
   );
 }
 const zoomBtn = {
-  width: 34, height: 30, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8,
-  color: C.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+  width: 34, height: 28, background: "#fff", border: `2px solid ${C.line}`, borderRadius: 6,
+  color: C.ink, fontSize: 14, fontWeight: 900, cursor: "pointer", fontFamily: FONT,
   display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
 };
 
+/* 見出しの黒ベタ帯。薄いグレーの面より投影で確実に残る */
+function TitleBadge({ children }) {
+  return (
+    <span style={{
+      display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
+      padding: "3px 12px", fontSize: "clamp(15px, 1.7vw, 26px)", fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+    }}>{children}</span>
+  );
+}
+
 function NextList({ matches }) {
   return (
-    <div style={{ height: "100%", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", boxSizing: "border-box", overflow: "hidden" }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2, marginBottom: 10 }}>次の試合</div>
-      {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, opacity: 0.6, textAlign: "center", marginTop: 20 }}>予定なし</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ height: "100%", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", boxSizing: "border-box", overflow: "hidden" }}>
+      <div style={{ marginBottom: 8 }}><TitleBadge>次の試合</TitleBadge></div>
+      {matches.length === 0 && <div style={{ color: C.sub, fontSize: "clamp(16px, 1.8vw, 26px)", fontWeight: 800, textAlign: "center", marginTop: 18 }}>予定なし</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {matches.map((m, i) => (
-          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.03)", borderRadius: 12, padding: "8px 12px" }}>
-            <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, flexShrink: 0 }}>卓{m.tableNum}</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 400 }}>対</span> {(m.names || ["", ""])[1]}
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, border: `2px solid ${C.line}`, borderRadius: 10, padding: "6px 12px" }}>
+            <span style={{ fontSize: "clamp(14px, 1.5vw, 22px)", fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 8px", flexShrink: 0 }}>卓{m.tableNum}</span>
+            <span style={{ fontSize: "clamp(17px, 2vw, 30px)", fontWeight: 800, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
             </span>
           </div>
         ))}
@@ -291,9 +334,9 @@ function hillInfo(rt, disp) {
 function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
-      <div style={{ height: "100%", boxSizing: "border-box", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24, letterSpacing: 2 }}>卓 {tableNum}</div>
-        <div style={{ fontSize: 24, opacity: 0.6 }}>待機中</div>
+      <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "16px 18px", color: C.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
+        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <div style={{ fontSize: "clamp(22px, 3vw, 44px)", fontWeight: 900, color: C.sub }}>待機中</div>
       </div>
     );
   }
@@ -321,54 +364,64 @@ function TablePanel({ tableNum, m }) {
   const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
   return (
-    <div style={{ height: "100%", boxSizing: "border-box", background: C.panel, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "18px 22px", color: C.ink, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 17, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
-        <span style={{ fontSize: 15, color: C.sub, fontWeight: 700 }}>
+    <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", color: C.ink, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <span style={{ fontSize: "clamp(14px, 1.6vw, 24px)", color: C.ink, fontWeight: 900 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
       </div>
 
       {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
-        <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "5px 10px", textAlign: "center", fontSize: 15, fontWeight: 800, marginBottom: 8 }}>
+        <div style={{ background: C.hill, color: "#fff", borderRadius: 8, padding: "3px 10px", textAlign: "center", fontSize: "clamp(15px, 1.8vw, 26px)", fontWeight: 900, marginBottom: 6, letterSpacing: 2 }}>
           ヒルヒル
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 10, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
           const pc = i === 0 ? C.blue : C.red;
           const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
+          const isBreaker = m.brk === i;
           return (
-            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 4px ${pc}` : "none", borderRadius: 16, padding: "10px 4px 8px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minHeight: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{names[i]}</div>
-              <div style={{ minHeight: "clamp(64px, 10.5vw, 108px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "clamp(58px, 10vw, 100px)", fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink, WebkitTextStroke: `1.5px ${pc}`, textShadow: `0 3px 0 rgba(0,0,0,0.08)` }}>
+            <div key={i} style={{
+              flex: 1, textAlign: "center", borderRadius: 10, padding: "6px 4px",
+              border: `${isBreaker ? 4 : 2}px solid ${isBreaker ? pc : C.lineSoft}`,
+              display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden",
+            }}>
+              <div style={{
+                fontSize: "clamp(19px, 2.4vw, 36px)", fontWeight: 900, color: "#fff", background: pc,
+                borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>{names[i]}</div>
+
+              <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ fontSize: "min(13vw, 19vh)", fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: C.ink }}>
                   {m.phase === "banking" ? "–" : disp[i]}
-                  <span style={{ fontSize: "0.42em", opacity: 0.55, WebkitTextStroke: "0px" }}>/{raceTo[i]}</span>
+                  <span style={{ fontSize: "0.42em", color: C.sub }}>/{raceTo[i]}</span>
                 </div>
               </div>
+
               {bothLose ? (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>
-                  達成率 {(rate(i) * 100).toFixed(1)}％
+                <div style={{ alignSelf: "center", background: C.hill, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
+                  達成率 {(rate(i) * 100).toFixed(0)}％
                 </div>
               ) : hi && (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "2px 10px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>
+                <div style={{ alignSelf: "center", background: pc, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
                   {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                 </div>
               )}
-              {m.brk === i && <div style={{ fontSize: 14, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 4 }}>● ブレイク</div>}
+              {isBreaker && <div style={{ fontSize: "clamp(13px, 1.4vw, 22px)", fontWeight: 900, color: pc, letterSpacing: 1, marginTop: 3 }}>● ブレイク</div>}
             </div>
           );
         })}
       </div>
 
       {bothLose ? (
-        <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.hill }}>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: "clamp(18px, 2.2vw, 34px)", fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "2px 0" }}>
           時間切れ・両者負け
         </div>
       ) : matchWinner != null && (
-        <div style={{ marginTop: 10, textAlign: "center", fontSize: 22, fontWeight: 800, color: C.win }}>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: "clamp(18px, 2.2vw, 34px)", fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "2px 0" }}>
           🏆 {names[matchWinner]} 勝利
         </div>
       )}
