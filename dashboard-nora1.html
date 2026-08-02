@@ -7,16 +7,6 @@
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
-  /* PC表示用：どの試合のQRをサブ画面（B4）に出しているかを、対戦カードの点滅で示す */
-  @keyframes qrPulse {
-    0%   { box-shadow: 0 0 0 0 rgba(46,109,181,0.55); }
-    70%  { box-shadow: 0 0 0 7px rgba(46,109,181,0); }
-    100% { box-shadow: 0 0 0 0 rgba(46,109,181,0); }
-  }
-  .qr-active { animation: qrPulse 1.3s ease-out infinite; border-color: #2E6DB5 !important; }
-  @media (prefers-reduced-motion: reduce) {
-    .qr-active { animation: none; box-shadow: 0 0 0 3px rgba(46,109,181,0.45); }
-  }
   @media print {
     .no-print { display: none !important; }
     .print-fit { height: auto !important; overflow: visible !important; }
@@ -83,16 +73,13 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.130";
-const BUILD_TIME = "2026-08-02 18:25";
+const APP_VERSION = "1.132";
+const BUILD_TIME = "2026-08-02 19:05";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
   win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B",
 };
-
-/* このB1から発行するQRが指す先（B2アプリのURL）。実際にデプロイしたURLに合わせて調整してください */
-const B2_URL = "https://kazexnora1.github.io/nora1/players-nora1.html";
 
 /* ========= 共有バックエンド：Firebase Realtime Database =========
    ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。
@@ -161,38 +148,6 @@ async function saveMatch(matchId, state) {
 }
 function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-}
-
-/* ========= QRの共有（B4: qr-nora1.html に表示させる） =========
-   スマホ操作用・PC表示用のどちらからも呼べるよう、ここに置いている。
-   matchId を一緒に載せているので、受け取った側は「どの試合のQRが出ているか」を判定できる */
-const QR_ACTIVE_MS = 60000; // B4のQR表示時間（1分）。PC側の点滅もこれに合わせて止める
-function matchQrUrl(m) {
-  const rt = m.raceTo || [0, 0];
-  const url = new URL(B2_URL);
-  url.searchParams.set("m", m.id);
-  url.searchParams.set("p1", m.names[0]);
-  url.searchParams.set("p2", m.names[1]);
-  url.searchParams.set("r1", 0);
-  url.searchParams.set("r2", 0);
-  url.searchParams.set("len", 100);
-  url.searchParams.set("t", m.table);
-  url.searchParams.set("rt1", rt[0]);
-  url.searchParams.set("rt2", rt[1]);
-  return url.toString();
-}
-async function publishQr(payload) {
-  try { await dbSet("activeCall", { ...payload, publishedAt: Date.now() }); } catch {}
-}
-async function clearQr() {
-  try { await dbSet("activeCall", null); } catch {}
-}
-/* 試合の呼び出しQRをB4へ送る。names はB4の見出しに出る文字列 */
-function publishMatchQr(m, heading, names) {
-  return publishQr({
-    matchId: m.id, url: matchQrUrl(m), heading,
-    names: names || `${m.names[0]} 対 ${m.names[1]}`,
-  });
 }
 
 const STALE_MS = 1000 * 60 * 60 * 6;
@@ -551,7 +506,12 @@ function App() {
   );
 }
 
-function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
+const menuBtn = {
+  width: "100%", background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12,
+  padding: "13px 10px", fontSize: 14.5, fontWeight: 800, color: C.ink, cursor: "pointer", fontFamily: FONT, textAlign: "center",
+};
+
+function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
@@ -578,12 +538,13 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
   const urgent = oneHill || (remainMin != null && remainMin <= 3);
   const finishColor = urgent ? C.minus : finishProgress > 0.6 ? C.hill : C.win;
 
-  // 終了した試合はここだけスコアを訂正できる（B1のこのカードから）。誤タップで数字を消さないよう、
-  // カードを押すと専用のダイアログが開く方式にしている。他画面（B2/B3等）にもそのまま反映される
-  const [editOpen, setEditOpen] = useState(false);
+  // カードを押すと操作メニューが開く（スコア修正／終了にする／試合を無かったことにする）。
+  // 誤タップでいきなり値が変わらないよう、必ずメニューを経由させている
+  const [menu, setMenu] = useState(null); // null | "menu" | "score" | "finish"
   const [draft, setDraft] = useState(["", ""]);
   const [saving, setSaving] = useState(false);
-  const openEdit = () => { setDraft([String(tot[0]), String(tot[1])]); setEditOpen(true); };
+
+  const openScore = () => { setDraft([String(tot[0]), String(tot[1])]); setMenu("score"); };
   const saveEdit = async () => {
     const v0 = Math.max(0, Math.min(999, parseInt(draft[0], 10) || 0));
     const v1 = Math.max(0, Math.min(999, parseInt(draft[1], 10) || 0));
@@ -594,8 +555,39 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
       await dbUpdate("matches/" + m.id, {
         tot: newTot, winner: newWinner, version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
-      setEditOpen(false);
+      setMenu(null);
     } catch {}
+    setSaving(false);
+  };
+  // 勝者を決めてその場で終了にする。点数が目標に届いていなくても、この指定が優先される
+  const finishAs = async (winner, bothLose) => {
+    setSaving(true);
+    try {
+      await dbUpdate("matches/" + m.id, {
+        winner, bothLose: !!bothLose, finishedAt: Date.now(),
+        version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
+  // 終了を取り消して試合中に戻す。点数が目標に達している場合は、先にスコアを直す必要がある
+  const reopen = async () => {
+    setSaving(true);
+    try {
+      await dbUpdate("matches/" + m.id, {
+        winner: null, bothLose: false, finishedAt: null,
+        version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
+  // 試合そのものを消す。タイムラインからも成績からも消え、元には戻せない
+  const removeMatch = async () => {
+    if (!window.confirm(`卓${m.table}　${names[0]} 対 ${names[1]}\nこの試合を削除します。元に戻せません。よろしいですか？`)) return;
+    setSaving(true);
+    try { await dbSet("matches/" + m.id, null); } catch {}
     setSaving(false);
   };
 
@@ -612,11 +604,8 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
 
   // 終了した試合は勝敗だけを出す。点数は大小で勝敗が決まるわけではないので出さない
   const won = (i) => !m.bothLose && w === i;
-  const clickable = st === "done" || st === "call" || st === "live";
-  const handleClick = () => {
-    if (st === "done") openEdit();
-    else if ((st === "call" || st === "live") && onOpenQr) onOpenQr(m);
-  };
+  const clickable = true; // どの状態のカードからも操作メニューを開ける
+  const handleClick = () => setMenu("menu");
 
   return (
     <div onClick={clickable ? handleClick : undefined} style={{
@@ -682,30 +671,63 @@ function TimelineSlotCard({ m, st, refereeEnabled, onOpenQr, onEditReferee }) {
         )}
       </div>
 
-      {editOpen && (
-        <div onClick={(e) => { e.stopPropagation(); setEditOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "22px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 16 }}>スコアを訂正</div>
-            <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
-              {[0, 1].map((i) => (
-                <div key={i} style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-                  <input
-                    type="text" inputMode="numeric" value={draft[i]} autoFocus={i === 0}
-                    onChange={(e) => {
-                      const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 3);
-                      setDraft((arr) => (i === 0 ? [v, arr[1]] : [arr[0], v]));
-                    }}
-                    style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 22, fontWeight: 800, color: C.ink, outline: "none", fontFamily: FONT }}
-                  />
-                  <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>目標 {rt[i]}</div>
+      {menu && (
+        <div onClick={(e) => { e.stopPropagation(); setMenu(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>卓{m.table}・{style.badge}</div>
+            <div style={{ fontSize: 16.5, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.4 }}>
+              <span style={{ color: C.blue }}>{names[0]}</span>
+              <span style={{ color: C.sub, fontSize: 13, margin: "0 6px" }}>対</span>
+              <span style={{ color: C.red }}>{names[1]}</span>
+            </div>
+
+            {menu === "menu" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button onClick={openScore} style={menuBtn}>✏️ スコアを修正する</button>
+                {st !== "done" && <button onClick={() => setMenu("finish")} style={menuBtn}>🏁 この試合を終了にする</button>}
+                {st === "done" && <button onClick={reopen} disabled={saving} style={menuBtn}>↩︎ 終了を取り消して試合中に戻す</button>}
+                <button onClick={removeMatch} disabled={saving} style={{ ...menuBtn, color: C.minus, borderColor: C.minus }}>🗑 この試合を無かったことにする</button>
+                <button onClick={() => setMenu(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
+              </div>
+            )}
+
+            {menu === "finish" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>結果を選ぶと、その時点で試合終了になります</div>
+                <button onClick={() => finishAs(0, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>🏆 {names[0]} の勝ちで終了</button>
+                <button onClick={() => finishAs(1, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>🏆 {names[1]} の勝ちで終了</button>
+                <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 両者負けで終了（時間切れ）</button>
+                <button onClick={() => setMenu("menu")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+              </div>
+            )}
+
+            {menu === "score" && (
+              <>
+                <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
+                  {[0, 1].map((i) => (
+                    <div key={i} style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+                      <input
+                        type="text" inputMode="numeric" value={draft[i]} autoFocus={i === 0}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 3);
+                          setDraft((arr) => (i === 0 ? [v, arr[1]] : [arr[0], v]));
+                        }}
+                        style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 22, fontWeight: 800, color: C.ink, outline: "none", fontFamily: FONT }}
+                      />
+                      <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>目標 {rt[i]}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-              <button onClick={() => setEditOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>キャンセル</button>
-              <button onClick={saveEdit} disabled={saving} style={{ flex: 1, background: C.blue, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: "#fff", cursor: "pointer", fontFamily: FONT }}>{saving ? "保存中…" : "保存"}</button>
-            </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                  <button onClick={() => setMenu("menu")} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>もどる</button>
+                  <button onClick={saveEdit} disabled={saving} style={{ flex: 1, background: C.blue, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: "#fff", cursor: "pointer", fontFamily: FONT }}>{saving ? "保存中…" : "保存"}</button>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 10, lineHeight: 1.6 }}>
+                  目標点に達していれば終了、届かなければ試合中に戻ります。
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -847,13 +869,12 @@ function RoundRobinMatrix({ compact, fill }) {
 
 /* ========= PC対戦表タブ：列＝卓、行＝コマ（下に行くほど後の試合）。
    1試合＝1カードで、対戦相手を上下に並べる。行は 1fr なので、コマ数が変わっても常に1画面に収まる。
-   カードを押すとサブ画面（B4）に呼び出しQRが出て、そのカードが点滅する（このPC画面にQRは出さない） ========= */
-function PcMatchCard({ m, st, active, onClick }) {
+   開きっぱなしで見せる用の表示なので、カードの操作はスマホ操作用のタイムライン側で行う ========= */
+function PcMatchCard({ m, st }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
   const w = st === "done" ? matchWinnerIndex(m) : null;
-  const clickable = st === "call" || st === "live";
 
   const box =
     st === "done" ? { background: "#EFF1F3", border: `1px solid ${C.line}` }
@@ -866,9 +887,9 @@ function PcMatchCard({ m, st, active, onClick }) {
     st === "done" ? (w === i ? C.win : C.sub) : st === "queued" ? C.sub : C.ink;
 
   return (
-    <div className={active ? "qr-active" : ""} onClick={clickable ? onClick : undefined} style={{
+    <div style={{
       ...box, borderRadius: 12, display: "flex", alignItems: "stretch", overflow: "hidden",
-      minHeight: 0, position: "relative", cursor: clickable ? "pointer" : "default",
+      minHeight: 0, position: "relative",
     }}>
       <div style={{
         flex: "0 0 46px", display: "flex", alignItems: "center", justifyContent: "center",
@@ -895,9 +916,6 @@ function PcMatchCard({ m, st, active, onClick }) {
         ))}
       </div>
 
-      {active && (
-        <div style={{ position: "absolute", top: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>📣 QR表示中</div>
-      )}
       {st === "done" && m.bothLose && (
         <div style={{ position: "absolute", bottom: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.hill, whiteSpace: "nowrap" }}>両者負け</div>
       )}
@@ -907,18 +925,13 @@ function PcMatchCard({ m, st, active, onClick }) {
 
 function PcMatchGridTab({ simple }) {
   const [matches, setMatches] = useState({});
-  const [activeCall, setActiveCall] = useState(null);
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim"); // "prelim" | "bracket"
   const effectiveView = simple ? "prelim" : view;
-  // 点滅は publishedAt から60秒で止める。時間経過だけで見た目が変わるので定期的に描き直す
-  const [, forceTick] = useState(0);
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
-  useEffect(() => dbSubscribe("activeCall", (v) => setActiveCall(v || null), () => {}), []);
-  useEffect(() => { const iv = setInterval(() => forceTick((t) => t + 1), 1000); return () => clearInterval(iv); }, []);
 
   const cols = useMemo(() => [1, 2, 3].map((t) => annotateColumn(getPrelimForTable(matches, t))), [matches]);
   const rowCount = Math.max(1, ...cols.map((c) => c.length));
@@ -927,16 +940,6 @@ function PcMatchGridTab({ simple }) {
   const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
   const bracketTotal = bracketTotalRounds(bracketSize);
   const roundLabel = (r) => (r === bracketTotal ? "決勝" : bracketTotal - r === 1 ? "準決勝" : `${r}回戦`);
-
-  const activeMatchId =
-    activeCall && activeCall.matchId && Date.now() - (activeCall.publishedAt || 0) < QR_ACTIVE_MS
-      ? activeCall.matchId : null;
-
-  // 押すたびに「QRを出す／消す」を切り替える。QRはこの画面には出さず、サブ画面（B4）にだけ出る
-  const handleCard = (m) => {
-    if (activeMatchId === m.id) clearQr();
-    else publishMatchQr(m, `📣 卓${m.table} 呼び出し`);
-  };
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: "12px 20px", color: C.ink, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
@@ -953,11 +956,6 @@ function PcMatchGridTab({ simple }) {
             border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
             cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
           }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
-          {effectiveView === "prelim" && (
-            <span style={{ marginLeft: "auto", fontSize: 12, color: C.sub }}>
-              カードを押すとサブ画面に呼び出しQRが出ます（もう一度押すと消えます）
-            </span>
-          )}
         </div>
       )}
 
@@ -981,11 +979,7 @@ function PcMatchGridTab({ simple }) {
                     }}>空き</div>
                   );
                 }
-                return (
-                  <PcMatchCard key={ti} m={e.m} st={e.st}
-                    active={activeMatchId === e.m.id}
-                    onClick={() => handleCard(e.m)} />
-                );
+                return <PcMatchCard key={ti} m={e.m} st={e.st} />;
               })}
             </React.Fragment>
           ))}
@@ -1774,8 +1768,6 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
       await dbSet("matches", next);
       // 対戦表を組み直したら、スコアラーの担当回数も新しい大会として0からやり直す
       await dbSet("refereeCounts", {});
-      // 直前まで出していた呼び出しQRも消しておく（消えた対戦を指したままにしない）
-      await dbSet("activeCall", null);
       // 書き込めたつもりで消えている事故を防ぐため、読み直して実際に保存されたか確認する
       const savedMatches = (await dbGet("matches")) || {};
       const saved = Object.keys(savedMatches).filter((id) => next[id]).length;
@@ -2006,15 +1998,7 @@ function ScheduleTab({ roster }) {
       r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
     };
     await saveMatch(matchId, state).catch(() => {});
-    const url = new URL(B2_URL);
-    url.searchParams.set("m", matchId);
-    url.searchParams.set("p1", p1.name);
-    url.searchParams.set("p2", p2.name);
-    url.searchParams.set("r1", R1);
-    url.searchParams.set("r2", R2);
-    url.searchParams.set("len", lenPct);
-    url.searchParams.set("t", table);
-    setCreatedInfo({ url: url.toString(), table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
+    setCreatedInfo({ table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
     setCreating(false);
     refreshStatus();
   };
@@ -2077,9 +2061,9 @@ function ScheduleTab({ roster }) {
 
       {createdInfo && (
         <div style={{ marginTop: 18, textAlign: "center" }}>
-          <div style={{ fontSize: 13.5, color: C.win, fontWeight: 700, marginBottom: 10 }}>✓ 卓{createdInfo.table}に作成しました</div>
-          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(createdInfo.url)}`} style={{ width: 200, height: 200 }} />
-          <div style={{ fontSize: 12, color: C.sub, marginTop: 8 }}>{createdInfo.names.join(" 対 ")}</div>
+          <div style={{ fontSize: 13.5, color: C.win, fontWeight: 700, marginBottom: 6 }}>✓ 卓{createdInfo.table}に作成しました</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{createdInfo.names.join(" 対 ")}</div>
+          <div style={{ fontSize: 12, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>目標点 {createdInfo.raceTo[0]} 対 {createdInfo.raceTo[1]}<br />選手用アプリの「対戦表」から、この試合のカードを押してもらってください</div>
         </div>
       )}
     </div>
@@ -2187,7 +2171,7 @@ function HomeTab() {
       .sort((a, b) => (a.sameTableLive === b.sameTableLive ? 0 : a.sameTableLive ? -1 : 1) || a.tier - b.tier || a.count - b.count);
   };
 
-  const [refereeQR, setRefereeQR] = useState(null); // 呼び出し中のレフェリー { name, match }
+  const [refereePicked, setRefereePicked] = useState(null); // 直前に決めたスコアラー { name, match }
   const assignReferee = async (ti, name, target) => {
     if (!target || refereeBusy) return;
     setRefereeBusy(true);
@@ -2199,8 +2183,7 @@ function HomeTab() {
       const prevCount = (await dbGet("refereeCounts/" + name)) || 0;
       await dbSet("refereeCounts/" + name, prevCount + 1);
       setRefModalMatch(null);
-      setRefereeQR({ name, match: target });
-      publishMatchQr(target, `📝 卓${target.table} スコアラー呼び出し`, `${name} さん`);
+      setRefereePicked({ name, match: target });
       refresh();
     } catch {}
     setRefereeBusy(false);
@@ -2441,14 +2424,6 @@ function HomeTab() {
     setGlobalBusy(false);
   };
 
-  const [qrMatch, setQrMatch] = useState(null); // 次戦以降のQRのみを表示する軽量モーダル
-
-  // このスマホ画面ではQRモーダルを出しつつ、サブ画面（B4）にも同じQRを送る
-  const openQr = (m) => {
-    setQrMatch(m);
-    publishMatchQr(m, `📣 卓${m.table} 呼び出し`);
-  };
-
   const toggleGlobalAdjust = () => {
     if (showGlobalAdjust) { setShowGlobalAdjust(false); return; }
     setTableAdjust(null);
@@ -2545,7 +2520,7 @@ function HomeTab() {
                 return (
                   <div key={ti}>
                     {e ? (
-                      <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onOpenQr={openQr} onEditReferee={(m) => setRefModalMatch(m)} />
+                      <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onEditReferee={(m) => setRefModalMatch(m)} />
                     ) : (
                       <div style={{ height: 138, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
                     )}
@@ -2657,26 +2632,18 @@ function HomeTab() {
         </div>
       )}
 
-      {/* ===== モーダル：呼び出し／引き継ぎQR ===== */}
-      {qrMatch && (
-        <div onClick={() => setQrMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "24px 20px", textAlign: "center", maxWidth: 320, width: "100%" }}>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12 }}>卓{qrMatch.table}：{qrMatch.names.join(" 対 ")}</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(matchQrUrl(qrMatch))}`} style={{ width: 200, height: 200, margin: "0 auto" }} />
-            <button onClick={() => setQrMatch(null)} style={{ marginTop: 16, width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
-          </div>
-        </div>
-      )}
-
-      {/* ===== モーダル：スコアラー呼び出しQR（割り当て直後） ===== */}
-      {refereeQR && (
-        <div onClick={() => setRefereeQR(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
+      {/* ===== モーダル：スコアラーを決めた直後の確認 ===== */}
+      {refereePicked && (
+        <div onClick={() => setRefereePicked(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereeQR.match.table}　スコアラー呼び出し</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.blue, marginBottom: 4 }}>📝 {refereeQR.name} さん</div>
-            <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>このQRを読み込んでください</div>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(matchQrUrl(refereeQR.match))}`} style={{ width: 240, height: 240, margin: "0 auto" }} />
-            <button onClick={() => setRefereeQR(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereePicked.match.table}　スコアラー</div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: C.blue, marginBottom: 10 }}>📝 {refereePicked.name} さん</div>
+            <div style={{ fontSize: 13.5, color: C.ink, lineHeight: 1.8 }}>
+              選手用アプリの「対戦表」から<br />
+              <b>卓{refereePicked.match.table}　{refereePicked.match.names[0]} 対 {refereePicked.match.names[1]}</b><br />
+              のカードを押してもらってください
+            </div>
+            <button onClick={() => setRefereePicked(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
           </div>
         </div>
       )}
