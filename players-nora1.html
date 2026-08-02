@@ -12,14 +12,6 @@
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script crossorigin="anonymous" src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-<script>
-  /* unpkgが落ちている・会場の回線で弾かれる等でjsQRを読めないと、
-     何を撮ってもQRが読めない状態になる。その場合は別のCDNから読み直す */
-  if (!window.jsQR) {
-    document.write('<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"><\/script>');
-  }
-</script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
@@ -217,7 +209,7 @@ function annotateColumn(list) {
 }
 
 /* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
-function TimelineTab({ myMatchId }) {
+function TimelineTab({ myMatchId, onPick }) {
   const [cols, setCols] = useState([[], [], []]);
   const [err, setErr] = useState(null);
 
@@ -249,7 +241,7 @@ function TimelineTab({ myMatchId }) {
             {[0, 1, 2].map((ti) => {
               const e = cols[ti][s];
               return <div key={ti}>{e
-                ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} />
+                ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
                 : <div style={{ height: 128, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
             })}
           </React.Fragment>
@@ -259,7 +251,7 @@ function TimelineTab({ myMatchId }) {
     </div>
   );
 }
-function TimelineSlotCard({ m, st, mine }) {
+function TimelineSlotCard({ m, st, mine, onPick }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
@@ -278,13 +270,26 @@ function TimelineSlotCard({ m, st, mine }) {
 
   const won = (i) => !m.bothLose && w === i;
 
+  // 呼び出し中・試合中のカードだけ、押すとその試合のスコアラーになれる。
+  // 誤って別の卓に入ってしまわないよう、確認を1枚はさむ
+  const clickable = (st === "call" || st === "live") && !!onPick;
+  const handleClick = () => {
+    if (!clickable) return;
+    if (!window.confirm(`卓${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
+    onPick(m);
+  };
+
   return (
-    <div style={{
+    <div onClick={clickable ? handleClick : undefined} style={{
+      cursor: clickable ? "pointer" : "default",
       position: "relative", height: 128, boxSizing: "border-box", background: style.bg,
       border: `${mine ? 3 : st === "live" || st === "call" ? 2 : 1}px solid ${mine ? C.win : style.border}`,
       borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "space-between",
       overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
     }}>
+      {clickable && !mine && (
+        <span style={{ position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>▶ 担当する</span>
+      )}
       {mine && <span style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: C.win, color: "#fff", borderRadius: 10, padding: "1px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>担当中</span>}
       <div style={{ textAlign: "center" }}>
         <span style={{
@@ -489,212 +494,21 @@ function TablePanel({ tableNum, m }) {
   );
 }
 
-/* ========= QR読み取り（ライブスキャン） =========
-   以前は「写真を1枚撮って、その1枚をjsQRで解析する」方式だったが、
-   ピント・手ブレ・画面の反射で失敗しやすかった（標準カメラは映像を連続して見ているので強い）。
-   ここではカメラ映像をそのまま毎フレーム解析する。画面に映るQRでも、かざせば数秒で入る */
-function parseMatchUrl(text) {
-  try {
-    const url = new URL(text);
-    const q = url.searchParams;
-    if (!(q.get("m") && q.get("p1") && q.get("p2") && q.get("r1") && q.get("r2") && q.get("len"))) return null;
-    return {
-      matchId: q.get("m"),
-      names: [q.get("p1"), q.get("p2")],
-      ratings: [Number(q.get("r1")), Number(q.get("r2"))],
-      lenPct: Number(q.get("len")),
-      raceToParam: q.get("rt1") && q.get("rt2") ? [Number(q.get("rt1")), Number(q.get("rt2"))] : null,
-      table: Number(q.get("t")) || 1,
-    };
-  } catch { return null; }
-}
-const SCAN_MAX = 720; // 解析用に縮小する長辺（原寸のままだと重くて取りこぼす）
-
-function CameraLinkScreen({ onScanned, active }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef = useRef(0);
-  const fileRef = useRef(null);
-  const scannedRef = useRef(false);
-  const [scanning, setScanning] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const libReady = !!window.jsQR;
-
-  const stop = () => {
-    cancelAnimationFrame(rafRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setScanning(false);
-  };
-  // 画面を離れる時・他のタブに切り替えた時は必ずカメラを止める（電池と発熱の対策）
-  useEffect(() => stop, []);
-  useEffect(() => { if (!active) stop(); }, [active]);
-
-  const handleFound = (text) => {
-    const info = parseMatchUrl(text);
-    if (!info) { setErr("対戦用のQRコードではないようです"); return false; }
-    scannedRef.current = true;
-    stop();
-    onScanned(info);
-    return true;
-  };
-
-  const tick = () => {
-    const v = videoRef.current, cv = canvasRef.current;
-    if (!v || !cv || scannedRef.current) return;
-    if (v.readyState >= 2 && v.videoWidth) {
-      const k = Math.min(1, SCAN_MAX / Math.max(v.videoWidth, v.videoHeight));
-      const w = Math.round(v.videoWidth * k), h = Math.round(v.videoHeight * k);
-      cv.width = w; cv.height = h;
-      const ctx = cv.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(v, 0, 0, w, h);
-      try {
-        const img = ctx.getImageData(0, 0, w, h);
-        // 白黒反転したQR（画面表示で反転して見える場合など）も拾う
-        const code = window.jsQR ? window.jsQR(img.data, w, h, { inversionAttempts: "attemptBoth" }) : null;
-        if (code && code.data && handleFound(code.data)) return;
-      } catch {}
-    }
-    rafRef.current = requestAnimationFrame(tick);
-  };
-
-  const start = async () => {
-    setErr(null);
-    if (!window.jsQR) {
-      setErr("QRを読み取る部品を読み込めていません。通信を確認してページを再読み込みしてください");
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setErr("この端末ではカメラ映像を使えません。下の「写真を撮って読み取る」をお試しください");
-      return;
-    }
-    setBusy(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      const v = videoRef.current;
-      v.srcObject = stream;
-      v.setAttribute("playsinline", "true");
-      v.muted = true;
-      await v.play();
-      scannedRef.current = false;
-      setScanning(true);
-      rafRef.current = requestAnimationFrame(tick);
-    } catch (e) {
-      const name = e && e.name ? e.name : "";
-      setErr(
-        name === "NotAllowedError"
-          ? "カメラの使用が許可されていません。アドレスバー左の「ぁA」→ Webサイトの設定 → カメラ を「許可」にしてください"
-          : name === "NotFoundError"
-          ? "カメラが見つかりませんでした"
-          : "カメラを起動できませんでした：" + (e && e.message ? e.message : e)
-      );
-    }
-    setBusy(false);
-  };
-
-  /* 予備の手段：どうしてもカメラ映像が使えない端末向けに、写真1枚からの読み取りも残す。
-     以前と違い、解析前に縮小してから渡すので成功率が上がっている */
-  const handleFile = (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    setErr(null);
-    setBusy(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const k = Math.min(1, 1000 / Math.max(img.width, img.height));
-          const w = Math.round(img.width * k), h = Math.round(img.height * k);
-          const canvas = document.createElement("canvas");
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, w, h);
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const code = window.jsQR ? window.jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" }) : null;
-          setBusy(false);
-          if (!code) { setErr("QRコードを読み取れませんでした。もう一度お試しください"); return; }
-          handleFound(code.data);
-        } catch (err2) {
-          setBusy(false);
-          setErr("QRコードの解析に失敗しました：" + (err2 && err2.message ? err2.message : err2));
-        }
-      };
-      img.onerror = () => { setBusy(false); setErr("写真を読み込めませんでした"); };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  };
-
+/* ========= スコアラー未選択の画面 =========
+   以前はQRを読み取って対戦を特定していたが、対戦表のカードから直接入る方式に変更した。
+   カメラの許可も外部ライブラリも要らず、会場の明るさにも左右されない */
+function ScorerEmpty({ onGoTimeline }) {
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "28px 20px 60px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 8 }}>対戦の準備中です</div>
-      <div style={{ fontSize: 14, color: C.sub, marginBottom: 20, lineHeight: 1.7 }}>
-        本部の画面に対戦QRが表示されたら、カメラを起動してQRにかざしてください
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "64px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 10 }}>担当する試合を選んでください</div>
+      <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.8 }}>
+        「対戦表」で、呼び出し中または試合中のカードを押すと、この画面でその試合のスコアを付けられます。
       </div>
-
-      {/* カメラ映像。起動していない間は枠だけ出しておく */}
-      <div style={{
-        position: "relative", width: "100%", aspectRatio: "3 / 4", background: scanning ? "#000" : C.zone,
-        border: `1.5px solid ${C.line}`, borderRadius: 16, overflow: "hidden", marginBottom: 14,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <video ref={videoRef} playsInline muted autoPlay style={{
-          width: "100%", height: "100%", objectFit: "cover", display: scanning ? "block" : "none",
-        }} />
-        {scanning && (
-          <div style={{
-            position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)",
-            width: "62%", aspectRatio: "1 / 1", border: "3px solid rgba(255,255,255,0.9)", borderRadius: 14,
-            boxShadow: "0 0 0 2000px rgba(0,0,0,0.25)",
-          }} />
-        )}
-        {!scanning && <div style={{ color: C.sub, fontSize: 14 }}>カメラは停止中です</div>}
-      </div>
-      <canvas ref={canvasRef} style={{ display: "none" }} />
-
-      {scanning ? (
-        <>
-          <div style={{ fontSize: 14, color: C.win, fontWeight: 800, marginBottom: 10 }}>読み取り中…　QRを枠に入れてください</div>
-          <button onClick={stop} style={{
-            background: "#fff", color: C.ink, border: `1.5px solid ${C.line}`, borderRadius: 14,
-            padding: "14px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-          }}>カメラを止める</button>
-        </>
-      ) : (
-        <button onClick={start} disabled={busy} style={{
-          background: busy ? C.line : C.blue, color: busy ? C.sub : "#fff", border: "none", borderRadius: 18,
-          padding: "20px 30px", fontSize: 17, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT,
-          boxShadow: busy ? "none" : "0 4px 14px rgba(46,109,181,0.3)",
-        }}>{busy ? "起動中…" : "📷 カメラでQRを読み取る"}</button>
-      )}
-
-      {!libReady && (
-        <div style={{ marginTop: 16, fontSize: 13, color: C.hill, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 12px", lineHeight: 1.6 }}>
-          QRを読み取る部品を読み込めていません。通信を確認して、ページを再読み込みしてください。
-        </div>
-      )}
-      {err && <div style={{ marginTop: 16, fontSize: 13.5, color: C.minus, lineHeight: 1.6 }}>{err}</div>}
-
-      <div style={{ marginTop: 22, borderTop: `1px solid ${C.line}`, paddingTop: 14 }}>
-        <button onClick={() => fileRef.current && fileRef.current.click()} disabled={busy} style={{
-          background: "none", border: "none", color: C.sub, fontSize: 13, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontFamily: FONT,
-        }}>うまく読めない時：写真を撮って読み取る</button>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
-        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 10, lineHeight: 1.6 }}>
-          それでも読めない場合は、iPhoneの標準カメラでQRを写すと、このアプリが直接開きます。
-        </div>
-      </div>
+      <button onClick={onGoTimeline} style={{
+        background: C.blue, color: "#fff", border: "none", borderRadius: 18,
+        padding: "20px 30px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        boxShadow: "0 4px 14px rgba(46,109,181,0.3)",
+      }}>🗓 対戦表をひらく</button>
     </div>
   );
 }
@@ -720,7 +534,19 @@ function Shell() {
   });
   const [tab, setTab] = useState("scorer");
 
-  const handleScanned = (info) => {
+  // 対戦表のカードから、その試合のスコアラーとして入る
+  const handlePick = (m) => {
+    setSetupInfo2({
+      matchId: m.id,
+      names: m.names || ["P1", "P2"],
+      ratings: [Number(m.r1) || 0, Number(m.r2) || 0],
+      lenPct: Number(m.lenPct) || 100,
+      raceToParam: Array.isArray(m.raceTo) ? [Number(m.raceTo[0]) || 0, Number(m.raceTo[1]) || 0] : null,
+      table: Number(m.table) || 1,
+    });
+  };
+  // 選んだ対戦をURLにも書き込んでおく（リロードしても同じ試合に戻れる）
+  const setSetupInfo2 = (info) => {
     // 再読み込みしても復元できるよう、URLにも同じ情報を反映しておく
     const url = new URL(window.location.href);
     url.searchParams.set("m", info.matchId);
@@ -753,7 +579,7 @@ function Shell() {
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
-          <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} />
+          <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
           <TablesTab />
@@ -761,7 +587,7 @@ function Shell() {
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
           {setupInfo
             ? <MatchScreen setupInfo={setupInfo} onExit={handleExit} />
-            : <CameraLinkScreen onScanned={handleScanned} active={tab === "scorer"} />}
+            : <ScorerEmpty onGoTimeline={() => setTab("timeline")} />}
         </div>
       </div>
     </div>
