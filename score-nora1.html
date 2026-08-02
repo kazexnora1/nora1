@@ -160,7 +160,8 @@ function App() {
   const viewportRef = useRef(null);
   const gestureRef = useRef(null); // 現在進行中のジェスチャー（1本指パン／2本指ピンチ）の基準値
 
-  const MIN_SCALE = 1, MAX_SCALE = 8;
+  // 画面に収まりきらない時に引けるよう、1倍より小さくも縮められるようにしている
+  const MIN_SCALE = 0.35, MAX_SCALE = 8;
 
   const beginGesture = (touches) => {
     const rect = viewportRef.current.getBoundingClientRect();
@@ -386,7 +387,7 @@ function TablePanel({ tableNum, m }) {
           return (
             <div key={i} style={{
               flex: 1, textAlign: "center", borderRadius: 10, padding: "6px 4px",
-              border: `${isBreaker ? 4 : 2}px solid ${isBreaker ? pc : C.lineSoft}`,
+              border: `3px solid ${isBreaker ? pc : C.lineSoft}`,
               display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden",
             }}>
               <div style={{
