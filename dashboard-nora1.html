@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.133";
-const BUILD_TIME = "2026-08-02 19:40";
+const APP_VERSION = "1.134";
+const BUILD_TIME = "2026-08-02 20:10";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -592,7 +592,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   };
   // 試合そのものを消す。タイムラインからも成績からも消え、元には戻せない
   const removeMatch = async () => {
-    if (!window.confirm(`卓${m.table}　${names[0]} 対 ${names[1]}\nこの試合を削除します。元に戻せません。よろしいですか？`)) return;
+    if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合を削除します。元に戻せません。よろしいですか？`)) return;
     setSaving(true);
     try { await dbSet("matches/" + m.id, null); } catch {}
     setSaving(false);
@@ -681,7 +681,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       {menu && (
         <div onClick={(e) => { e.stopPropagation(); setMenu(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>卓{m.table}・{style.badge}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{m.table}・{style.badge}</div>
             <div style={{ fontSize: 16.5, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.4 }}>
               <span style={{ color: C.blue }}>{names[0]}</span>
               <span style={{ color: C.sub, fontSize: 13, margin: "0 6px" }}>対</span>
@@ -901,7 +901,7 @@ function PcMatchCard({ m, st }) {
       <div style={{
         flex: "0 0 46px", display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: 14, fontWeight: 900, color: C.sub, borderRight: `1px solid ${divider}`,
-      }}>卓{m.table}</div>
+      }}>T{m.table}</div>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "4px 12px", gap: 2 }}>
         {[0, 1].map((i) => (
@@ -1904,7 +1904,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
             <div />
-            {[1, 2, 3].map((t) => <div key={t} style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub }}>卓{t}</div>)}
+            {[1, 2, 3].map((t) => <div key={t} style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub }}>T{t}</div>)}
           </div>
           {grid.map(([slot, cells]) => (
             <div key={slot} style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6, alignItems: "stretch" }}>
@@ -2023,7 +2023,7 @@ function ScheduleTab({ roster }) {
           const label = !st ? "空き" : st.phase === "banking" ? "バンキング中" : st.phase === "done" ? "ラック終了" : "対戦中";
           return (
             <div key={t} style={{ flex: 1, background: C.zone, border: `2px solid ${table === t ? C.blue : C.line}`, borderRadius: 12, padding: "10px 6px", textAlign: "center", cursor: "pointer" }} onClick={() => setTable(t)}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: table === t ? C.blue : C.ink }}>卓{t}</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: table === t ? C.blue : C.ink }}>T{t}</div>
               <div style={{ fontSize: 10.5, color: st ? C.win : C.sub, marginTop: 4 }}>{label}</div>
               {st && <div style={{ fontSize: 9.5, color: C.sub, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.names ? st.names.join(" / ") : ""}</div>}
             </div>
@@ -2063,12 +2063,12 @@ function ScheduleTab({ roster }) {
       )}
 
       <button onClick={create} disabled={!valid || creating} style={{ width: "100%", background: valid ? C.ink : C.line, color: valid ? "#fff" : C.sub, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: valid ? "pointer" : "default", fontFamily: FONT }}>
-        {creating ? "作成中…" : `卓${table}に対戦を作成 ▶`}
+        {creating ? "作成中…" : `T${table}に対戦を作成 ▶`}
       </button>
 
       {createdInfo && (
         <div style={{ marginTop: 18, textAlign: "center" }}>
-          <div style={{ fontSize: 13.5, color: C.win, fontWeight: 700, marginBottom: 6 }}>✓ 卓{createdInfo.table}に作成しました</div>
+          <div style={{ fontSize: 13.5, color: C.win, fontWeight: 700, marginBottom: 6 }}>✓ T{createdInfo.table}に作成しました</div>
           <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{createdInfo.names.join(" 対 ")}</div>
           <div style={{ fontSize: 12, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>目標点 {createdInfo.raceTo[0]} 対 {createdInfo.raceTo[1]}<br />選手用アプリの「対戦表」から、この試合のカードを押してもらってください</div>
         </div>
@@ -2248,7 +2248,7 @@ function HomeTab() {
       setTLenPct(calc.newLenPct);
 
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${ti + 1}：未開始の${calc.future.length}試合を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
+      let msg = `T${ti + 1}：未開始の${calc.future.length}試合を${calc.newLenPct}%・${calc.newMinutes}分に設定しました`;
       if (calc.hitFloor) {
         // 下限40%でも指定時刻に間に合わないので、最終試合の終了予定時刻自体を現実的な時刻へ更新する
         const realFinish = new Date(Date.now() + calc.curRemainMin * 60000 + calc.future.length * calc.newMinutes * 60000);
@@ -2340,7 +2340,7 @@ function HomeTab() {
         msg += `（40%が下限の卓があるため終了予定を${finalEndH}:${finalEndM}に更新）`;
       }
       saveSettings({ endH: finalEndH, endM: finalEndM });
-      if (skipped.length) msg += `（卓${skipped.join("・")}は対象外でした）`;
+      if (skipped.length) msg += `（T${skipped.join("・")}は対象外でした）`;
       setSnapMsg({ ok: true, text: msg });
       refresh();
     } catch (e) {
@@ -2386,7 +2386,7 @@ function HomeTab() {
       }
       await dbUpdate("matches", updates);
       let finalEndH = String(eH).padStart(2, "0"), finalEndM = String(eM).padStart(2, "0");
-      let msg = `卓${adjustedTables.join("・")}（${count}試合）を自動調整しました`;
+      let msg = `T${adjustedTables.join("・")}（${count}試合）を自動調整しました`;
       if (latestFinish) {
         finalEndH = String(latestFinish.getHours()).padStart(2, "0");
         finalEndM = String(latestFinish.getMinutes()).padStart(2, "0");
@@ -2423,7 +2423,7 @@ function HomeTab() {
       if (count === 0) { setSnapMsg({ ok: false, text: "対象の対戦がありませんでした" }); setGlobalBusy(false); return; }
       await dbUpdate("matches", updates);
       saveSettings({ per100Min: String(tPer100) });
-      setSnapMsg({ ok: true, text: `全卓${count}試合を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
+      setSnapMsg({ ok: true, text: `全T${count}試合を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
       refresh();
     } catch (e) {
       setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
@@ -2475,7 +2475,7 @@ function HomeTab() {
         <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
           <div />
           {tinfo.map(({ ti }) => (
-            <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>卓{ti + 1}</div>
+            <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>T{ti + 1}</div>
           ))}
           <div />
           {tinfo.map(({ ti, cur, status, settingSrc }) => (
@@ -2548,7 +2548,7 @@ function HomeTab() {
           <div onClick={() => setTableAdjust(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
             <div onClick={(e) => e.stopPropagation()} style={{ background: C.zone, borderRadius: 16, padding: 18, width: "100%", maxWidth: 360, maxHeight: "85vh", overflowY: "auto", position: "relative" }}>
               <button onClick={() => setTableAdjust(null)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: C.sub, fontSize: 20, fontWeight: 700, cursor: "pointer", lineHeight: 1, padding: 4 }}>✖️</button>
-              <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>卓{ti + 1} を調整中</div>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.blue, textAlign: "center", marginBottom: 16 }}>T{ti + 1} を調整中</div>
               <div style={{ fontSize: 13, color: C.ink, marginBottom: 10, fontWeight: 800, textAlign: "center" }}>⚙ 未開始の試合（残り{future.length}試合）を調整</div>
 
               {future.length === 0 ? (
@@ -2643,11 +2643,11 @@ function HomeTab() {
       {refereePicked && (
         <div onClick={() => setRefereePicked(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, padding: "28px 22px", textAlign: "center", maxWidth: 340, width: "100%" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>卓{refereePicked.match.table}　スコアラー</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, letterSpacing: 1, marginBottom: 6 }}>T{refereePicked.match.table}　スコアラー</div>
             <div style={{ fontSize: 24, fontWeight: 900, color: C.blue, marginBottom: 10 }}>📝 {refereePicked.name} さん</div>
             <div style={{ fontSize: 13.5, color: C.ink, lineHeight: 1.8 }}>
               選手用アプリの「対戦表」から<br />
-              <b>卓{refereePicked.match.table}　{refereePicked.match.names[0]} 対 {refereePicked.match.names[1]}</b><br />
+              <b>T{refereePicked.match.table}　{refereePicked.match.names[0]} 対 {refereePicked.match.names[1]}</b><br />
               のカードを押してもらってください
             </div>
             <button onClick={() => setRefereePicked(null)} style={{ marginTop: 18, width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
@@ -2659,7 +2659,7 @@ function HomeTab() {
       {refModalMatch && (
         <div onClick={() => setRefModalMatch(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>卓{refModalMatch.table}：スコアラーを選ぶ</div>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>T{refModalMatch.table}：スコアラーを選ぶ</div>
             <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 14, textAlign: "center" }}>{refModalMatch.names[0]} 対 {refModalMatch.names[1]}{refModalMatch.referee ? `（現在：${refModalMatch.referee}）` : ""}</div>
             {getRefereeCandidates(refModalMatch.table - 1, refModalMatch).length === 0 ? (
               <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "10px 0" }}>候補なし</div>
