@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.129";
-const BUILD_TIME = "2026-08-01 20:40";
+const APP_VERSION = "1.130";
+const BUILD_TIME = "2026-08-02 18:25";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -210,7 +210,10 @@ function normalizeMatch(m) {
   };
 }
 function isMatchFinished(m) {
-  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.bothLose) return true;
+  // スコアラー側で決着が確定した試合。9番以外で目標点に到達して勝った場合、
+  // 台上の球がまだ tot に入っていないことがあるので、tot だけでは終了と判定できない
+  if (m.winner === 0 || m.winner === 1) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
