@@ -619,6 +619,21 @@ function ScheduleTab({ onPick }) {
   const stLabel = (st) => (st === "done" ? "終了" : st === "live" ? "試合中" : st === "call" ? "呼び出し中" : "待機中");
   const stColor = (st) => (st === "done" ? C.sub : st === "live" ? C.blue : st === "call" ? C.win : C.sub);
 
+  /* 「いつ」＝時刻。終了した試合は実際に終わった時刻、それ以外は今の進み具合からの見込み */
+  const whenText = (r) => {
+    const e = eta[r.m.id];
+    if (r.st === "done") return r.m.finishedAt ? fmtClock(r.m.finishedAt) : "終了";
+    if (!e) return "―";
+    return r.st === "live" ? `〜${fmtClock(e.end)}頃` : `${fmtClock(e.start)}頃`;
+  };
+  /* 「誰と」＝自分が出る試合は「vs相手」、スコアラー担当は「📝 A 対 B」 */
+  const whoText = (r) => {
+    const names = r.m.names || ["", ""];
+    if (r.role === "referee") return `📝 ${names[0]} 対 ${names[1]}`;
+    const meIdx = names.indexOf(me);
+    return `vs ${names[1 - meIdx] || ""}`;
+  };
+
   return (
     <div style={{ padding: "16px 12px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -645,21 +660,15 @@ function ScheduleTab({ onPick }) {
           <div style={{ fontSize: 12, fontWeight: 800, color: upNext.role === "referee" ? C.hill : C.blue, marginBottom: 4 }}>
             {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800 }}>
-            T{upNext.m.table}　
-            {upNext.role === "referee"
-              ? `${(upNext.m.names || ["", ""])[0]} 対 ${(upNext.m.names || ["", ""])[1]}`
-              : `対 ${(upNext.m.names || ["", ""]).filter((n) => n !== me)[0] || ""}`}
+          {/* いつ → どこで → 誰と の順に横並び */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+            <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0 }}>{whenText(upNext)}</span>
+            <span style={{ fontSize: 17, fontWeight: 900, whiteSpace: "nowrap", flexShrink: 0 }}>T{upNext.m.table}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 17, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{whoText(upNext)}</span>
           </div>
-          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
-            {stLabel(upNext.st)}
-            {eta[upNext.m.id] && (upNext.st === "live"
-              ? `　終了 ${fmtClock(eta[upNext.m.id].end)}頃`
-              : `　${fmtClock(eta[upNext.m.id].start)}頃 開始`)}
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: canOpen(upNext) ? C.blue : C.sub, marginTop: 6 }}>
+            {canOpen(upNext) ? "▶ タップしてスコア画面へ" : stLabel(upNext.st)}
           </div>
-          {canOpen(upNext) && (
-            <div style={{ fontSize: 12, fontWeight: 800, color: C.blue, marginTop: 6 }}>▶ タップしてスコア画面へ</div>
-          )}
         </div>
       )}
 
@@ -670,57 +679,62 @@ function ScheduleTab({ onPick }) {
       {rows.map((r, idx) => {
         const names = r.m.names || ["", ""];
         const meIdx = names.indexOf(me);
-        const opp = r.role === "play" ? (names[1 - meIdx] || "") : `${names[0]} 対 ${names[1]}`;
         const tot = r.m.tot || [0, 0];
         const rtArr = r.m.raceTo || [0, 0];
         const w = r.st === "done" ? matchWinnerIndex(r.m) : null;
         const iWon = r.role === "play" && w === meIdx;
+        const done = r.st === "done";
+
+        // 下段：状態またはタップ導線（終了した試合は結果）
+        let bottomText, bottomColor, rightText = null;
+        if (canOpen(r)) {
+          bottomText = "▶ タップしてスコア画面へ";
+          bottomColor = C.blue;
+        } else if (done) {
+          if (r.role === "referee") {
+            bottomText = "担当終了";
+            bottomColor = C.sub;
+          } else {
+            bottomText = r.m.bothLose ? "両者負け" : iWon ? "勝ち" : "負け";
+            bottomColor = r.m.bothLose ? C.hill : iWon ? C.win : C.sub;
+            rightText = `${tot[meIdx]} - ${tot[1 - meIdx]}`;
+          }
+        } else {
+          bottomText = stLabel(r.st);
+          bottomColor = stColor(r.st);
+          if (r.role === "play" && rtArr[meIdx] > 0) rightText = `目標 ${rtArr[meIdx]}`;
+        }
+
         return (
           <div key={r.m.id || idx} onClick={() => openMatch(r)} style={{
-            background: r.st === "done" ? C.zone : "#fff",
-            border: `1.5px solid ${r.role === "referee" ? C.hill : C.line}`,
+            background: done ? C.zone : "#fff",
+            border: `1.5px solid ${r.role === "referee" ? C.hill : canOpen(r) ? C.blue : C.line}`,
             borderRadius: 12, padding: "10px 12px", marginBottom: 8,
             cursor: canOpen(r) ? "pointer" : "default",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 34, textAlign: "center", flexShrink: 0 }}>
-              <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>{r.m.slot != null ? `${r.m.slot + 1}コマ` : "追加"}</div>
-              <div style={{ fontSize: 14, fontWeight: 900, color: C.ink }}>T{r.m.table}</div>
+            {/* 上段：いつ・どこで・誰と */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+              <span style={{
+                fontSize: 15, fontWeight: 800, color: done ? C.sub : C.ink,
+                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0,
+              }}>{whenText(r)}</span>
+              <span style={{
+                fontSize: 15, fontWeight: 900, color: done ? C.sub : C.ink,
+                whiteSpace: "nowrap", flexShrink: 0,
+              }}>T{r.m.table}</span>
+              <span style={{
+                flex: 1, minWidth: 0, fontSize: 17, fontWeight: 800,
+                color: r.role === "referee" ? C.hill : done ? C.sub : C.ink,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>{whoText(r)}</span>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 800, color: r.role === "referee" ? C.hill : C.sub }}>
-                {r.role === "referee" ? "📝 スコアラー担当" : "対戦相手"}
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{opp}</div>
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              {r.role === "play" && r.st === "done" ? (
-                <>
-                  <div style={{ fontSize: 15, fontWeight: 900, color: r.m.bothLose ? C.hill : iWon ? C.win : C.sub }}>
-                    {r.m.bothLose ? "両者負け" : iWon ? "勝ち" : "負け"}
-                  </div>
-                  <div style={{ fontSize: 12, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
-                    {tot[meIdx]} - {tot[1 - meIdx]}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: stColor(r.st) }}>{stLabel(r.st)}</div>
-                  {eta[r.m.id] && (
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums" }}>
-                      {r.st === "live" ? `〜${fmtClock(eta[r.m.id].end)}頃` : `${fmtClock(eta[r.m.id].start)}頃`}
-                    </div>
-                  )}
-                  {r.role === "play" && rtArr[meIdx] > 0 && (
-                    <div style={{ fontSize: 11.5, color: C.sub }}>目標 {rtArr[meIdx]}</div>
-                  )}
-                </>
+            {/* 下段：状態またはタップ導線 */}
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: bottomColor, whiteSpace: "nowrap" }}>{bottomText}</span>
+              {rightText && (
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{rightText}</span>
               )}
             </div>
-            </div>
-            {canOpen(r) && (
-              <div style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, textAlign: "right", marginTop: 6 }}>▶ タップしてスコア画面へ</div>
-            )}
           </div>
         );
       })}
