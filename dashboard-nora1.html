@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.134";
-const BUILD_TIME = "2026-08-02 20:10";
+const APP_VERSION = "1.135";
+const BUILD_TIME = "2026-08-03 06:28";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -518,6 +518,12 @@ const menuBtn = {
   padding: "13px 10px", fontSize: 14.5, fontWeight: 800, color: C.ink, cursor: "pointer", fontFamily: FONT, textAlign: "center",
 };
 
+/* ========= スマホ操作用タイムラインのカード =========
+   選手名は横書きのまま上下2段に並べる（B2の対戦表と同じ形）。
+   横並びだと3列レイアウトでは名前が見切れるため、1人ぶんの幅をカード全体に使い、
+   同じ行の右側にスコアと目標点を置く */
+const TL_CARD_H = 118; // 空きカードとも高さを揃える
+
 function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
@@ -616,7 +622,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
 
   return (
     <div onClick={clickable ? handleClick : undefined} style={{
-      position: "relative", height: 138, boxSizing: "border-box", background: style.bg,
+      position: "relative", height: TL_CARD_H, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "8px 5px", display: "flex", flexDirection: "column", justifyContent: "space-between",
       overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
@@ -637,38 +643,29 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
         }}>{style.badge}</span>
       </div>
 
-      {/* 2: 選手名 */}
-      <div style={{ display: "flex", gap: 3 }}>
+      {/* 2: 選手（名前は横書きのまま上下2段。同じ行に スコア／目標点） */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 3px" }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{
-            flex: 1, minWidth: 0, textAlign: "center", fontSize: 16.5, fontWeight: won(i) ? 900 : 700,
-            color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>{names[i]}</div>
-        ))}
-      </div>
-
-      {/* 3: スコア（呼び出し中・待機中は「-」） */}
-      <div style={{ display: "flex", gap: 3 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{
-            flex: 1, minWidth: 0, textAlign: "center", lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
-            fontSize: st === "done" ? 26 : st === "live" ? 28 : 24, fontWeight: 900,
-            color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
-          }}>
-            {st === "done" || st === "live" ? tot[i] : "–"}
+          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 5, minWidth: 0 }}>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</span>
+            <span style={{
+              flexShrink: 0, lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
+              fontSize: st === "live" ? 21 : 19, fontWeight: 900,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
+            }}>{st === "done" || st === "live" ? tot[i] : "–"}</span>
+            <span style={{
+              flexShrink: 0, fontSize: 11, fontWeight: 700, color: C.sub,
+              fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+            }}>/{rt[i]}</span>
           </div>
         ))}
       </div>
 
-      {/* 4: 目標点 */}
-      <div style={{ display: "flex", gap: 3 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 13.5, fontWeight: 700, color: C.sub, lineHeight: 1.1 }}>/{rt[i]}</div>
-        ))}
-      </div>
-
-      {/* 5: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
+      {/* 3: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 18 }}>
         {st === "done" && <span style={{ fontSize: 12, opacity: 0.6 }}>✏️</span>}
         {st === "live" && (
@@ -1120,7 +1117,7 @@ function BracketTab({ roster }) {
     return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0) };
   };
 
-  // 4人の時は卓1・2だけ使う。空いている（未終了の対戦を持たない）卓を優先し、
+  // 4人の時はT1・T2だけ使う。空いている（未終了の対戦を持たない）卓を優先し、
   // 一度に複数試合を組む時は割り当てるごとに数を数えて偏らないようにする
   const allowedTables = size === 4 ? [1, 2] : [1, 2, 3];
   const assignTables = (count) => {
@@ -2423,7 +2420,7 @@ function HomeTab() {
       if (count === 0) { setSnapMsg({ ok: false, text: "対象の対戦がありませんでした" }); setGlobalBusy(false); return; }
       await dbUpdate("matches", updates);
       saveSettings({ per100Min: String(tPer100) });
-      setSnapMsg({ ok: true, text: `全T${count}試合を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
+      setSnapMsg({ ok: true, text: `全卓（${count}試合）を${tLenPct}%・${newMinutes}分（100%基準${tPer100}分）に反映しました` });
       refresh();
     } catch (e) {
       setSnapMsg({ ok: false, text: "反映に失敗しました: " + (e && e.message ? e.message : e) });
@@ -2529,7 +2526,7 @@ function HomeTab() {
                     {e ? (
                       <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onEditReferee={(m) => setRefModalMatch(m)} />
                     ) : (
-                      <div style={{ height: 138, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
+                      <div style={{ height: TL_CARD_H, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
                     )}
                   </div>
                 );
