@@ -87,7 +87,10 @@ function normalizeMatch(m) {
   };
 }
 function isMatchFinished(m) {
-  if (m.bothLose) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.bothLose) return true;
+  // スコアラー側で決着が確定した試合。9番以外で目標点に到達して勝った場合、
+  // 台上の球がまだ tot に入っていないことがあるので、tot だけでは終了と判定できない
+  if (m.winner === 0 || m.winner === 1) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
@@ -256,7 +259,7 @@ function App() {
     <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "10px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: 6, right: 8, display: "flex", gap: 6, zIndex: 10 }}>
         <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
-        <button onClick={resetZoom} style={{ ...zoomBtn, width: "auto", padding: "6px 10px" }}>{Math.round(scale * 100)}%</button>
+        <button onClick={resetZoom} style={zoomBtn} title="等倍に戻す">⟲</button>
         <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
       </div>
 
