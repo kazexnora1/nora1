@@ -271,9 +271,9 @@ function App() {
         }}>
           {portrait ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} portrait={portrait} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} portrait={portrait} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} portrait={portrait} /></div>
             </div>
           ) : (
             <div style={{
@@ -281,9 +281,9 @@ function App() {
               gridTemplateAreas: `"t1 t2" "next t3"`, gap: 10,
               height: "100%", maxWidth: 1600, margin: "0 auto",
             }}>
-              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} /></div>
-              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} /></div>
-              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} /></div>
+              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} portrait={portrait} /></div>
+              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} portrait={portrait} /></div>
+              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} portrait={portrait} /></div>
               <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
             </div>
           )}
@@ -335,7 +335,7 @@ function hillInfo(rt, disp) {
   const toHill = rem - 14;
   return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
 }
-function TablePanel({ tableNum, m }) {
+function TablePanel({ tableNum, m, portrait }) {
   if (!m) {
     return (
       <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "16px 18px", color: C.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
@@ -366,6 +366,16 @@ function TablePanel({ tableNum, m }) {
     (!hillHill && disp[0] >= raceTo[0] && raceTo[0] > 0) ? 0 :
     (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
   const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
+
+  // 「38/45」のように目標点まで1行に収めているので、桁数が増えるほど横に長くなる。
+  // 画面幅そのままの固定値だと2桁で切れるため、桁数と向きから入る大きさを毎回計算する
+  const halfVw = portrait ? 44 : 22; // 選手1人分の枠の横幅の目安（画面幅に対する％）
+  const scoreFont = (i) => {
+    const d = m.phase === "banking" ? 1 : String(disp[i]).length;
+    const t = String(raceTo[i] || 0).length;
+    const widthEm = 0.62 * d + 0.26 * (1 + t); // 数字1文字≒0.62em、目標点は0.42em表示
+    return `min(${(halfVw / widthEm).toFixed(1)}vw, 19vh)`;
+  };
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", color: C.ink, display: "flex", flexDirection: "column" }}>
@@ -399,7 +409,7 @@ function TablePanel({ tableNum, m }) {
               }}>{names[i]}</div>
 
               <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "min(13vw, 19vh)", fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: C.ink }}>
+                <div style={{ fontSize: scoreFont(i), fontWeight: 900, lineHeight: 1.05, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", color: C.ink }}>
                   {m.phase === "banking" ? "–" : disp[i]}
                   <span style={{ fontSize: "0.42em", color: C.sub }}>/{raceTo[i]}</span>
                 </div>
