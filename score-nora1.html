@@ -131,8 +131,34 @@ function useKeepAwake() {
   }, []);
 }
 
+// 卓ごとの「直近に終わった試合」。次の試合が始まるまで結果を出しておくために使う
+function getLatestFinishedForTable(matches, tableNum) {
+  let best = null;
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (!isMatchFinished(m)) continue;
+    const t = m.finishedAt || m.updatedAt || 0;
+    if (!best || t > (best.finishedAt || best.updatedAt || 0)) best = { ...normalizeMatch(m), id };
+  }
+  return best;
+}
+// 卓に何を映すかを決める。
+// ・試合が始まっていれば（スコアラーがバンキングの勝者を選んでいれば）その試合
+// ・まだ始まっていないなら、直前に終わった試合の結果をそのまま出しておく
+// ・つまり次の試合のバンキングが決まった瞬間に、結果表示から切り替わる
+function getDisplayForTable(matches, tableNum) {
+  const q = getQueueForTable(matches, tableNum);
+  const cur = q[0] || null;
+  if (cur && cur.startedAt) return { m: cur, next: q[1] || null, holding: false };
+  const fin = getLatestFinishedForTable(matches, tableNum);
+  if (fin) return { m: fin, next: cur, holding: true };
+  return { m: cur, next: q[1] || null, holding: false };
+}
+
 function App() {
-  const [queues, setQueues] = useState([[], [], []]);
+  const [views, setViews] = useState([null, null, null]);
   const [err, setErr] = useState(null);
   useKeepAwake();
 
@@ -248,11 +274,11 @@ function App() {
   const resetZoom = () => { setScale(1); setTx(0); setTy(0); };
 
   useEffect(() => subscribeMatches(
-    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (matches) => { setViews([1, 2, 3].map((t) => getDisplayForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
 
-  const nextMatches = queues
-    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+  const nextMatches = views
+    .map((v, i) => (v && v.next ? { ...v.next, tableNum: i + 1 } : null))
     .filter(Boolean);
 
   return (
@@ -271,9 +297,9 @@ function App() {
         }}>
           {portrait ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={queues[0][0]} portrait={portrait} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={queues[1][0]} portrait={portrait} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={queues[2][0]} portrait={portrait} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={views[0] && views[0].m} next={views[0] && views[0].next} holding={!!(views[0] && views[0].holding)} portrait={portrait} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={views[1] && views[1].m} next={views[1] && views[1].next} holding={!!(views[1] && views[1].holding)} portrait={portrait} /></div>
+              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={views[2] && views[2].m} next={views[2] && views[2].next} holding={!!(views[2] && views[2].holding)} portrait={portrait} /></div>
             </div>
           ) : (
             <div style={{
@@ -281,9 +307,9 @@ function App() {
               gridTemplateAreas: `"t1 t2" "next t3"`, gap: 10,
               height: "100%", maxWidth: 1600, margin: "0 auto",
             }}>
-              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={queues[0][0]} portrait={portrait} /></div>
-              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={queues[1][0]} portrait={portrait} /></div>
-              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={queues[2][0]} portrait={portrait} /></div>
+              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={views[0] && views[0].m} next={views[0] && views[0].next} holding={!!(views[0] && views[0].holding)} portrait={portrait} /></div>
+              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={views[1] && views[1].m} next={views[1] && views[1].next} holding={!!(views[1] && views[1].holding)} portrait={portrait} /></div>
+              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={views[2] && views[2].m} next={views[2] && views[2].next} holding={!!(views[2] && views[2].holding)} portrait={portrait} /></div>
               <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
             </div>
           )}
@@ -317,7 +343,7 @@ function NextList({ matches }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {matches.map((m, i) => (
           <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, border: `2px solid ${C.line}`, borderRadius: 10, padding: "6px 12px" }}>
-            <span style={{ fontSize: "clamp(14px, 1.5vw, 22px)", fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 8px", flexShrink: 0 }}>卓{m.tableNum}</span>
+            <span style={{ fontSize: "clamp(14px, 1.5vw, 22px)", fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 8px", flexShrink: 0 }}>T{m.tableNum}</span>
             <span style={{ fontSize: "clamp(17px, 2vw, 30px)", fontWeight: 800, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
             </span>
@@ -335,11 +361,11 @@ function hillInfo(rt, disp) {
   const toHill = rem - 14;
   return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
 }
-function TablePanel({ tableNum, m, portrait }) {
+function TablePanel({ tableNum, m, portrait, next, holding }) {
   if (!m) {
     return (
       <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "16px 18px", color: C.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
-        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <TitleBadge>T{tableNum}</TitleBadge>
         <div style={{ fontSize: "clamp(22px, 3vw, 44px)", fontWeight: 900, color: C.sub }}>待機中</div>
       </div>
     );
@@ -380,7 +406,7 @@ function TablePanel({ tableNum, m, portrait }) {
   return (
     <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", color: C.ink, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <TitleBadge>T{tableNum}</TitleBadge>
         <span style={{ fontSize: "clamp(14px, 1.6vw, 24px)", color: C.ink, fontWeight: 900 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
@@ -445,6 +471,13 @@ function TablePanel({ tableNum, m, portrait }) {
       ) : matchWinner != null && (
         <div style={{ marginTop: 6, textAlign: "center", fontSize: "clamp(18px, 2.2vw, 34px)", fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "2px 0" }}>
           🏆 {names[matchWinner]} 勝利
+        </div>
+      )}
+
+      {/* 結果を出したまま次の試合を待っている間だけ、次の顔ぶれを小さく添える */}
+      {holding && (
+        <div style={{ marginTop: 5, textAlign: "center", fontSize: "clamp(13px, 1.5vw, 22px)", fontWeight: 800, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {next ? `次：${(next.names || ["", ""])[0]} 対 ${(next.names || ["", ""])[1]}` : "この卓は終了しました"}
         </div>
       )}
     </div>
