@@ -506,6 +506,40 @@ function subscribeRoster(onValue) {
 function scheduleOrder(m) {
   return m.slot != null ? m.slot : 9999;
 }
+function subscribeConfig(onValue) {
+  const ref = db.ref("config");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
+  return () => ref.off("value", handler);
+}
+/* 卓ごとに実際の進行を追って、各試合の開始見込み時刻を出す。
+   ・終わった試合はその終了時刻を基準にする
+   ・進行中の試合は「開始時刻＋持ち時間」で終わる想定
+   ・未開始の試合は、前の試合の終わり＋入替時間から順に積み上げる
+   時間割そのものではなく“今の進み具合”から出すので、押していればその分ずれて表示される */
+function buildEta(matches, changeoverMin) {
+  const eta = {};
+  const chg = (changeoverMin || 0) * 60000;
+  [1, 2, 3].forEach((t) => {
+    let cursor = null; // 前の試合が終わる見込み（ミリ秒）
+    getAllForTable(matches, t).forEach((m) => {
+      const mins = m.matchMinutes || 30;
+      if (isMatchFinished(m)) {
+        cursor = m.finishedAt || m.updatedAt || cursor;
+        return;
+      }
+      const start = m.startedAt
+        ? m.startedAt
+        : Math.max(cursor != null ? cursor + chg : Date.now(), Date.now());
+      eta[m.id] = { start, end: start + mins * 60000, started: !!m.startedAt };
+      cursor = start + mins * 60000;
+    });
+  });
+  return eta;
+}
+const fmtClock = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
 
 function ScheduleTab() {
   const [matches, setMatches] = useState({});
@@ -513,9 +547,20 @@ function ScheduleTab() {
   const [me, setMe] = useState(() => { try { return localStorage.getItem(MYNAME_KEY) || ""; } catch { return ""; } });
   const [picking, setPicking] = useState(false);
   const [err, setErr] = useState(null);
+  const [config, setConfig] = useState({});
+  // 時間が経つだけでも見込み時刻がずれるので、定期的に描き直す
+  const [, forceTick] = useState(0);
 
   useEffect(() => subscribeAllMatches((m) => { setMatches(m || {}); setErr(null); }, (e) => setErr(e)), []);
   useEffect(() => subscribeRoster(setRoster), []);
+  useEffect(() => subscribeConfig(setConfig), []);
+  useEffect(() => { const iv = setInterval(() => forceTick((n) => n + 1), 30000); return () => clearInterval(iv); }, []);
+
+  const changeover = parseInt(config.changeoverMin, 10);
+  const eta = React.useMemo(
+    () => buildEta(matches, isNaN(changeover) ? 5 : changeover),
+    [matches, changeover, config]
+  );
 
   const choose = (name) => {
     setMe(name);
@@ -577,6 +622,7 @@ function ScheduleTab() {
           <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>
             残り {remain} 試合 ／ 全 {playRows.length} 試合
           </div>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>時刻は今の進み具合からの目安です</div>
         </div>
         <button onClick={() => setPicking(true)} style={{
           background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 12px",
@@ -599,7 +645,12 @@ function ScheduleTab() {
               ? `${(upNext.m.names || ["", ""])[0]} 対 ${(upNext.m.names || ["", ""])[1]}`
               : `対 ${(upNext.m.names || ["", ""]).filter((n) => n !== me)[0] || ""}`}
           </div>
-          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{stLabel(upNext.st)}</div>
+          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+            {stLabel(upNext.st)}
+            {eta[upNext.m.id] && (upNext.st === "live"
+              ? `　終了 ${fmtClock(eta[upNext.m.id].end)}頃`
+              : `　${fmtClock(eta[upNext.m.id].start)}頃 開始`)}
+          </div>
         </div>
       )}
 
@@ -645,6 +696,11 @@ function ScheduleTab() {
               ) : (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: stColor(r.st) }}>{stLabel(r.st)}</div>
+                  {eta[r.m.id] && (
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums" }}>
+                      {r.st === "live" ? `〜${fmtClock(eta[r.m.id].end)}頃` : `${fmtClock(eta[r.m.id].start)}頃`}
+                    </div>
+                  )}
                   {r.role === "play" && rtArr[meIdx] > 0 && (
                     <div style={{ fontSize: 11.5, color: C.sub }}>目標 {rtArr[meIdx]}</div>
                   )}
