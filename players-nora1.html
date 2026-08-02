@@ -165,6 +165,8 @@ function subscribeAllMatches(onValue, onError) {
 const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない対戦は前日の残骸とみなして無視
 function isMatchFinished(m) {
   if (m.bothLose) return true; // 時間切れでどちらも目標に届かなかった
+  // スコアラー側で決着が確定した試合（9番以外で目標点に到達した場合など）
+  if (m.winner === 0 || m.winner === 1) return true;
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
@@ -344,17 +346,32 @@ function TablesTab() {
     </div>
   );
 }
+/* B3（観戦ディスプレイ）と同じ見た目にするための配色。
+   薄いグレーの面や細い線を使わず、太い黒枠とベタ塗りで区切る */
+const DC = {
+  ink: "#0E1216", sub: "#3C454E", line: "#0E1216", lineSoft: "#B8BFC6",
+  blue: "#12508F", red: "#A3211A", win: "#1E6B36", hill: "#8A4B0B",
+};
+function TitleBadge({ children }) {
+  return (
+    <span style={{
+      display: "inline-block", background: DC.ink, color: "#fff", borderRadius: 6,
+      padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+    }}>{children}</span>
+  );
+}
+
 function NextList({ matches }) {
   return (
-    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", boxSizing: "border-box" }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2, marginBottom: 10 }}>次の試合</div>
-      {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, opacity: 0.6, textAlign: "center", marginTop: 20 }}>予定なし</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 14px", boxSizing: "border-box" }}>
+      <div style={{ marginBottom: 8 }}><TitleBadge>次の試合</TitleBadge></div>
+      {matches.length === 0 && <div style={{ color: DC.sub, fontSize: 15, fontWeight: 800, textAlign: "center", padding: "12px 0" }}>予定なし</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {matches.map((m, i) => (
-          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.04)", borderRadius: 12, padding: "8px 12px" }}>
-            <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, flexShrink: 0 }}>卓{m.tableNum}</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 400 }}>対</span> {(m.names || ["", ""])[1]}
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, border: `2px solid ${DC.line}`, borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: DC.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>卓{m.tableNum}</span>
+            <span style={{ fontSize: 15.5, fontWeight: 800, color: DC.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {(m.names || ["", ""])[0]} <span style={{ color: DC.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
             </span>
           </div>
         ))}
@@ -372,9 +389,9 @@ function hillInfo(rt, disp) {
 function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
-      <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "24px 20px", color: C.sub, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 16, letterSpacing: 2 }}>卓 {tableNum}</div>
-        <div style={{ fontSize: 20, opacity: 0.6 }}>待機中</div>
+      <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "16px 18px", color: DC.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 12 }}>
+        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <div style={{ fontSize: 22, fontWeight: 900, color: DC.sub }}>待機中</div>
       </div>
     );
   }
@@ -401,50 +418,72 @@ function TablePanel({ tableNum, m }) {
   const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
   return (
-    <div style={{ height: "100%", boxSizing: "border-box", background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 20, padding: "14px 16px", color: C.ink, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 15, fontWeight: 800, color: C.sub, letterSpacing: 2 }}>卓 {tableNum}</span>
-        <span style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>
+    <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 12px", color: DC.ink, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <span style={{ fontSize: 13, color: DC.ink, fontWeight: 900 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
       </div>
 
       {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
-        <div style={{ background: C.hillBg, color: C.hill, borderRadius: 10, padding: "4px 10px", textAlign: "center", fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+        <div style={{ background: DC.hill, color: "#fff", borderRadius: 8, padding: "3px 10px", textAlign: "center", fontSize: 14, fontWeight: 900, marginBottom: 6, letterSpacing: 2 }}>
           ヒルヒル
         </div>
       )}
 
       <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
-          const pc = i === 0 ? C.blue : C.red;
+          const pc = i === 0 ? DC.blue : DC.red;
           const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
+          const isBreaker = m.brk === i;
           return (
-            <div key={i} style={{ flex: 1, textAlign: "center", boxShadow: m.brk === i ? `inset 0 0 0 3px ${pc}` : "none", borderRadius: 14, padding: "8px 4px 6px", background: "rgba(0,0,0,0.035)", display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: pc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
-              <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", color: C.ink }}>
-                {m.phase === "banking" ? "–" : disp[i]}
-                <span style={{ fontSize: 15, opacity: 0.5 }}>/{raceTo[i]}</span>
+            <div key={i} style={{
+              flex: 1, textAlign: "center", borderRadius: 10, padding: "6px 4px",
+              border: `3px solid ${isBreaker ? pc : DC.lineSoft}`,
+              display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden",
+            }}>
+              <div style={{
+                fontSize: 15, fontWeight: 900, color: "#fff", background: pc, borderRadius: 6,
+                padding: "2px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>{names[i]}</div>
+
+              <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: DC.ink }}>
+                  {m.phase === "banking" ? "–" : disp[i]}
+                  <span style={{ fontSize: "0.42em", color: DC.sub }}>/{raceTo[i]}</span>
+                </div>
               </div>
-              {bothLose ? (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: C.hill, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
-                  達成率 {(rate(i) * 100).toFixed(1)}％
-                </div>
-              ) : hi && (
-                <div style={{ display: "inline-block", alignSelf: "center", background: "#fff", color: pc, borderRadius: 8, padding: "1px 8px", fontSize: 11.5, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>
-                  {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
-                </div>
-              )}
-              {m.brk === i && <div style={{ fontSize: 12, fontWeight: 800, color: pc, letterSpacing: 1, marginTop: 2 }}>● ブレイク</div>}
+
+              {/* バッジ行とブレイク行は中身の有無に関わらず高さを確保し、名前とスコアの位置が動かないようにする */}
+              <div style={{ minHeight: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {bothLose ? (
+                  <span style={{ background: DC.hill, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
+                    達成率 {(rate(i) * 100).toFixed(0)}％
+                  </span>
+                ) : hi ? (
+                  <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
+                    {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
+                  </span>
+                ) : null}
+              </div>
+              <div style={{
+                minHeight: 16, marginTop: 2, fontSize: 12, fontWeight: 900, color: pc, letterSpacing: 1,
+                visibility: isBreaker ? "visible" : "hidden",
+              }}>● ブレイク</div>
             </div>
           );
         })}
       </div>
 
       {bothLose ? (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.hill }}>時間切れ・両者負け</div>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.hill, borderRadius: 8, padding: "2px 0" }}>
+          時間切れ・両者負け
+        </div>
       ) : matchWinner != null && (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win }}>🏆 {names[matchWinner]} 勝利</div>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.win, borderRadius: 8, padding: "2px 0" }}>
+          🏆 {names[matchWinner]} 勝利
+        </div>
       )}
     </div>
   );
@@ -869,8 +908,12 @@ function MatchScreen({ setupInfo, onExit }) {
     if (!loaded) return;
     if ((matchWinner != null || bothLose) && !state.finishedAt) {
       const fin = Date.now();
+      // 9番を落とす前に目標点へ到達して決着した場合、その時点で台上にある球はまだ tot に入っていない。
+      // ここで確定させておかないと、本部（B1）や観戦画面（B3）が「試合中」のままになる
+      const midRackWin = matchWinner != null && phase === "play" && !reached[matchWinner];
       applyLocal((s) => ({
         ...s,
+        ...(midRackWin ? { tot: [disp[0], disp[1]], balls: mkBalls(), phase: "done", lastResult: null } : {}),
         finishedAt: fin,
         elapsedMs: s.startedAt ? fin - s.startedAt : null,
         winner: matchWinner,
