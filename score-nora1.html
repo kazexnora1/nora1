@@ -402,16 +402,24 @@ function TablePanel({ tableNum, m }) {
                 </div>
               </div>
 
-              {bothLose ? (
-                <div style={{ alignSelf: "center", background: C.hill, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
-                  達成率 {(rate(i) * 100).toFixed(0)}％
-                </div>
-              ) : hi && (
-                <div style={{ alignSelf: "center", background: pc, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
-                  {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
-                </div>
-              )}
-              {isBreaker && <div style={{ fontSize: "clamp(13px, 1.4vw, 22px)", fontWeight: 900, color: pc, letterSpacing: 1, marginTop: 3 }}>● ブレイク</div>}
+              {/* バッジ行とブレイク行は、中身の有無に関わらず同じ高さを確保する。
+                  ブレイクの有無やバンキング中かどうかで、名前とスコアの位置が動かないようにするため */}
+              <div style={{ minHeight: "clamp(24px, 2.6vw, 36px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {bothLose ? (
+                  <span style={{ background: C.hill, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
+                    達成率 {(rate(i) * 100).toFixed(0)}％
+                  </span>
+                ) : hi ? (
+                  <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
+                    {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
+                  </span>
+                ) : null}
+              </div>
+              <div style={{
+                minHeight: "clamp(18px, 1.9vw, 28px)", marginTop: 3,
+                fontSize: "clamp(13px, 1.4vw, 22px)", fontWeight: 900, color: pc, letterSpacing: 1,
+                visibility: isBreaker ? "visible" : "hidden",
+              }}>● ブレイク</div>
             </div>
           );
         })}
