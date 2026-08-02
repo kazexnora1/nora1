@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.135";
-const BUILD_TIME = "2026-08-03 06:28";
+const APP_VERSION = "1.137";
+const BUILD_TIME = "2026-08-03 09:05";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -643,29 +643,25 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
         }}>{style.badge}</span>
       </div>
 
-      {/* 2: 選手（名前は横書きのまま上下2段。同じ行に スコア／目標点） */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 3px" }}>
+      {/* 2: 選手（名前は横書きのまま上下2段。スコアと目標点は出さず、名前だけを大きく見せる。
+             スコアはカードをタップ→「✏️ スコアを修正する」で確認・修正できる） */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 4px" }}>
         {[0, 1].map((i) => (
-          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 5, minWidth: 0 }}>
-            <span style={{
-              flex: 1, minWidth: 0, fontSize: 15.5, fontWeight: won(i) ? 900 : 700,
-              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
-              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            }}>{names[i]}</span>
-            <span style={{
-              flexShrink: 0, lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
-              fontSize: st === "live" ? 21 : 19, fontWeight: 900,
-              color: st === "done" ? (won(i) ? C.win : C.sub) : st === "live" ? C.ink : C.sub,
-            }}>{st === "done" || st === "live" ? tot[i] : "–"}</span>
-            <span style={{
-              flexShrink: 0, fontSize: 11, fontWeight: 700, color: C.sub,
-              fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
-            }}>/{rt[i]}</span>
-          </div>
+          <div key={i} style={{
+            textAlign: "center", fontSize: 17, fontWeight: won(i) ? 900 : 700,
+            color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.25,
+          }}>{names[i]}</div>
         ))}
       </div>
 
-      {/* 3: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
+      {/* 3: この試合の設定（試合の長さ％と持ち時間）。卓見出しと同じ書き方に揃える */}
+      <div style={{
+        textAlign: "center", fontSize: 11.5, fontWeight: 700, color: C.sub,
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+      }}>🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分</div>
+
+      {/* 4: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 18 }}>
         {st === "done" && <span style={{ fontSize: 12, opacity: 0.6 }}>✏️</span>}
         {st === "live" && (
