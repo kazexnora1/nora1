@@ -233,7 +233,7 @@ function TimelineTab({ myMatchId, onPick }) {
       <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
         <div />
         {[1, 2, 3].map((t) => (
-          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>卓{t}</div>
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
         ))}
         {Array.from({ length: slots }, (_, s) => (
           <React.Fragment key={s}>
@@ -275,7 +275,7 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
   const clickable = (st === "call" || st === "live") && !!onPick;
   const handleClick = () => {
     if (!clickable) return;
-    if (!window.confirm(`卓${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
+    if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
     onPick(m);
   };
 
@@ -370,7 +370,7 @@ function NextList({ matches }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {matches.map((m, i) => (
           <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, border: `2px solid ${DC.line}`, borderRadius: 10, padding: "6px 10px" }}>
-            <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: DC.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>卓{m.tableNum}</span>
+            <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: DC.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>T{m.tableNum}</span>
             <span style={{ fontSize: 15.5, fontWeight: 800, color: DC.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {(m.names || ["", ""])[0]} <span style={{ color: DC.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
             </span>
@@ -391,7 +391,7 @@ function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
       <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "16px 18px", color: DC.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 12 }}>
-        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <TitleBadge>T{tableNum}</TitleBadge>
         <div style={{ fontSize: 22, fontWeight: 900, color: DC.sub }}>待機中</div>
       </div>
     );
@@ -421,7 +421,7 @@ function TablePanel({ tableNum, m }) {
   return (
     <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 12px", color: DC.ink, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <TitleBadge>卓 {tableNum}</TitleBadge>
+        <TitleBadge>T{tableNum}</TitleBadge>
         <span style={{ fontSize: 13, color: DC.ink, fontWeight: 900 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
@@ -612,7 +612,7 @@ function ScheduleTab({ onPick }) {
   const openMatch = (r) => {
     if (!canOpen(r)) return;
     const nm = r.m.names || ["", ""];
-    if (!window.confirm(`卓${r.m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
+    if (!window.confirm(`T${r.m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
     onPick(r.m);
   };
 
@@ -646,7 +646,7 @@ function ScheduleTab({ onPick }) {
             {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
           </div>
           <div style={{ fontSize: 17, fontWeight: 800 }}>
-            卓{upNext.m.table}　
+            T{upNext.m.table}　
             {upNext.role === "referee"
               ? `${(upNext.m.names || ["", ""])[0]} 対 ${(upNext.m.names || ["", ""])[1]}`
               : `対 ${(upNext.m.names || ["", ""]).filter((n) => n !== me)[0] || ""}`}
@@ -685,7 +685,7 @@ function ScheduleTab({ onPick }) {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 34, textAlign: "center", flexShrink: 0 }}>
               <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>{r.m.slot != null ? `${r.m.slot + 1}コマ` : "追加"}</div>
-              <div style={{ fontSize: 14, fontWeight: 900, color: C.ink }}>卓{r.m.table}</div>
+              <div style={{ fontSize: 14, fontWeight: 900, color: C.ink }}>T{r.m.table}</div>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11.5, fontWeight: 800, color: r.role === "referee" ? C.hill : C.sub }}>
@@ -1143,7 +1143,7 @@ function MatchScreen({ setupInfo, onExit }) {
             </>
           )}
         </div>
-        <span style={{ fontSize: 12.5, color: C.sub }}>卓{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
+        <span style={{ fontSize: 12.5, color: C.sub }}>T{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
       </div>
 
       {isFinalRack && (
