@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.138";
-const BUILD_TIME = "2026-08-03 13:14";
+const APP_VERSION = "1.139";
+const BUILD_TIME = "2026-08-04 14:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1424,6 +1424,111 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 }
 
 /* ========= メンバータブ ========= */
+
+/* ========= レート変更を未開始の試合に反映する =========
+   公式ファーゴレートを持たない選手は運営側で暫定レートを入れる。
+   試合の合間にその値を直しても、既に組まれた対戦の目標点は作成時に確定しているので変わらない。
+   ここで「まだ始まっていない試合」だけを、今のメンバーリストのレートで組み直す。
+   進行中・終了した試合には一切触らない（途中で目標点が動くと不公平になるため） */
+function RateApplyPanel({ roster }) {
+  const [scanning, setScanning] = useState(false);
+  const [diffs, setDiffs] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const rateOf = (name) => {
+    const p = roster.find((x) => x.name === name);
+    const v = p ? parseInt(p.r, 10) : NaN;
+    return isNaN(v) ? 0 : v;
+  };
+
+  const scan = async () => {
+    setScanning(true); setMsg(null); setDiffs(null);
+    try {
+      const matches = (await dbGet("matches")) || {};
+      const list = [];
+      for (const id in matches) {
+        const m = matches[id];
+        if (!m || m.startedAt || isMatchFinished(m)) continue; // 進行中・終了済みは対象外
+        const names = m.names || ["", ""];
+        const R1 = rateOf(names[0]), R2 = rateOf(names[1]);
+        if (!(R1 > 0 && R2 > 0)) continue; // レート未入力の対戦は組み直せない
+        const lenPct = m.lenPct || 100;
+        const race = computeRace(R1, R2, lenPct);
+        const cur = m.raceTo || [0, 0];
+        if (race.rt1 === cur[0] && race.rt2 === cur[1]) continue;
+        list.push({ id, table: m.table, names, before: [cur[0], cur[1]], after: [race.rt1, race.rt2],
+                    R1, R2, lenPct, version: m.version || 1 });
+      }
+      list.sort((a, b) => (a.table - b.table));
+      setDiffs(list);
+      if (list.length === 0) setMsg({ ok: true, text: "組み直しが必要な試合はありません" });
+    } catch (e) {
+      setMsg({ ok: false, text: String(e && e.message ? e.message : e) });
+    }
+    setScanning(false);
+  };
+
+  const apply = async () => {
+    if (!diffs || !diffs.length) return;
+    if (!window.confirm(`${diffs.length}試合の目標点を組み直します。よろしいですか？\n（進行中・終了した試合は変わりません）`)) return;
+    setScanning(true);
+    try {
+      const now = Date.now();
+      const upd = {};
+      diffs.forEach((d) => {
+        upd[d.id + "/raceTo"] = d.after;
+        upd[d.id + "/r1"] = d.R1;
+        upd[d.id + "/r2"] = d.R2;
+        upd[d.id + "/updatedAt"] = now;
+        upd[d.id + "/version"] = d.version + 1; // 選手の端末（B2）に確実に届くよう版を上げる
+      });
+      await dbUpdate("matches", upd);
+      setMsg({ ok: true, text: `${diffs.length}試合の目標点を組み直しました` });
+      setDiffs(null);
+    } catch (e) {
+      setMsg({ ok: false, text: String(e && e.message ? e.message : e) });
+    }
+    setScanning(false);
+  };
+
+  return (
+    <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
+      <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>レート変更を試合に反映</div>
+      <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginBottom: 10 }}>
+        上でレートを直したあとに押してください。<b>まだ始まっていない試合</b>だけを、今のレートで組み直します。
+        進行中・終了した試合の目標点は変わりません。
+      </div>
+      <button onClick={scan} disabled={scanning} style={{
+        width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
+        color: C.blue, fontSize: 14, fontWeight: 800, padding: "11px 0", cursor: "pointer", fontFamily: FONT,
+        opacity: scanning ? 0.5 : 1,
+      }}>{scanning ? "確認中…" : "🔍 変わる試合を確認する"}</button>
+
+      {msg && <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
+
+      {diffs && diffs.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 6 }}>{diffs.length}試合が変わります</div>
+          {diffs.map((d) => (
+            <div key={d.id} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 10px", marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>T{d.table}　{d.names[0]} 対 {d.names[1]}</div>
+              <div style={{ fontSize: 13, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
+                目標点 <s>{d.before[0]} / {d.before[1]}</s>
+                <b style={{ color: C.ink, marginLeft: 8 }}>→ {d.after[0]} / {d.after[1]}</b>
+              </div>
+            </div>
+          ))}
+          <button onClick={apply} disabled={scanning} style={{
+            width: "100%", marginTop: 4, background: C.win, color: "#fff", border: "none", borderRadius: 10,
+            fontSize: 14.5, fontWeight: 800, padding: "12px 0", cursor: "pointer", fontFamily: FONT,
+            opacity: scanning ? 0.5 : 1,
+          }}>この内容で組み直す</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
@@ -1522,6 +1627,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
         当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
       </div>
+
+      <RateApplyPanel roster={roster} />
     </div>
   );
 }
