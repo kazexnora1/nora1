@@ -73,8 +73,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.139";
-const BUILD_TIME = "2026-08-04 14:30";
+const APP_VERSION = "1.140";
+const BUILD_TIME = "2026-08-04 18:50";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -625,7 +625,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       position: "relative", height: TL_CARD_H, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "8px 5px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
+      overflow: "hidden", opacity: st === "queued" && !menu ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
     }}>
       {refereeEnabled && (st === "call" || st === "live") && (
         <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
