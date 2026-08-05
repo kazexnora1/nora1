@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.142";
-const BUILD_TIME = "2026-08-05 10:20";
+const APP_VERSION = "1.143";
+const BUILD_TIME = "2026-08-05 11:10";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -157,6 +157,19 @@ function randomMatchId() {
 
 const STALE_MS = 1000 * 60 * 60 * 6;
 /* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+
+/* 試合を組むときの既定の時間割。
+   開始は「今から5分後」を5分刻みで切り上げた時刻（＝今から5〜10分後のキリのいい時刻）、
+   終了はその3時間後。当日その場で組むことが多いので、前回の値ではなく毎回いまの時刻から出す */
+function defaultSchedule() {
+  const p2 = (n) => String(n).padStart(2, "0");
+  const st = new Date(Date.now() + 5 * 60000);
+  st.setSeconds(0, 0);
+  st.setMinutes(Math.ceil(st.getMinutes() / 5) * 5);
+  const en = new Date(st.getTime() + 3 * 60 * 60000);
+  return { startH: p2(st.getHours()), startM: p2(st.getMinutes()), endH: p2(en.getHours()), endM: p2(en.getMinutes()) };
+}
+
 function normalizeMatch(m) {
   if (!m) return m;
   return {
@@ -1778,10 +1791,11 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const [busy, setBusy] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [startH, setStartH] = useState(s0.startH || "11");
-  const [startM, setStartM] = useState(s0.startM || "00");
-  const [endH, setEndH] = useState(s0.endH || "17");
-  const [endM, setEndM] = useState(s0.endM || "00");
+  const d0 = defaultSchedule();
+  const [startH, setStartH] = useState(d0.startH);
+  const [startM, setStartM] = useState(d0.startM);
+  const [endH, setEndH] = useState(d0.endH);
+  const [endM, setEndM] = useState(d0.endM);
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
 
