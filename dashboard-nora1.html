@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.145";
-const BUILD_TIME = "2026-08-05 14:05";
+const APP_VERSION = "1.147";
+const BUILD_TIME = "2026-08-05 16:20";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -962,20 +962,6 @@ function PcMatchGridTab({ simple }) {
   const cols = useMemo(() => [1, 2, 3].map((t) => annotateColumn(getPrelimForTable(matches, t))), [matches]);
   const rowCount = Math.max(1, ...cols.map((c) => c.length));
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
-
-  // 予選の成績順（1位から）で枠を埋めておく。抽選番号はこのあと手で入れ替えられる
-  const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
-  const rankedIdx = useMemo(() => {
-    const played = standings.filter((r) => r.played > 0);
-    const idx = [];
-    played.forEach((r) => {
-      const i = roster.findIndex((p) => p.name === r.name);
-      if (i >= 0 && !idx.includes(i)) idx.push(i);
-    });
-    roster.forEach((p, i) => { if (!idx.includes(i)) idx.push(i); }); // 予選未消化の人は後ろに
-    return idx;
-  }, [standings, roster]);
-  const filledRef = useRef("");
   const hasBracket = bracketMatches.length > 0;
   const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
   const bracketTotal = bracketTotalRounds(bracketSize);
@@ -1134,7 +1120,8 @@ function PcStandingsTab() {
 function BracketTab({ roster }) {
   const s0 = useMemo(() => loadSettings(), []);
   const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
-  const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0));
+  const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
+  const [drawNo, setDrawNo] = useState(() => Array.from({ length: 8 }, (_, i) => String(i + 1))); // 各人が引いた抽選番号
   // 予選と同じ長さを基準に、勝ち上がるほど1試合を長くする（決勝がいちばん長い）
   const basePct = parseInt(s0.lenPct, 10) || 100;
   const per100 = parseInt(s0.per100Min, 10) || 60;
@@ -1154,21 +1141,8 @@ function BracketTab({ roster }) {
   useEffect(() => {
     const total = bracketTotalRounds(size);
     setPcts(Array.from({ length: total }, (_, i) => defaultPctFor(i + 1, total)));
+    setDrawNo(Array.from({ length: 8 }, (_, i) => String(i + 1)));
   }, [size]);
-
-  // 成績が揃った時点で、上位から順に枠へ入れておく。人数を変えた時も入れ直す。
-  // 一度セットしたあとに手で並べ替えた分は、上書きしない
-  useEffect(() => {
-    if (started || rankedIdx.length === 0) return;
-    const key = `${size}:${rankedIdx.slice(0, size).join(",")}`;
-    if (filledRef.current === key) return;
-    filledRef.current = key;
-    setSlotIdx((arr) => {
-      const next = [...arr];
-      for (let i = 0; i < 8; i++) next[i] = rankedIdx[i] != null ? rankedIdx[i] : 0;
-      return next;
-    });
-  }, [rankedIdx, size, started]);
 
   // 各回戦の1試合の長さ（分）と、開始予定時刻。前の回戦が終わってから入替時間ぶん空けて始める想定
   const minutesOf = (pct) => Math.max(5, Math.round(per100 * (pct / 100)));
@@ -1189,6 +1163,35 @@ function BracketTab({ roster }) {
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const totalRounds = bracketTotalRounds(size);
   const started = bracketMatches.length > 0;
+
+  // 予選の成績順（1位から）で枠を埋めておく。抽選番号はこのあと手で入れ替えられる
+  const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
+  const rankedIdx = useMemo(() => {
+    const played = standings.filter((r) => r.played > 0);
+    const idx = [];
+    played.forEach((r) => {
+      const i = roster.findIndex((p) => p.name === r.name);
+      if (i >= 0 && !idx.includes(i)) idx.push(i);
+    });
+    roster.forEach((p, i) => { if (!idx.includes(i)) idx.push(i); }); // 予選未消化の人は後ろに
+    return idx;
+  }, [standings, roster]);
+  const filledRef = useRef("");
+
+  // 成績が揃った時点で、上位から順に枠へ入れておく。人数を変えた時も入れ直す。
+  // 一度セットしたあとに手で並べ替えた分は、上書きしない
+  useEffect(() => {
+    if (started || rankedIdx.length === 0) return;
+    const key = `${size}:${rankedIdx.slice(0, size).join(",")}`;
+    if (filledRef.current === key) return;
+    filledRef.current = key;
+    setSlotIdx((arr) => {
+      const next = [...arr];
+      for (let i = 0; i < 8; i++) next[i] = rankedIdx[i] != null ? rankedIdx[i] : 0;
+      return next;
+    });
+  }, [rankedIdx, size, started]);
+
 
   const winnerInfo = (m) => {
     const w = matchWinnerIndex(m);
@@ -1230,8 +1233,15 @@ function BracketTab({ roster }) {
 
   const registerAll = async () => {
     if (registering) return;
-    const players = slotIdx.slice(0, size).map((idx) => roster[idx]).filter(Boolean);
-    if (players.length < size) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
+    const entries = slotIdx.slice(0, size).map((idx, i) => ({ p: roster[idx], no: parseInt(drawNo[i], 10) }));
+    if (entries.some((e) => !e.p)) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
+    const names = entries.map((e) => e.p.name);
+    if (new Set(names).size !== names.length) { setMsg({ ok: false, text: "同じ選手が2回入っています" }); return; }
+    const nos = entries.map((e) => e.no);
+    if (nos.some((n) => !(n >= 1 && n <= size))) { setMsg({ ok: false, text: `抽選番号は1〜${size}で入れてください` }); return; }
+    if (new Set(nos).size !== nos.length) { setMsg({ ok: false, text: "抽選番号が重複しています" }); return; }
+    // 引いた番号の順に並べる。1番と2番が1回戦で当たる、という並びになる
+    const players = [...entries].sort((a, b) => a.no - b.no).map((e) => e.p);
     const total = bracketTotalRounds(size);
     const totalMatches = size - 1;
     if (!window.confirm(`決勝トーナメント（${size}人）の全${totalMatches}試合を、予定時刻つきで登録します。よろしいですか？`)) return;
@@ -1341,22 +1351,34 @@ function BracketTab({ roster }) {
             ))}
           </div>
 
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>抽選番号ごとの選手</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>出場者と抽選番号</div>
           <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 8, lineHeight: 1.6 }}>
-            予選の成績順（1位から）で入れてあります。抽選をした場合は、引いた番号に合わせて選び直してください
+            予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。
+            1番と2番、3番と4番…が1回戦で当たります
           </div>
-          {Array.from({ length: size }, (_, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div style={{ width: 28, textAlign: "center", fontSize: 14, fontWeight: 800, color: C.blue, flexShrink: 0 }}>{i + 1}</div>
-              <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1 }}>
-                {roster.map((p, ri) => {
-                  const st = standings.find((x) => x.name === p.name);
-                  const rank = st && st.played > 0 ? `${st.rank}位 ` : "";
-                  return <option key={p.id} value={ri}>{rank}{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>;
-                })}
-              </select>
-            </div>
-          ))}
+          {Array.from({ length: size }, (_, i) => {
+            const st = standings.find((x) => x.name === (roster[slotIdx[i]] || {}).name);
+            const no = parseInt(drawNo[i], 10);
+            const dup = no >= 1 && no <= size && drawNo.slice(0, size).filter((v) => parseInt(v, 10) === no).length > 1;
+            const bad = !(no >= 1 && no <= size) || dup;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ width: 34, textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub, flexShrink: 0 }}>
+                  {st && st.played > 0 ? `${st.rank}位` : "－"}
+                </div>
+                <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1, minWidth: 0 }}>
+                  {roster.map((p, ri) => {
+                    const s2 = standings.find((x) => x.name === p.name);
+                    const rank = s2 && s2.played > 0 ? `${s2.rank}位 ` : "";
+                    return <option key={p.id} value={ri}>{rank}{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>;
+                  })}
+                </select>
+                <input inputMode="numeric" value={drawNo[i] ?? ""}
+                  onChange={(e) => setDrawNo((arr) => { const nx = [...arr]; nx[i] = e.target.value.replace(/[^0-9]/g, "").slice(0, 1); return nx; })}
+                  style={{ ...numBoxStyle, width: 46, textAlign: "center", flexShrink: 0, borderColor: bad ? C.minus : undefined, color: bad ? C.minus : C.ink }} />
+              </div>
+            );
+          })}
 
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>1回戦の開始予定</div>
@@ -1383,6 +1405,26 @@ function BracketTab({ roster }) {
                   style={{ width: "100%", accentColor: C.blue }} />
               </div>
             ))}
+          </div>
+
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>1回戦の組み合わせ</div>
+            {(() => {
+              const entries = Array.from({ length: size }, (_, i) => ({ p: roster[slotIdx[i]], no: parseInt(drawNo[i], 10) }));
+              const nos = entries.map((e) => e.no);
+              const ok = nos.every((n) => n >= 1 && n <= size) && new Set(nos).size === size;
+              if (!ok) return <div style={{ fontSize: 12.5, color: C.minus, fontWeight: 700 }}>抽選番号を1〜{size}で重複なく入れてください</div>;
+              const sorted = [...entries].sort((a, b) => a.no - b.no);
+              return sorted.filter((_, i) => i % 2 === 0).map((e, k) => (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 700, marginBottom: 4 }}>
+                  <span style={{ color: C.blue, fontWeight: 900 }}>{e.no}</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(e.p || {}).name}</span>
+                  <span style={{ color: C.sub }}>対</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{(sorted[k * 2 + 1] || {}).p ? sorted[k * 2 + 1].p.name : ""}</span>
+                  <span style={{ color: C.red, fontWeight: 900 }}>{(sorted[k * 2 + 1] || {}).no}</span>
+                </div>
+              ));
+            })()}
           </div>
 
           <button onClick={registerAll} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
