@@ -12,6 +12,11 @@
     .print-fit { height: auto !important; overflow: visible !important; }
     body, html, #root { height: auto !important; overflow: visible !important; }
   }
+  /* 進行中ラックに点数が入った時の点滅 */
+  @keyframes rackFlash {
+    0%,49%   { background:#FFD23F; box-shadow:0 0 0 2px #E8A400; }
+    50%,100% { background:#FFF6CC; box-shadow:none; }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -73,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.140";
-const BUILD_TIME = "2026-08-04 18:50";
+const APP_VERSION = "1.141";
+const BUILD_TIME = "2026-08-05 09:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -438,7 +443,8 @@ function App() {
   }, []);
 
   const tabs = [
-    ["home", "🗓 テーブル"],
+    ["home", "🗓 タイムライン"],
+    ["tables", "🖥 テーブル"],
     ["player", "🧑‍🤝‍🧑 プレイヤー"],
     ["settings", "⚙️ 設定"],
   ];
@@ -501,6 +507,7 @@ function App() {
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
+          {tab === "tables" && <LiveTablesTab />}
           {tab === "player" && playerContent}
           {tab === "settings" && (
             <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError}
@@ -2195,6 +2202,220 @@ function planMatchUpdate(updates, qm, lenPct, minutes, now) {
   updates[qm.id + "/matchMinutes"] = minutes;
   updates[qm.id + "/version"] = (qm.version || 1) + 1;
   updates[qm.id + "/updatedAt"] = now;
+}
+
+
+/* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
+   左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
+   進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
+   古いラックは直近5件を残して畳む（タップで開閉） */
+const SHOW_RACKS = 5;
+
+function LiveTablePanel({ tableNum, m }) {
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [openHist, setOpenHist] = useState(false);
+  const [flashing, setFlashing] = useState(false);
+  const lastLiveRef = useRef(null);
+  const flashTimerRef = useRef(null);
+
+  useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
+
+  const balls = (m && m.balls) || [];
+  const live = [
+    balls.filter((b) => b.loc === "p1" && !b.dead).length,
+    balls.filter((b) => b.loc === "p2" && !b.dead).length,
+  ];
+  const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
+
+  // 進行中ラックの点数が変わったら点滅。試合や卓が切り替わった時は点滅させない
+  useEffect(() => {
+    if (!m || m.phase !== "play") { lastLiveRef.current = liveKey; return; }
+    if (lastLiveRef.current !== null && lastLiveRef.current !== liveKey) {
+      setFlashing(true);
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashing(false), 5000);
+    }
+    lastLiveRef.current = liveKey;
+  }, [liveKey]);
+  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
+
+  const panelBox = {
+    background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
+    padding: "10px 12px", marginBottom: 14, boxSizing: "border-box",
+  };
+  const tBadge = {
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
+    padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+  };
+
+  if (!m) {
+    return (
+      <div style={panelBox}>
+        <div><span style={tBadge}>T{tableNum}</span></div>
+        <div style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.sub, padding: "18px 0" }}>待機中</div>
+      </div>
+    );
+  }
+
+  const names = m.names || ["", ""];
+  const raceTo = m.raceTo || [0, 0];
+  const tot = m.tot || [0, 0];
+  const hist = m.hist || [];
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const bothLose = !!m.bothLose;
+  const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
+  const winner = bothLose ? null
+    : (m.winner === 0 || m.winner === 1) ? m.winner
+    : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
+    : reached[0] ? 0 : reached[1] ? 1 : null;
+  const finished = winner != null || bothLose;
+  // ヒルヒル＝両者とも残り14点以下。このラックの9番で決まるので、残り点数は出さない
+  const hillHill = !finished && m.phase === "play" &&
+    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+
+  const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
+  const badgeOf = (i) => {
+    if (m.phase === "banking") return null;
+    if (bothLose) return { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    const rem = raceTo[i] - disp[i];
+    if (rem <= 0) return { t: "達成" };
+    const toHill = rem - 14;
+    return toHill > 0 ? { t: `ヒルまで あと${toHill}` } : { t: `残り${rem}` };
+  };
+
+  // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
+  const clockJsx = (() => {
+    if (m.phase === "banking") {
+      return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
+    }
+    if (!m.deadline) return null;
+    const left = m.deadline - (m.finishedAt || nowTs);
+    if (left <= 0) return <span style={{ fontSize: 14, fontWeight: 900, color: C.minus, whiteSpace: "nowrap" }}>⏰ 時間切れ</span>;
+    const sec = Math.floor(left / 1000);
+    const txt = `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+    const col = finished ? C.sub : left < 5 * 60 * 1000 ? C.hill : C.ink;
+    return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
+  })();
+
+  const stateTxt = m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+
+  const card = (i) => {
+    const pc = i === 0 ? C.blue : C.red;
+    const b = badgeOf(i);
+    const isBrk = m.brk === i;
+    return (
+      <div style={{
+        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px",
+        textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+      }}>
+        <div style={{
+          fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
+          padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{names[i]}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+          {m.phase === "banking" ? "–" : disp[i]}
+          <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>
+        </div>
+        <div style={{ minHeight: 23, marginTop: 4 }}>
+          {b && (
+            <span style={{
+              display: "inline-block", background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              padding: "2px 8px", fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap",
+            }}>{b.t}</span>
+          )}
+        </div>
+        <div style={{ minHeight: 17, marginTop: 4, fontSize: 11.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+      </div>
+    );
+  };
+
+  // 中央：ラック履歴
+  const hidden = Math.max(0, hist.length - SHOW_RACKS);
+  const shown = openHist ? hist : hist.slice(hidden);
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
+  const numStyle = (side, strong) => ({ width: 26, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+
+  const histJsx = (
+    <div style={{ width: 88, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
+      {m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>まだ<br />ありません</div>
+      ) : (
+        <>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
+            {hidden > 0 && (
+              <div onClick={() => setOpenHist((v) => !v)} style={{
+                fontSize: 10.5, fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
+                border: `1px solid ${C.line}`, borderRadius: 5, marginBottom: 2, cursor: "pointer", background: C.zone,
+              }}>{openHist ? "▲ 畳む" : `▼ 前の${hidden}ラック`}</div>
+            )}
+            {shown.map((h, k) => {
+              const add = h.add || [0, 0];
+              return (
+                <div key={k} style={rowStyle}>
+                  <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
+                  <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                  <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
+                </div>
+              );
+            })}
+            {m.phase === "play" && (
+              <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: 5, animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
+                <span style={numStyle("a")}>{live[0]}</span>
+                <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                <span style={numStyle("b")}>{live[1]}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 4, paddingTop: 4, borderTop: `1.5px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 17, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.blue }}>{disp[0]}</span>
+            <span style={{ color: C.sub, fontSize: 13 }}>-</span>
+            <span style={{ color: C.red }}>{disp[1]}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={panelBox}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
+          {stateTxt}{clockJsx}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+        {card(0)}
+        {histJsx}
+        {card(1)}
+      </div>
+      {bothLose ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ・両者負け</div>
+      ) : winner != null ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ========= テーブルタブ：3卓の今の様子を縦に並べる ========= */
+function LiveTablesTab() {
+  const [queues, setQueues] = useState([[], [], []]);
+  const [err, setErr] = useState(null);
+  useEffect(() => dbSubscribe("matches",
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches || {}, t))); setErr(null); },
+    (e) => setErr(String(e && e.message ? e.message : e))), []);
+  return (
+    <div style={{ padding: "16px 12px 32px", fontFamily: FONT, maxWidth: 560, margin: "0 auto" }}>
+      {[0, 1, 2].map((i) => (
+        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
+      ))}
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
 }
 
 function HomeTab() {
