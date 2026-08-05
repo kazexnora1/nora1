@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.148";
-const BUILD_TIME = "2026-08-05 17:40";
+const APP_VERSION = "1.149";
+const BUILD_TIME = "2026-08-06 09:20";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2418,6 +2418,17 @@ function planMatchUpdate(updates, qm, lenPct, minutes, now) {
 }
 
 
+/* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
+function roundLabelOf(m) {
+  if (!m || !m.bracket) return "予選";
+  const total = Math.round(Math.log2(m.bracketSize || 8));
+  const r = m.bracketRound || 1;
+  if (r === total) return "決勝";
+  if (total - r === 1) return "準決勝";
+  if (total - r === 2) return "準々決勝";
+  return `${r}回戦`;
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -2600,7 +2611,10 @@ function LiveTablePanel({ tableNum, m }) {
   return (
     <div style={panelBox}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span style={tBadge}>T{tableNum}</span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
+        </span>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
           {stateTxt}{clockJsx}
         </span>
