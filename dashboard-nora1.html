@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.147";
-const BUILD_TIME = "2026-08-05 16:20";
+const APP_VERSION = "1.148";
+const BUILD_TIME = "2026-08-05 17:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -202,7 +202,6 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
-    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠。対戦相手が決まるまでは列に入れない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -244,7 +243,6 @@ function getAllForTable(matches, tableNum) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠は、相手が決まるまでタイムラインに出さない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -261,6 +259,8 @@ function annotateColumn(list) {
   return list.map((m) => {
     if (isMatchFinished(m)) return { m, st: "done" };
     if (m.startedAt) return { m, st: "live" };
+    // 決勝トーナメントの「◯回戦①の勝者」枠。予定として卓には並べるが、まだ始められない
+    if (m.pending) return { m, st: "pending" };
     if (!calledYet) { calledYet = true; return { m, st: "call" }; }
     return { m, st: "queued" };
   });
@@ -639,6 +639,8 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
       : st === "call"
       ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
+      : st === "pending"
+      ? { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "勝者待ち" }
       : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
   // 終了した試合は勝敗だけを出す。点数は大小で勝敗が決まるわけではないので出さない
@@ -651,7 +653,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       position: "relative", height: TL_CARD_H, boxSizing: "border-box", background: style.bg,
       border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
       padding: "8px 5px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      overflow: "hidden", opacity: st === "queued" && !menu ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
+      overflow: "hidden", opacity: (st === "queued" || st === "pending") && !menu ? 0.7 : 1, cursor: clickable ? "pointer" : "default",
     }}>
       {refereeEnabled && (st === "call" || st === "live") && (
         <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
@@ -1252,7 +1254,8 @@ function BracketTab({ roster }) {
       for (let r = 1; r <= total; r++) {
         const plan = roundPlan[r - 1];
         const count = size / Math.pow(2, r);
-        const tables = assignTables(count);
+        // 決勝はT1で行う。それ以外は空いている卓に振り分ける
+        const tables = r === total ? [1] : assignTables(count);
         for (let i = 0; i < count; i++) {
           const id = randomMatchId();
           const common = {
@@ -1306,6 +1309,7 @@ function BracketTab({ roster }) {
         const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, pct) : { rt1: 0, rt2: 0 };
         if (ph) {
           // まとめて登録した仮の枠を埋める。卓・予定時刻・試合の長さはそのまま活かす
+          if (nextRound === totalRounds && Number(ph.table) !== 1) next[ph.id + "/table"] = 1; // 決勝はT1
           next[ph.id + "/names"] = [p1.name, p2.name];
           next[ph.id + "/raceTo"] = [race.rt1, race.rt2];
           next[ph.id + "/r1"] = p1.r;
@@ -1319,7 +1323,7 @@ function BracketTab({ roster }) {
             version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
             balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
             lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-            names: [p1.name, p2.name], table: tables[i],
+            names: [p1.name, p2.name], table: nextRound === totalRounds ? 1 : tables[i],
             r1: p1.r, r2: p2.r, lenPct: pct, matchMinutes: plan.mins,
             createdAt: now + i, updatedAt: now,
             bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
@@ -2451,6 +2455,7 @@ function LiveTablePanel({ tableNum, m }) {
   const panelBox = {
     background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
     padding: "10px 12px", marginBottom: 14, boxSizing: "border-box",
+    opacity: m && m.pending ? 0.75 : 1, // 勝者待ちの予定はまだ始められないので薄く
   };
   const tBadge = {
     display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
@@ -2496,6 +2501,7 @@ function LiveTablePanel({ tableNum, m }) {
 
   // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
   const clockJsx = (() => {
+    if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
     if (m.phase === "banking") {
       return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
     }
@@ -2508,7 +2514,7 @@ function LiveTablePanel({ tableNum, m }) {
     return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
   })();
 
-  const stateTxt = m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+  const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
 
   const card = (i) => {
     const pc = i === 0 ? C.blue : C.red;
@@ -2524,8 +2530,8 @@ function LiveTablePanel({ tableNum, m }) {
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
         <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
-          {m.phase === "banking" ? "–" : disp[i]}
-          <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>
+          {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
+          {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
@@ -2550,8 +2556,10 @@ function LiveTablePanel({ tableNum, m }) {
   const histJsx = (
     <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
-      {m.phase === "banking" ? (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>まだ<br />ありません</div>
+      {m.pending || m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>
+          {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
+        </div>
       ) : (
         <>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
