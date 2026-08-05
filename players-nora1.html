@@ -197,6 +197,7 @@ function getAllForTable(matches, tableNum) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (m.pending) continue; // 勝者待ちの枠は対戦表にも出さない（決勝トーナメント表でだけ見せる）
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -210,6 +211,7 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
+    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠。相手が決まるまで列に入れない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -265,7 +267,7 @@ function BracketView({ matches, myMatchId, onPick }) {
               const w = done ? matchWinnerIndex(m) : null;
               const live = !done && !!m.startedAt;
               const mine = m.id === myMatchId;
-              const clickable = !done && !!onPick;
+              const clickable = !done && !m.pending && !!onPick;
               const tot = m.tot || [0, 0];
               const handle = () => {
                 if (!clickable) return;
@@ -283,8 +285,13 @@ function BracketView({ matches, myMatchId, onPick }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                     <span style={{ fontSize: 11.5, fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>T{m.table}</span>
                     <span style={{ fontSize: 12, fontWeight: 800, color: done ? C.sub : live ? C.blue : C.sub }}>
-                      {done ? "試合終了" : live ? "試合中" : "これから"}
+                      {done ? "試合終了" : live ? "試合中" : m.pending ? "勝者待ち" : "これから"}
                     </span>
+                    {m.scheduledAt && !done && (
+                      <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
+                        {fmtClock(m.scheduledAt)}〜
+                      </span>
+                    )}
                     {mine && <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 900, color: C.win }}>● 担当中</span>}
                   </div>
                   {[0, 1].map((i) => (
