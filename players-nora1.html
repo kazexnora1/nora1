@@ -308,7 +308,8 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
       {clickable && !mine && (
         <span style={{ position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>▶ 担当する</span>
       )}
-      {mine && <span style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: C.win, color: "#fff", borderRadius: 10, padding: "1px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>担当中</span>}
+      {/* 担当中はカードの上に出すと枠で切れてしまうので、「▶ 担当する」と同じ下端に置く */}
+      {mine && <span style={{ position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 900, color: C.win, whiteSpace: "nowrap" }}>● 担当中</span>}
       <div style={{ textAlign: "center" }}>
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
@@ -418,7 +419,7 @@ function LiveTablePanel({ tableNum, m }) {
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
     const toHill = rem - 14;
-    return toHill > 0 ? { t: `ヒルまで あと${toHill}` } : { t: `残り${rem}` };
+    return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
 
   // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
@@ -443,7 +444,7 @@ function LiveTablePanel({ tableNum, m }) {
     const isBrk = m.brk === i;
     return (
       <div style={{
-        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px",
+        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px",
         textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
       }}>
         <div style={{
@@ -454,11 +455,12 @@ function LiveTablePanel({ tableNum, m }) {
           {m.phase === "banking" ? "–" : disp[i]}
           <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>
         </div>
-        <div style={{ minHeight: 23, marginTop: 4 }}>
+        <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
-              display: "inline-block", background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
-              padding: "2px 8px", fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap",
+              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
             }}>{b.t}</span>
           )}
         </div>
@@ -471,10 +473,10 @@ function LiveTablePanel({ tableNum, m }) {
   const hidden = Math.max(0, hist.length - SHOW_RACKS);
   const shown = openHist ? hist : hist.slice(hidden);
   const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
-  const numStyle = (side, strong) => ({ width: 26, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+  const numStyle = (side, strong) => ({ width: 22, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
 
   const histJsx = (
-    <div style={{ width: 88, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
+    <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
       {m.phase === "banking" ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>まだ<br />ありません</div>
@@ -523,7 +525,7 @@ function LiveTablePanel({ tableNum, m }) {
           {stateTxt}{clockJsx}
         </span>
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+      <div style={{ display: "flex", gap: 5, alignItems: "stretch" }}>
         {card(0)}
         {histJsx}
         {card(1)}
@@ -598,7 +600,7 @@ function hillInfo(rt, disp) {
   const rem = rt - disp;
   if (rem <= 0) return { label: "達成", value: null };
   const toHill = rem - 14;
-  return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
+  return toHill > 0 ? { label: `あと${toHill}でヒル`, value: null } : { label: `あと${rem}で勝ち`, value: null };
 }
 function TablePanel({ tableNum, m }) {
   if (!m) {
@@ -839,12 +841,28 @@ function ScheduleTab({ onPick }) {
     if (!e) return "―";
     return r.st === "live" ? `〜${fmtClock(e.end)}頃` : `${fmtClock(e.start)}頃`;
   };
-  /* 「誰と」＝自分が出る試合は「vs相手」、スコアラー担当は「📝 A 対 B」 */
+  /* 「誰と」＝自分が出る試合は相手の名前、スコアラー担当は担当する2人 */
   const whoText = (r) => {
     const names = r.m.names || ["", ""];
-    if (r.role === "referee") return `📝 ${names[0]} 対 ${names[1]}`;
+    if (r.role === "referee") return `${names[0]} 対 ${names[1]}`;
     const meIdx = names.indexOf(me);
-    return `vs ${names[1 - meIdx] || ""}`;
+    return names[1 - meIdx] || "";
+  };
+  /* 予定を1つの文として読ませる：「14:20頃　T1で 宗宮さんと試合」 */
+  const lineJsx = (r, big) => {
+    const done = r.st === "done";
+    const size = big ? 17 : 16;
+    const strong = { fontWeight: 900, color: r.role === "referee" ? C.hill : done ? C.sub : C.ink };
+    return (
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", columnGap: 6, minWidth: 0, fontSize: size, fontWeight: 700, color: done ? C.sub : C.ink }}>
+        <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 800, whiteSpace: "nowrap" }}>{whenText(r)}</span>
+        <span style={{ whiteSpace: "nowrap" }}><b style={{ fontWeight: 900 }}>T{r.m.table}</b>で</span>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={strong}>{whoText(r)}</span>
+          {r.role === "referee" ? "のスコアラー" : "さんと試合"}
+        </span>
+      </div>
+    );
   };
 
   return (
@@ -873,12 +891,7 @@ function ScheduleTab({ onPick }) {
           <div style={{ fontSize: 12, fontWeight: 800, color: upNext.role === "referee" ? C.hill : C.blue, marginBottom: 4 }}>
             {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
           </div>
-          {/* いつ → どこで → 誰と の順に横並び */}
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
-            <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0 }}>{whenText(upNext)}</span>
-            <span style={{ fontSize: 17, fontWeight: 900, whiteSpace: "nowrap", flexShrink: 0 }}>T{upNext.m.table}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: 17, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{whoText(upNext)}</span>
-          </div>
+          {lineJsx(upNext, true)}
           <div style={{ fontSize: 12.5, fontWeight: 800, color: canOpen(upNext) ? C.blue : C.sub, marginTop: 6 }}>
             {canOpen(upNext) ? "▶ タップしてスコア画面へ" : stLabel(upNext.st)}
           </div>
@@ -925,22 +938,8 @@ function ScheduleTab({ onPick }) {
             borderRadius: 12, padding: "10px 12px", marginBottom: 8,
             cursor: canOpen(r) ? "pointer" : "default",
           }}>
-            {/* 上段：いつ・どこで・誰と */}
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
-              <span style={{
-                fontSize: 15, fontWeight: 800, color: done ? C.sub : C.ink,
-                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0,
-              }}>{whenText(r)}</span>
-              <span style={{
-                fontSize: 15, fontWeight: 900, color: done ? C.sub : C.ink,
-                whiteSpace: "nowrap", flexShrink: 0,
-              }}>T{r.m.table}</span>
-              <span style={{
-                flex: 1, minWidth: 0, fontSize: 17, fontWeight: 800,
-                color: r.role === "referee" ? C.hill : done ? C.sub : C.ink,
-                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-              }}>{whoText(r)}</span>
-            </div>
+            {/* 上段：「14:20頃　T1で 宗宮さんと試合」の1文 */}
+            {lineJsx(r, false)}
             {/* 下段：状態またはタップ導線 */}
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: bottomColor, whiteSpace: "nowrap" }}>{bottomText}</span>
@@ -1299,8 +1298,10 @@ function MatchScreen({ setupInfo, onExit }) {
     if (rt(i) <= 0) return { txt: "", on: false };
     const rem = rt(i) - disp[i];
     if (rem <= 0) return { txt: "達成", on: true };
+    // ヒルヒルはこのラックの9番で決まるので、残り点数ではなくその旨を出す
+    if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : "9番勝負！", on: true };
     const toHill = rem - 14;
-    return toHill > 0 ? { txt: `ヒルまで あと${toHill}`, on: false } : { txt: `残り${rem}`, on: true };
+    return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
   };
   const col = (loc) => balls.filter((b) => b.loc === loc);
   const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
