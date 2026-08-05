@@ -405,6 +405,17 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
 }
 
 
+/* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
+function roundLabelOf(m) {
+  if (!m || !m.bracket) return "予選";
+  const total = Math.round(Math.log2(m.bracketSize || 8));
+  const r = m.bracketRound || 1;
+  if (r === total) return "決勝";
+  if (total - r === 1) return "準決勝";
+  if (total - r === 2) return "準々決勝";
+  return `${r}回戦`;
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -587,7 +598,10 @@ function LiveTablePanel({ tableNum, m }) {
   return (
     <div style={panelBox}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span style={tBadge}>T{tableNum}</span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
+        </span>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
           {stateTxt}{clockJsx}
         </span>
@@ -926,7 +940,9 @@ function ScheduleTab({ onPick }) {
         <span style={{ whiteSpace: "nowrap" }}><b style={{ fontWeight: 900 }}>T{r.m.table}</b>で</span>
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           <span style={strong}>{whoText(r)}</span>
-          {r.role === "referee" ? "のスコアラー" : "さんと試合"}
+          {r.role === "referee"
+            ? (r.m.bracket ? `の${roundLabelOf(r.m)}のスコアラー` : "のスコアラー")
+            : (r.m.bracket ? `さんと${roundLabelOf(r.m)}` : "さんと試合")}
         </span>
       </div>
     );
