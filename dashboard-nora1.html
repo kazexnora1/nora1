@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.144";
-const BUILD_TIME = "2026-08-05 12:40";
+const APP_VERSION = "1.145";
+const BUILD_TIME = "2026-08-05 14:05";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -962,6 +962,20 @@ function PcMatchGridTab({ simple }) {
   const cols = useMemo(() => [1, 2, 3].map((t) => annotateColumn(getPrelimForTable(matches, t))), [matches]);
   const rowCount = Math.max(1, ...cols.map((c) => c.length));
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
+
+  // 予選の成績順（1位から）で枠を埋めておく。抽選番号はこのあと手で入れ替えられる
+  const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
+  const rankedIdx = useMemo(() => {
+    const played = standings.filter((r) => r.played > 0);
+    const idx = [];
+    played.forEach((r) => {
+      const i = roster.findIndex((p) => p.name === r.name);
+      if (i >= 0 && !idx.includes(i)) idx.push(i);
+    });
+    roster.forEach((p, i) => { if (!idx.includes(i)) idx.push(i); }); // 予選未消化の人は後ろに
+    return idx;
+  }, [standings, roster]);
+  const filledRef = useRef("");
   const hasBracket = bracketMatches.length > 0;
   const bracketSize = hasBracket ? (bracketMatches[0].bracketSize || 8) : 8;
   const bracketTotal = bracketTotalRounds(bracketSize);
@@ -1142,6 +1156,20 @@ function BracketTab({ roster }) {
     setPcts(Array.from({ length: total }, (_, i) => defaultPctFor(i + 1, total)));
   }, [size]);
 
+  // 成績が揃った時点で、上位から順に枠へ入れておく。人数を変えた時も入れ直す。
+  // 一度セットしたあとに手で並べ替えた分は、上書きしない
+  useEffect(() => {
+    if (started || rankedIdx.length === 0) return;
+    const key = `${size}:${rankedIdx.slice(0, size).join(",")}`;
+    if (filledRef.current === key) return;
+    filledRef.current = key;
+    setSlotIdx((arr) => {
+      const next = [...arr];
+      for (let i = 0; i < 8; i++) next[i] = rankedIdx[i] != null ? rankedIdx[i] : 0;
+      return next;
+    });
+  }, [rankedIdx, size, started]);
+
   // 各回戦の1試合の長さ（分）と、開始予定時刻。前の回戦が終わってから入替時間ぶん空けて始める想定
   const minutesOf = (pct) => Math.max(5, Math.round(per100 * (pct / 100)));
   const roundPlan = useMemo(() => {
@@ -1313,12 +1341,19 @@ function BracketTab({ roster }) {
             ))}
           </div>
 
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 8 }}>抽選番号ごとの選手</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>抽選番号ごとの選手</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 8, lineHeight: 1.6 }}>
+            予選の成績順（1位から）で入れてあります。抽選をした場合は、引いた番号に合わせて選び直してください
+          </div>
           {Array.from({ length: size }, (_, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <div style={{ width: 28, textAlign: "center", fontSize: 14, fontWeight: 800, color: C.blue, flexShrink: 0 }}>{i + 1}</div>
               <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1 }}>
-                {roster.map((p, ri) => <option key={p.id} value={ri}>{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
+                {roster.map((p, ri) => {
+                  const st = standings.find((x) => x.name === p.name);
+                  const rank = st && st.played > 0 ? `${st.rank}位 ` : "";
+                  return <option key={p.id} value={ri}>{rank}{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>;
+                })}
               </select>
             </div>
           ))}
