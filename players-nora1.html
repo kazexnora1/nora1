@@ -241,100 +241,33 @@ function bracketMatchesForRound(matches, round) {
 }
 function bracketTotalRounds(size) { return Math.round(Math.log2(size || 8)); }
 
-/* 決勝トーナメント表。回戦ごとに縦に並べる（スマホなので横のブラケットにはしない）。
-   呼び出し中・試合中のカードは、対戦表と同じようにタップでスコアラーになれる */
-function BracketView({ matches, myMatchId, onPick }) {
-  const all = getBracketMatches(matches);
-  if (all.length === 0) {
-    return <div style={{ textAlign: "center", color: C.sub, fontSize: 14, padding: "40px 0" }}>決勝トーナメントはまだ登録されていません</div>;
-  }
-  const size = all[0].bracketSize || 8;
-  const total = bracketTotalRounds(size);
-  const label = (r) => (r === total ? "決勝" : total - r === 1 ? "準決勝" : `${r}回戦`);
-
-  return (
-    <div>
-      {Array.from({ length: total }, (_, i) => i + 1).map((r) => {
-        const ms = bracketMatchesForRound(matches, r);
-        return (
-          <div key={r} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 900, color: C.blue, marginBottom: 6 }}>{label(r)}</div>
-            {ms.length === 0 && (
-              <div style={{ border: `1px dashed ${C.line}`, borderRadius: 10, padding: "12px 0", textAlign: "center", color: C.sub, fontSize: 13 }}>まだ組まれていません</div>
-            )}
-            {ms.map((m) => {
-              const done = isMatchFinished(m);
-              const w = done ? matchWinnerIndex(m) : null;
-              const live = !done && !!m.startedAt;
-              const mine = m.id === myMatchId;
-              const clickable = !done && !m.pending && !!onPick;
-              const tot = m.tot || [0, 0];
-              const handle = () => {
-                if (!clickable) return;
-                const nm = m.names || ["", ""];
-                if (!window.confirm(`T${m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
-                onPick(m);
-              };
-              return (
-                <div key={m.id} onClick={clickable ? handle : undefined} style={{
-                  background: done ? C.zone : "#fff",
-                  border: `${mine ? 2.5 : 1.5}px solid ${mine ? C.win : live ? C.blue : C.line}`,
-                  borderRadius: 12, padding: "8px 10px", marginBottom: 8,
-                  cursor: clickable ? "pointer" : "default",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>T{m.table}</span>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: done ? C.sub : live ? C.blue : C.sub }}>
-                      {done ? "試合終了" : live ? "試合中" : m.pending ? "勝者待ち" : "これから"}
-                    </span>
-                    {m.scheduledAt && !done && (
-                      <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
-                        {fmtClock(m.scheduledAt)}〜
-                      </span>
-                    )}
-                    {mine && <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 900, color: C.win }}>● 担当中</span>}
-                  </div>
-                  {[0, 1].map((i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{
-                        flex: 1, minWidth: 0, fontSize: 16, fontWeight: w === i ? 900 : 700,
-                        color: w === i ? C.win : done ? C.sub : i === 0 ? C.blue : C.red,
-                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                      }}>{(m.names || ["", ""])[i]}</span>
-                      <span style={{ fontSize: 15, fontWeight: 900, fontVariantNumeric: "tabular-nums", color: w === i ? C.win : C.sub, flexShrink: 0 }}>
-                        {done || live ? tot[i] : ""}
-                      </span>
-                    </div>
-                  ))}
-                  {clickable && !mine && (
-                    <div style={{ textAlign: "center", fontSize: 11, fontWeight: 800, color: C.blue, marginTop: 3 }}>▶ 担当する</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
 function TimelineTab({ myMatchId, onPick }) {
   const [cols, setCols] = useState([[], [], []]);
   const [raw, setRaw] = useState({});
-  const [view, setView] = useState("prelim"); // prelim | bracket
+  const [foldPrelim, setFoldPrelim] = useState(null); // null=まだ自動判定していない
   const [err, setErr] = useState(null);
 
   useEffect(() => subscribeAllMatches(
     (matches) => { setRaw(matches || {}); setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t)))); setErr(null); },
     (e) => setErr(e)), []);
 
-  const hasBracket = getBracketMatches(raw).length > 0;
-
   const slots = Math.max(1, ...cols.map((c) => c.length));
   const total = cols.reduce((a, c) => a + c.length, 0);
   const doneCount = cols.reduce((a, c) => a + c.filter((e) => e.st === "done").length, 0);
+
+  // 決勝トーナメントが始まるコマ。ここから下がトーナメント、上が予選
+  let bracketStart = null;
+  cols.forEach((col) => col.forEach((e, si) => {
+    if (e && e.m.bracket && (bracketStart === null || si < bracketStart)) bracketStart = si;
+  }));
+  const prelimEntries = cols.flatMap((col) => col.filter((e, si) => bracketStart === null || si < bracketStart));
+  const prelimDone = prelimEntries.length > 0 && prelimEntries.every((e) => e.st === "done");
+  // 予選が全部終わったら、予選のカードは自動でたたむ（自分で開いたあとは勝手に閉じない）
+  useEffect(() => {
+    if (foldPrelim === null && prelimDone && bracketStart !== null) setFoldPrelim(true);
+  }, [prelimDone, bracketStart, foldPrelim]);
+  const folded = foldPrelim === true && bracketStart !== null;
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
@@ -345,37 +278,54 @@ function TimelineTab({ myMatchId, onPick }) {
         </div>
       </div>
 
-      {hasBracket && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          {[["prelim", "予選"], ["bracket", "🏆 決勝トーナメント"]].map(([k, lb]) => (
-            <button key={k} onClick={() => setView(k)} style={{
-              flex: 1, background: view === k ? C.blue : "#fff", color: view === k ? "#fff" : C.ink,
-              border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 0",
-              fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-            }}>{lb}</button>
-          ))}
-        </div>
-      )}
-
-      {view === "bracket" ? <BracketView matches={raw} myMatchId={myMatchId} onPick={onPick} /> : (
       <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
         <div />
         {[1, 2, 3].map((t) => (
           <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
         ))}
-        {Array.from({ length: slots }, (_, s) => (
-          <React.Fragment key={s}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
-            {[0, 1, 2].map((ti) => {
-              const e = cols[ti][s];
-              return <div key={ti}>{e
-                ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
-                : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
-            })}
-          </React.Fragment>
-        ))}
+
+        {/* 予選が終わったら、予選のコマはたたんで1行にまとめる */}
+        {folded && (
+          <div onClick={() => setFoldPrelim(false)} style={{
+            gridColumn: "1 / -1", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+            padding: "11px 0", textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer",
+          }}>▼ 予選 {prelimEntries.length}試合（終了）を見る</div>
+        )}
+
+        {Array.from({ length: slots }, (_, s) => {
+          const isBracketHead = bracketStart !== null && s === bracketStart;
+          if (folded && bracketStart !== null && s < bracketStart) return null;
+          return (
+            <React.Fragment key={s}>
+              {isBracketHead && (
+                <>
+                  <div style={{
+                    gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8,
+                    fontSize: 14.5, fontWeight: 900, color: C.hill, marginTop: 4,
+                  }}>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                    <span style={{ whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</span>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                  </div>
+                  {!folded && (
+                    <div onClick={() => setFoldPrelim(true)} style={{
+                      gridColumn: "1 / -1", textAlign: "center", fontSize: 12, fontWeight: 800,
+                      color: C.sub, cursor: "pointer", marginTop: -2,
+                    }}>▲ 予選をたたむ</div>
+                  )}
+                </>
+              )}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              {[0, 1, 2].map((ti) => {
+                const e = cols[ti][s];
+                return <div key={ti}>{e
+                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
+                  : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
+              })}
+            </React.Fragment>
+          );
+        })}
       </div>
-      )}
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
@@ -657,45 +607,24 @@ function LiveTablePanel({ tableNum, m }) {
 }
 
 /* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
-function TablesTab({ myMatchId, onPick }) {
+function TablesTab() {
   const [queues, setQueues] = useState([[], [], []]);
-  const [raw, setRaw] = useState({});
-  const [view, setView] = useState("tables"); // tables | bracket
   const [err, setErr] = useState(null);
 
   useEffect(() => subscribeAllMatches(
-    (matches) => { setRaw(matches || {}); setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
 
-  const hasBracket = getBracketMatches(raw).length > 0;
   const nextMatches = queues
     .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
     .filter(Boolean);
 
   return (
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
-      {hasBracket && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          {[["tables", "いまの卓"], ["bracket", "🏆 決勝トーナメント"]].map(([k, lb]) => (
-            <button key={k} onClick={() => setView(k)} style={{
-              flex: 1, background: view === k ? C.blue : "#fff", color: view === k ? "#fff" : C.ink,
-              border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 0",
-              fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-            }}>{lb}</button>
-          ))}
-        </div>
-      )}
-
-      {view === "bracket" ? (
-        <BracketView matches={raw} myMatchId={myMatchId} onPick={onPick} />
-      ) : (
-        <>
-          {[0, 1, 2].map((i) => (
-            <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
-          ))}
-          <NextList matches={nextMatches} />
-        </>
-      )}
+      {[0, 1, 2].map((i) => (
+        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
+      ))}
+      <NextList matches={nextMatches} />
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
@@ -1182,7 +1111,7 @@ function Shell() {
           <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
-          <TablesTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
+          <TablesTab />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" }}>
           <ScheduleTab onPick={handlePick} />
