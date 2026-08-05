@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.143";
-const BUILD_TIME = "2026-08-05 11:10";
+const APP_VERSION = "1.144";
+const BUILD_TIME = "2026-08-05 12:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -161,6 +161,10 @@ const STALE_MS = 1000 * 60 * 60 * 6;
 /* 試合を組むときの既定の時間割。
    開始は「今から5分後」を5分刻みで切り上げた時刻（＝今から5〜10分後のキリのいい時刻）、
    終了はその3時間後。当日その場で組むことが多いので、前回の値ではなく毎回いまの時刻から出す */
+const fmtClock = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
 function defaultSchedule() {
   const p2 = (n) => String(n).padStart(2, "0");
   const st = new Date(Date.now() + 5 * 60000);
@@ -198,6 +202,7 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
+    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠。対戦相手が決まるまでは列に入れない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -239,6 +244,7 @@ function getAllForTable(matches, tableNum) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠は、相手が決まるまでタイムラインに出さない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -1115,13 +1121,42 @@ function BracketTab({ roster }) {
   const s0 = useMemo(() => loadSettings(), []);
   const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0));
-  const [lenPct, setLenPct] = useState(100);
+  // 予選と同じ長さを基準に、勝ち上がるほど1試合を長くする（決勝がいちばん長い）
+  const basePct = parseInt(s0.lenPct, 10) || 100;
+  const per100 = parseInt(s0.per100Min, 10) || 60;
+  const changeover = parseInt(s0.changeoverMin, 10) || 5;
+  const defaultPctFor = (r, total) => Math.min(140, basePct + (r === total ? 30 : r === total - 1 ? 15 : 0));
+  const [pcts, setPcts] = useState(() => [1, 2, 3].map((r) => defaultPctFor(r, 3)));
+  const d0 = useMemo(() => defaultSchedule(), []);
+  const [startH, setStartH] = useState(d0.startH);
+  const [startM, setStartM] = useState(d0.startM);
+  const lenPct = basePct; // 個別に組む時（後から回戦を足す場合）の既定値
   const [registering, setRegistering] = useState(false);
   const [msg, setMsg] = useState(null);
   const [matches, setMatches] = useState({});
 
   useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
   useEffect(() => { saveSettings({ bracketSize: size }); }, [size]);
+  useEffect(() => {
+    const total = bracketTotalRounds(size);
+    setPcts(Array.from({ length: total }, (_, i) => defaultPctFor(i + 1, total)));
+  }, [size]);
+
+  // 各回戦の1試合の長さ（分）と、開始予定時刻。前の回戦が終わってから入替時間ぶん空けて始める想定
+  const minutesOf = (pct) => Math.max(5, Math.round(per100 * (pct / 100)));
+  const roundPlan = useMemo(() => {
+    const total = bracketTotalRounds(size);
+    const st = new Date();
+    st.setHours(parseInt(startH, 10) || 0, parseInt(startM, 10) || 0, 0, 0);
+    let cursor = st.getTime();
+    return Array.from({ length: total }, (_, i) => {
+      const pct = pcts[i] != null ? pcts[i] : defaultPctFor(i + 1, total);
+      const mins = minutesOf(pct);
+      const startAt = cursor;
+      cursor = startAt + (mins + changeover) * 60000;
+      return { round: i + 1, pct, mins, startAt };
+    });
+  }, [size, pcts, startH, startM]);
 
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const totalRounds = bracketTotalRounds(size);
@@ -1155,33 +1190,55 @@ function BracketTab({ roster }) {
     return result;
   };
 
-  const registerRound1 = async () => {
+  // 抽選番号が決まった時点で、1回戦から決勝までの予定をまとめて登録する。
+  // 2回戦以降は対戦相手がまだ決まらないので「◯回戦①の勝者」という仮の枠（pending）で押さえておき、
+  // 前の回戦が終わった時点で名前と目標点を埋める。仮の枠はタイムラインや卓の待機列には出さない
+  const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+  const mkMatch = (extra) => ({
+    version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+    balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+    lastResult: null, hist: [], ...extra,
+  });
+
+  const registerAll = async () => {
     if (registering) return;
-    const names = slotIdx.slice(0, size).map((idx) => roster[idx]).filter(Boolean);
-    if (names.length < size) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
-    if (!window.confirm(`決勝トーナメント（${size}人）の1回戦、${size / 2}試合を登録します。よろしいですか？`)) return;
+    const players = slotIdx.slice(0, size).map((idx) => roster[idx]).filter(Boolean);
+    if (players.length < size) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
+    const total = bracketTotalRounds(size);
+    const totalMatches = size - 1;
+    if (!window.confirm(`決勝トーナメント（${size}人）の全${totalMatches}試合を、予定時刻つきで登録します。よろしいですか？`)) return;
     setRegistering(true);
     try {
       const now = Date.now();
       const next = {};
-      const tables = assignTables(size / 2);
-      for (let i = 0; i < size / 2; i++) {
-        const p1 = names[i * 2], p2 = names[i * 2 + 1];
-        const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
-        const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
-        const id = randomMatchId();
-        next[id] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: tables[i],
-          r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-          createdAt: now + i, updatedAt: now,
-          bracket: true, bracketRound: 1, bracketPos: i, bracketSize: size,
-        };
+      for (let r = 1; r <= total; r++) {
+        const plan = roundPlan[r - 1];
+        const count = size / Math.pow(2, r);
+        const tables = assignTables(count);
+        for (let i = 0; i < count; i++) {
+          const id = randomMatchId();
+          const common = {
+            table: tables[i], lenPct: plan.pct, matchMinutes: plan.mins,
+            scheduledAt: plan.startAt,
+            createdAt: now + r * 100 + i, updatedAt: now,
+            bracket: true, bracketRound: r, bracketPos: i, bracketSize: size,
+          };
+          if (r === 1) {
+            const p1 = players[i * 2], p2 = players[i * 2 + 1];
+            const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
+            const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, plan.pct) : { rt1: 0, rt2: 0 };
+            next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2 });
+          } else {
+            const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
+            next[id] = mkMatch({
+              ...common, pending: true, raceTo: [0, 0], r1: 0, r2: 0,
+              names: [`${prevLabel}${CIRCLE[i * 2]}の勝者`, `${prevLabel}${CIRCLE[i * 2 + 1]}の勝者`],
+            });
+          }
+        }
       }
       await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `1回戦 ${size / 2}試合を登録しました` });
+      setMsg({ ok: true, text: `全${totalMatches}試合を登録しました` });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
@@ -1195,28 +1252,44 @@ function BracketTab({ roster }) {
     const winners = prev.map(winnerInfo);
     if (winners.some((w) => !w)) { setMsg({ ok: false, text: "勝者が確定していない試合があります" }); return; }
     const nextRound = fromRound + 1;
-    if (!window.confirm(`${nextRound}回戦、${winners.length / 2}試合を登録します。よろしいですか？`)) return;
+    const placeholders = bracketMatchesForRound(matches, nextRound).filter((m) => m.pending);
+    const label = nextRound === totalRounds ? "決勝" : totalRounds - nextRound === 1 ? "準決勝" : `${nextRound}回戦`;
+    if (!window.confirm(`${label}の${winners.length / 2}試合に、勝ち上がった選手を入れます。よろしいですか？`)) return;
     setRegistering(true);
     try {
       const now = Date.now();
       const next = {};
+      const plan = roundPlan[nextRound - 1] || { pct: lenPct, mins: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)) };
       const tables = assignTables(winners.length / 2);
       for (let i = 0; i < winners.length / 2; i++) {
         const p1 = winners[i * 2], p2 = winners[i * 2 + 1];
-        const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, lenPct) : { rt1: 0, rt2: 0 };
-        const id = randomMatchId();
-        next[id] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-          names: [p1.name, p2.name], table: tables[i],
-          r1: p1.r, r2: p2.r, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-          createdAt: now + i, updatedAt: now,
-          bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
-        };
+        const ph = placeholders.find((m) => m.bracketPos === i);
+        const pct = ph ? (ph.lenPct || plan.pct) : plan.pct;
+        const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, pct) : { rt1: 0, rt2: 0 };
+        if (ph) {
+          // まとめて登録した仮の枠を埋める。卓・予定時刻・試合の長さはそのまま活かす
+          next[ph.id + "/names"] = [p1.name, p2.name];
+          next[ph.id + "/raceTo"] = [race.rt1, race.rt2];
+          next[ph.id + "/r1"] = p1.r;
+          next[ph.id + "/r2"] = p2.r;
+          next[ph.id + "/pending"] = null;
+          next[ph.id + "/updatedAt"] = now;
+          next[ph.id + "/version"] = (ph.version || 1) + 1;
+        } else {
+          const id = randomMatchId();
+          next[id] = {
+            version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+            balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+            lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
+            names: [p1.name, p2.name], table: tables[i],
+            r1: p1.r, r2: p2.r, lenPct: pct, matchMinutes: plan.mins,
+            createdAt: now + i, updatedAt: now,
+            bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
+          };
+        }
       }
       await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `${nextRound}回戦 ${winners.length / 2}試合を登録しました` });
+      setMsg({ ok: true, text: `${label}の対戦を確定しました` });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
@@ -1251,16 +1324,39 @@ function BracketTab({ roster }) {
           ))}
 
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 700 }}>ボールハンデ</span>
-              <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>1回戦の開始予定</div>
+            <TimeInput h={startH} m={startM} onH={setStartH} onM={setStartM} />
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+              以降の回戦は、前の回戦が終わってから入替{changeover}分を空けて始まる想定で計算します
             </div>
-            <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
           </div>
 
-          <button onClick={registerRound1} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
-            {registering ? "登録中…" : `1回戦（${size / 2}試合）を登録する`}
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 2 }}>回戦ごとの長さ</div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 10 }}>予選（{basePct}%）を基準に、勝ち上がるほど長くしています</div>
+            {roundPlan.map((pl, i) => (
+              <div key={pl.round} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 800 }}>{roundLabel(pl.round)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ color: C.sub, marginRight: 8 }}>{fmtClock(pl.startAt)}〜</span>
+                    🎱{pl.pct}%（{pl.mins}分）
+                  </span>
+                </div>
+                <input type="range" min={40} max={140} step={5} value={pl.pct}
+                  onChange={(e) => setPcts((arr) => { const nx = [...arr]; nx[i] = +e.target.value; return nx; })}
+                  style={{ width: "100%", accentColor: C.blue }} />
+              </div>
+            ))}
+          </div>
+
+          <button onClick={registerAll} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
+            {registering ? "登録中…" : `全${size - 1}試合をまとめて登録する`}
           </button>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
+            2回戦以降は「◯回戦①の勝者」の枠で押さえておき、前の回戦が終わった時点で名前と目標点が入ります。
+            相手が決まるまでは卓の待機列やタイムラインには出ません。
+          </div>
         </>
       )}
 
@@ -1272,22 +1368,44 @@ function BracketTab({ roster }) {
             const ms = bracketMatchesForRound(matches, r);
             if (ms.length === 0) return null;
             const allDone = ms.every((m) => isMatchFinished(m));
+            const readyToFill = ms.every((m) => m.pending) && bracketMatchesForRound(matches, r - 1).length > 0
+              && bracketMatchesForRound(matches, r - 1).every((m) => isMatchFinished(m));
             const isLastShown = r === Math.max(...bracketMatches.map((m) => m.bracketRound));
+            const head = ms[0] || {};
             return (
               <div key={r} style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: C.blue }}>{roundLabel(r)}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
+                    {head.scheduledAt ? `${fmtClock(head.scheduledAt)}〜　` : ""}🎱{head.lenPct || "-"}%（{head.matchMinutes || "-"}分）
+                  </span>
+                </div>
                 {ms.map((m) => {
                   const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
                   return (
-                    <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6 }}>
+                    <div key={m.id} style={{
+                      display: "flex", gap: 8, alignItems: "center", background: m.pending ? C.zone : "#fff",
+                      border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6,
+                    }}>
+                      <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: m.pending ? C.sub : C.ink, borderRadius: 5, padding: "1px 6px", flexShrink: 0 }}>T{m.table}</span>
                       {[0, 1].map((i) => (
-                        <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600, color: w === i ? C.win : w == null ? C.ink : C.sub }}>
+                        <div key={i} style={{
+                          flex: 1, textAlign: "center", fontSize: 14,
+                          fontWeight: w === i ? 900 : 600,
+                          color: m.pending ? C.sub : w === i ? C.win : w == null ? C.ink : C.sub,
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}>
                           {m.names[i]}{isMatchFinished(m) && ` (${(m.tot || [0, 0])[i]})`}
                         </div>
                       ))}
                     </div>
                   );
                 })}
+                {readyToFill && (
+                  <button onClick={() => advanceRound(r - 1)} disabled={registering} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
+                    {registering ? "反映中…" : `${roundLabel(r)}に勝ち上がった選手を入れる`}
+                  </button>
+                )}
                 {allDone && isLastShown && r < totalRounds && (
                   <button onClick={() => advanceRound(r)} disabled={registering} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
                     {registering ? "登録中…" : `${roundLabel(r + 1)}を組む`}
