@@ -197,7 +197,6 @@ function getAllForTable(matches, tableNum) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    if (m.pending) continue; // 勝者待ちの枠は対戦表にも出さない（決勝トーナメント表でだけ見せる）
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -211,7 +210,6 @@ function getQueueForTable(matches, tableNum) {
     if (!m || Number(m.table) !== tableNum) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
     if (isMatchFinished(m)) continue;
-    if (m.pending) continue; // 決勝トーナメントの「勝者待ち」枠。相手が決まるまで列に入れない
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -223,6 +221,8 @@ function annotateColumn(list) {
   return list.map((m) => {
     if (isMatchFinished(m)) return { m, st: "done" };
     if (m.startedAt) return { m, st: "live" };
+    // 決勝トーナメントの「◯回戦①の勝者」枠。予定として卓には並べるが、まだ始められない
+    if (m.pending) return { m, st: "pending" };
     if (!calledYet) { calledYet = true; return { m, st: "call" }; }
     return { m, st: "queued" };
   });
@@ -395,6 +395,8 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
       ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
       : st === "call"
       ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
+      : st === "pending"
+      ? { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "勝者待ち" }
       : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
   const won = (i) => !m.bothLose && w === i;
@@ -490,6 +492,7 @@ function LiveTablePanel({ tableNum, m }) {
   const panelBox = {
     background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
     padding: "10px 12px", marginBottom: 14, boxSizing: "border-box",
+    opacity: m && m.pending ? 0.75 : 1, // 勝者待ちの予定はまだ始められないので薄く
   };
   const tBadge = {
     display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
@@ -535,6 +538,7 @@ function LiveTablePanel({ tableNum, m }) {
 
   // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
   const clockJsx = (() => {
+    if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
     if (m.phase === "banking") {
       return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
     }
@@ -547,7 +551,7 @@ function LiveTablePanel({ tableNum, m }) {
     return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
   })();
 
-  const stateTxt = m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+  const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
 
   const card = (i) => {
     const pc = i === 0 ? C.blue : C.red;
@@ -563,8 +567,8 @@ function LiveTablePanel({ tableNum, m }) {
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
         <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
-          {m.phase === "banking" ? "–" : disp[i]}
-          <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>
+          {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
+          {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
@@ -589,8 +593,10 @@ function LiveTablePanel({ tableNum, m }) {
   const histJsx = (
     <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
-      {m.phase === "banking" ? (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>まだ<br />ありません</div>
+      {m.pending || m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>
+          {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
+        </div>
       ) : (
         <>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
@@ -651,24 +657,45 @@ function LiveTablePanel({ tableNum, m }) {
 }
 
 /* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
-function TablesTab() {
+function TablesTab({ myMatchId, onPick }) {
   const [queues, setQueues] = useState([[], [], []]);
+  const [raw, setRaw] = useState({});
+  const [view, setView] = useState("tables"); // tables | bracket
   const [err, setErr] = useState(null);
 
   useEffect(() => subscribeAllMatches(
-    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (matches) => { setRaw(matches || {}); setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
     (e) => setErr(e)), []);
 
+  const hasBracket = getBracketMatches(raw).length > 0;
   const nextMatches = queues
     .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
     .filter(Boolean);
 
   return (
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
-      {[0, 1, 2].map((i) => (
-        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
-      ))}
-      <NextList matches={nextMatches} />
+      {hasBracket && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {[["tables", "いまの卓"], ["bracket", "🏆 決勝トーナメント"]].map(([k, lb]) => (
+            <button key={k} onClick={() => setView(k)} style={{
+              flex: 1, background: view === k ? C.blue : "#fff", color: view === k ? "#fff" : C.ink,
+              border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 0",
+              fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            }}>{lb}</button>
+          ))}
+        </div>
+      )}
+
+      {view === "bracket" ? (
+        <BracketView matches={raw} myMatchId={myMatchId} onPick={onPick} />
+      ) : (
+        <>
+          {[0, 1, 2].map((i) => (
+            <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
+          ))}
+          <NextList matches={nextMatches} />
+        </>
+      )}
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
@@ -1155,7 +1182,7 @@ function Shell() {
           <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
-          <TablesTab />
+          <TablesTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" }}>
           <ScheduleTab onPick={handlePick} />
