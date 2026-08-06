@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.156";
-const BUILD_TIME = "2026-08-07 10:30";
+const APP_VERSION = "1.157";
+const BUILD_TIME = "2026-08-07 11:45";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3079,19 +3079,24 @@ function HomeTab() {
   };
   const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
   const firstVisibleRow = foldedPrelim ? bracketStartRow : 0;
-  // 予選が終わる見込み（すべて終わっていれば実際に終わった時刻）
-  const prelimEndAt = (() => {
+  // 予選／決勝トーナメントが終わる見込み（終わっていれば実際に終わった時刻）
+  const endAtOf = (wantBracket) => {
     const ends = [];
     [0, 1, 2].forEach((ti) => {
       (cols[ti] || []).forEach((e) => {
-        if (e.m.bracket) return;
+        if (!!e.m.bracket !== wantBracket) return;
         const info = eta[e.m.id];
         const t = isMatchFinished(e.m) ? (e.m.finishedAt || e.m.updatedAt) : (info && info.end);
         if (t) ends.push(t);
       });
     });
     return ends.length ? Math.max(...ends) : null;
-  })();
+  };
+  // 予選が終わるまでは「予選終了」、終わったら「決勝終了」の見込みに切り替える
+  const bracketEndAt = endAtOf(true);
+  const headEnd = prelimAllDone && bracketEndAt != null
+    ? { label: "決勝終了", at: bracketEndAt }
+    : { label: "予選終了", at: endAtOf(false) };
 
   const tinfo = [0, 1, 2].map((ti) => {
     const q = queues[ti];
@@ -3123,10 +3128,10 @@ function HomeTab() {
           ))}
           {/* 左の空きスペースに、予選が終わる見込みを出す */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.25 }}>
-            {prelimEndAt != null && (
+            {headEnd.at != null && (
               <>
-                <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, whiteSpace: "nowrap" }}>予選終了</span>
-                <span style={{ fontSize: 12.5, fontWeight: 900, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtClock(prelimEndAt)}</span>
+                <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, whiteSpace: "nowrap" }}>{headEnd.label}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 900, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtClock(headEnd.at)}</span>
               </>
             )}
           </div>
