@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.153";
-const BUILD_TIME = "2026-08-06 16:10";
+const APP_VERSION = "1.154";
+const BUILD_TIME = "2026-08-06 17:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -659,7 +659,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const style =
     st === "done"
       ? (m.bothLose
-          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "両者負け" }
+          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "時間切れ" }
           : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "試合終了" })
       : st === "live"
       ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
@@ -750,7 +750,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                 <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>結果を選ぶと、その時点で試合終了になります</div>
                 <button onClick={() => finishAs(0, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>🏆 {names[0]} の勝ちで終了</button>
                 <button onClick={() => finishAs(1, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>🏆 {names[1]} の勝ちで終了</button>
-                <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 両者負けで終了（時間切れ）</button>
+                <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 時間切れで終了（両者とも届かず）</button>
                 <button onClick={() => setMenu("menu")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
@@ -983,7 +983,7 @@ function PcMatchCard({ m, st }) {
       </div>
 
       {st === "done" && m.bothLose && (
-        <div style={{ position: "absolute", bottom: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.hill, whiteSpace: "nowrap" }}>両者負け</div>
+        <div style={{ position: "absolute", bottom: 2, right: 8, fontSize: 10.5, fontWeight: 800, color: C.hill, whiteSpace: "nowrap" }}>時間切れ</div>
       )}
     </div>
   );
@@ -2679,7 +2679,7 @@ function LiveTablePanel({ tableNum, m }) {
         {card(1)}
       </div>
       {bothLose ? (
-        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ・両者負け</div>
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ</div>
       ) : winner != null ? (
         <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
       ) : null}
