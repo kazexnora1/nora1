@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.151";
-const BUILD_TIME = "2026-08-06 12:15";
+const APP_VERSION = "1.152";
+const BUILD_TIME = "2026-08-06 13:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2524,7 +2524,8 @@ function LiveTablePanel({ tableNum, m }) {
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
-  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
+  const disp = tot;
   const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
