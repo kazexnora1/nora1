@@ -2,17 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover" />
-<!-- ホーム画面から起動するとSafariのバーが消えて全画面になる（プロジェクター投影用） -->
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="スコア表示" />
-<title>JCL9Match B3 観戦ディスプレイ</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>JCL9Match 観戦ページ</title>
 <style>
-  html, body, #root { margin: 0; padding: 0; height: 100%; background: #FFFFFF; }
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
+  /* 進行中ラックに点数が入った時の点滅 */
+  @keyframes rackFlash {
+    0%,49%   { background:#FFD23F; box-shadow:0 0 0 2px #E8A400; }
+    50%,100% { background:#FFF6CC; box-shadow:none; }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -37,20 +36,53 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-const FONT = "'M PLUS Rounded 1c', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif";
-/* ===== 明るい部屋でのプロジェクター投影に合わせた配色 =====
-   ・背景は白のまま（明るい室内では黒背景が灰色に浮いて逆に読めなくなるため）
-   ・薄いグレーの面と細い線は投影で消えるので使わない。区切りは太い黒線で表現する
-   ・文字は白抜き・フチ取り・影を使わず、黒か濃色のベタ塗りで出す */
+/* ========= ハンデ計算（App Aと共通） ========= */
+function roundHalfToEven(v) {
+  const w = Math.floor(v);
+  const d = v - w;
+  if (Math.abs(d - 0.5) > 1e-9) return d > 0.5 ? w + 1 : w;
+  return w % 2 === 1 ? w + 1 : w;
+}
+function normalizeRace(rt1, rt2, lowClamp) {
+  const highClamp = 99.0;
+  const p1IsHigh = rt1 >= rt2;
+  const highRace = Math.max(rt1, rt2), lowRace = Math.min(rt1, rt2);
+  let highC = highRace > highClamp ? highClamp : highRace;
+  let lowC = highRace > highClamp ? lowRace - lowRace * ((highRace - highClamp) / highRace) : lowRace;
+  highC = Math.min(lowRace < lowClamp ? highC + highC * ((lowClamp - lowRace) / lowC) : highC, highClamp);
+  lowC = Math.max(lowC < lowClamp ? lowClamp : lowC, lowClamp);
+  return { rt1: p1IsHigh ? highC : lowC, rt2: p1IsHigh ? lowC : highC };
+}
+function computeRace(R1, R2, lenPct) {
+  const dampFactor = lenPct / 100;
+  const avg = (R1 + R2) / 2;
+  const gp = 0.018 * avg - 1.4;
+  const delta = R1 - R2;
+  const p1 = 1 - 1 / (1 + Math.pow(2, delta / 100));
+  const p2 = 1 - p1;
+  const p1AvgPts = p1 * 14.0 + p2 * (7.4 - 0.0062 * R2);
+  const p2AvgPts = p2 * 14.0 + p1 * (7.4 - 0.0062 * R1);
+  const rt1raw = p1AvgPts * gp * dampFactor;
+  const rt2raw = p2AvgPts * gp * dampFactor;
+  const lowClamp = 0.16 * lenPct + 12;
+  const norm = normalizeRace(rt1raw, rt2raw, lowClamp);
+  return { rt1: roundHalfToEven(norm.rt1), rt2: roundHalfToEven(norm.rt2), p1, p2 };
+}
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 const C = {
-  bg: "#FFFFFF", ink: "#0E1216", sub: "#3C454E", line: "#0E1216", lineSoft: "#B8BFC6",
-  blue: "#12508F", red: "#A3211A", win: "#1E6B36", hill: "#8A4B0B",
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const PC = [C.blue, C.red];
+const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
 
-/* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用） =========
-   ↓ B1・B2 とまったく同じ値を貼ってください */
+/* ========= 共有バックエンド：Firebase Realtime Database =========
+   ↓ B1・B3 とまったく同じ値を貼ってください */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB587L7xl4fcl63QPbpgCRmoxLh4xMwEnQ",
   authDomain: "nora1kaze-247f3.firebaseapp.com",
@@ -63,17 +95,8 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
-/* 対戦データの変更を購読する。ポーリングしないので、スコアが動いた瞬間に画面へ反映される */
-function subscribeMatches(onValue, onError) {
-  const ref = db.ref("matches");
-  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
-    (e) => onError && onError(e && e.message ? e.message : String(e)));
-  return () => ref.off("value", handler);
-}
-
-const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない試合は無視（前日の残骸対策）
-
-/* Firebaseは空の配列を保存しない（キーごと消える）ので、読み込み側で補う */
+/* Firebaseは空の配列・空のオブジェクトを保存しない（キーごと消える）。
+   読み込んだ直後にここで補っておかないと、hist などが undefined のまま使われて落ちる */
 function normalizeMatch(m) {
   if (!m) return m;
   return {
@@ -81,20 +104,104 @@ function normalizeMatch(m) {
     names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
     tot: Array.isArray(m.tot) ? m.tot : [0, 0],
     raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
-    balls: Array.isArray(m.balls) ? m.balls : [],
+    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
     hist: Array.isArray(m.hist) ? m.hist : [],
     rack: m.rack || 1,
+    version: m.version || 1,
+    phase: m.phase || "banking",
+    brk: m.brk === 0 || m.brk === 1 ? m.brk : null,
+    lastResult: m.lastResult || null,
   };
 }
+
+/* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
+async function loadMatchRemote(matchId) {
+  const snap = await db.ref("matches/" + matchId).once("value");
+  return normalizeMatch(snap.val());
+}
+/* 観戦ページは表示専用。書き込みは一切おこなわない */
+async function saveMatchRemote() { /* no-op */ }
+/* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
+function subscribeMatch(matchId, onValue, onError) {
+  const ref = db.ref("matches/" + matchId);
+  const handler = ref.on("value", (snap) => onValue(normalizeMatch(snap.val())),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+
+/* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
+const DEFAULT_MATCH_MINUTES = 30;
+
+/* 動作確認用：URLに &sec=15 を付けると、その試合の持ち時間を15秒にする。
+   時間切れ・最終ラック・両者負けの挙動を数十秒で通しで確認するためのもの。
+   本番ではURLに付けなければ従来どおり（分）で動く */
+const TEST_SEC = (() => {
+  const v = parseInt(new URLSearchParams(window.location.search).get("sec"), 10);
+  return v > 0 ? v : 0;
+})();
+/* この試合の持ち時間（ミリ秒） */
+function matchDurationMs(s) {
+  if (TEST_SEC) return TEST_SEC * 1000;
+  return ((s && s.matchMinutes) || DEFAULT_MATCH_MINUTES) * 60000;
+}
+
+const initialMatchState = (rt1, rt2, names, table) => ({
+  version: 1,
+  phase: "banking", // banking | play | done | finished
+  brk: null, // 0 | 1 | null
+  tot: [0, 0],
+  rack: 1,
+  balls: mkBalls(),
+  lastResult: null,
+  hist: [],
+  raceTo: [rt1, rt2],
+  names,
+  table,
+  startedAt: null, // スコアラーがバンキング勝者を選び、試合が実際に始まった時刻
+  deadline: null, // タイマー開始時に確定させる「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算する
+  finishedAt: null, // 決着した時刻
+  elapsedMs: null, // 所要時間（ミリ秒）
+  winner: null,
+});
+
+/* ========= 「対戦表」「テーブルの様子」タブ用の共通ヘルパー（全卓の対戦を購読） ========= */
+function subscribeAllMatches(onValue, onError) {
+  const ref = db.ref("matches");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+const STALE_MS = 1000 * 60 * 60 * 6; // 6時間以上更新のない対戦は前日の残骸とみなして無視
 function isMatchFinished(m) {
-  if (m.bothLose) return true;
-  // スコアラー側で決着が確定した試合。9番以外で目標点に到達して勝った場合、
-  // 台上の球がまだ tot に入っていないことがあるので、tot だけでは終了と判定できない
-  if (m.winner === 0 || m.winner === 1) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.bothLose) return true; // 時間切れでどちらも目標に届かなかった
+  // スコアラー側で決着が確定した試合（9番以外で目標点に到達した場合など）
+  if (m.winner === 0 || m.winner === 1) return true;
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
-// 卓ごとの待機列：未終了の対戦を作成順に並べる。[0]が現在対戦中、[1]が次戦
+function matchWinnerIndex(m) {
+  if (m.bothLose) return null;
+  if (m.winner === 0 || m.winner === 1) return m.winner;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  const r0 = rt[0] > 0 && tot[0] >= rt[0], r1 = rt[1] > 0 && tot[1] >= rt[1];
+  if (r0 && r1) { const last = (m.hist || []).slice(-1)[0]; return last ? last.w : 0; }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
+/* 卓ごとの全対戦を作成順に並べる（「対戦表」タブ用） */
+function getAllForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+/* 卓ごとの待機列：未終了の対戦だけを作成順に並べる。[0]が現在対戦中、[1]が次戦（「テーブルの様子」タブ用） */
 function getQueueForTable(matches, tableNum) {
   const list = [];
   for (const id in matches) {
@@ -107,245 +214,211 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
-
-/* 投影中に画面が消えるとプロジェクターも真っ暗になるので、スリープを止める。
-   iOS 16.4以降のSafariで有効。効かない端末では「設定 → 画面表示と明るさ → 自動ロック → なし」で運用する */
-function useKeepAwake() {
-  useEffect(() => {
-    let lock = null;
-    const request = async () => {
-      try {
-        if (navigator.wakeLock && document.visibilityState === "visible") {
-          lock = await navigator.wakeLock.request("screen");
-        }
-      } catch {}
-    };
-    request();
-    // 一度バックグラウンドに行くと解除されるので、戻ってきたら取り直す
-    const onVisible = () => { if (document.visibilityState === "visible") request(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      if (lock) { try { lock.release(); } catch {} }
-    };
-  }, []);
+/* 試合終了／試合中／呼び出し中（次に始める1試合だけ）／待機中 */
+function annotateColumn(list) {
+  let calledYet = false;
+  return list.map((m) => {
+    if (isMatchFinished(m)) return { m, st: "done" };
+    if (m.startedAt) return { m, st: "live" };
+    // 決勝トーナメントの「◯回戦①の勝者」枠。予定として卓には並べるが、まだ始められない
+    if (m.pending) return { m, st: "pending" };
+    if (!calledYet) { calledYet = true; return { m, st: "call" }; }
+    return { m, st: "queued" };
+  });
 }
 
-// 卓ごとの「直近に終わった試合」。次の試合が始まるまで結果を出しておくために使う
-function getLatestFinishedForTable(matches, tableNum) {
-  let best = null;
-  for (const id in matches) {
-    const m = matches[id];
-    if (!m || Number(m.table) !== tableNum) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    if (!isMatchFinished(m)) continue;
-    const t = m.finishedAt || m.updatedAt || 0;
-    if (!best || t > (best.finishedAt || best.updatedAt || 0)) best = { ...normalizeMatch(m), id };
-  }
-  return best;
-}
-// 卓に何を映すかを決める。
-// ・試合が始まっていれば（スコアラーがバンキングの勝者を選んでいれば）その試合
-// ・まだ始まっていないなら、直前に終わった試合の結果をそのまま出しておく
-// ・つまり次の試合のバンキングが決まった瞬間に、結果表示から切り替わる
-function getDisplayForTable(matches, tableNum) {
-  const q = getQueueForTable(matches, tableNum);
-  const cur = q[0] || null;
-  if (cur && cur.startedAt) return { m: cur, next: q[1] || null, holding: false };
-  const fin = getLatestFinishedForTable(matches, tableNum);
-  if (fin) return { m: fin, next: cur, holding: true };
-  return { m: cur, next: q[1] || null, holding: false };
-}
 
-function App() {
-  const [views, setViews] = useState([null, null, null]);
+/* ========= 決勝トーナメント（本部B1で組んだブラケットを、選手側でも見られるようにする） ========= */
+function getBracketMatches(matches) {
+  return Object.values(matches || {}).filter((m) => m && m.bracket).map((m) => ({ ...normalizeMatch(m) }));
+}
+function bracketMatchesForRound(matches, round) {
+  return Object.entries(matches || {})
+    .filter(([, m]) => m && m.bracket && m.bracketRound === round)
+    .map(([id, m]) => ({ ...normalizeMatch(m), id }))
+    .sort((a, b) => (a.bracketPos || 0) - (b.bracketPos || 0));
+}
+function bracketTotalRounds(size) { return Math.round(Math.log2(size || 8)); }
+
+/* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
+function TimelineTab({ myMatchId, onPick }) {
+  const [cols, setCols] = useState([[], [], []]);
+  const [raw, setRaw] = useState({});
+  const [eta, setEta] = useState({}); // 各試合の開始見込み時刻
+  const [foldPrelim, setFoldPrelim] = useState(null); // null=まだ自動判定していない
   const [err, setErr] = useState(null);
-  useKeepAwake();
 
-  // 縦画面なら3段（テーブルを縦に積む）、横画面なら従来の2x2レイアウト。
-  // プロジェクターへは横向きで繋ぐと画面いっぱいに映る（縦だと左右に黒帯が出て小さくなる）
-  const [portrait, setPortrait] = useState(() => window.innerHeight >= window.innerWidth);
-  useEffect(() => {
-    const onResize = () => setPortrait(window.innerHeight >= window.innerWidth);
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
-  }, []);
-
-  // ===== 自由なピンチズーム・パン =====
-  // scale：拡大率。tx, ty：ステージのずらし量(px)。指の下の点がそのまま拡大の中心になるよう、
-  // タッチ位置から逆算してtx/tyを決める。txRef等はイベントハンドラから最新値を読むための参照
-  const [scale, setScaleState] = useState(1);
-  const [tx, setTxState] = useState(0);
-  const [ty, setTyState] = useState(0);
-  const scaleRef = useRef(1), txRef = useRef(0), tyRef = useRef(0);
-  const setScale = (v) => { scaleRef.current = v; setScaleState(v); };
-  const setTx = (v) => { txRef.current = v; setTxState(v); };
-  const setTy = (v) => { tyRef.current = v; setTyState(v); };
-
-  const viewportRef = useRef(null);
-  const gestureRef = useRef(null); // 現在進行中のジェスチャー（1本指パン／2本指ピンチ）の基準値
-
-  // 画面に収まりきらない時に引けるよう、1倍より小さくも縮められるようにしている
-  const MIN_SCALE = 0.35, MAX_SCALE = 8;
-
-  const beginGesture = (touches) => {
-    const rect = viewportRef.current.getBoundingClientRect();
-    if (touches.length === 1) {
-      gestureRef.current = {
-        mode: "pan",
-        startX: touches[0].clientX, startY: touches[0].clientY,
-        startTx: txRef.current, startTy: tyRef.current,
-      };
-    } else if (touches.length >= 2) {
-      const [a, b] = touches;
-      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      const midX = (a.clientX + b.clientX) / 2 - rect.left;
-      const midY = (a.clientY + b.clientY) / 2 - rect.top;
-      // anchor：ピンチの中心が「拡大されていないステージ」上のどこに当たるかを固定しておく
-      gestureRef.current = {
-        mode: "pinch", rect,
-        startDist: dist, startScale: scaleRef.current,
-        anchorX: (midX - txRef.current) / scaleRef.current,
-        anchorY: (midY - tyRef.current) / scaleRef.current,
-      };
-    }
-  };
-
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-
-    const onStart = (e) => { beginGesture(e.touches); };
-
-    const onMove = (e) => {
-      const g = gestureRef.current;
-      if (!g) return;
-      e.preventDefault();
-      if (e.touches.length === 1) {
-        if (g.mode !== "pan") { beginGesture(e.touches); return; }
-        setTx(g.startTx + (e.touches[0].clientX - g.startX));
-        setTy(g.startTy + (e.touches[0].clientY - g.startY));
-      } else if (e.touches.length >= 2) {
-        if (g.mode !== "pinch") { beginGesture(e.touches); return; }
-        const [a, b] = e.touches;
-        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, g.startScale * (dist / g.startDist)));
-        const midX = (a.clientX + b.clientX) / 2 - g.rect.left;
-        const midY = (a.clientY + b.clientY) / 2 - g.rect.top;
-        setScale(newScale);
-        setTx(midX - g.anchorX * newScale);
-        setTy(midY - g.anchorY * newScale);
-      }
-    };
-
-    // 指の本数が変わった（片方だけ離した等）時は、基準値を今の状態から取り直して座標が飛ばないようにする
-    const onEnd = (e) => {
-      if (e.touches.length === 0) gestureRef.current = null;
-      else beginGesture(e.touches);
-    };
-
-    el.addEventListener("touchstart", onStart, { passive: false });
-    el.addEventListener("touchmove", onMove, { passive: false });
-    el.addEventListener("touchend", onEnd);
-    el.addEventListener("touchcancel", onEnd);
-    return () => {
-      el.removeEventListener("touchstart", onStart);
-      el.removeEventListener("touchmove", onMove);
-      el.removeEventListener("touchend", onEnd);
-      el.removeEventListener("touchcancel", onEnd);
-    };
-  }, []);
-
-  // ＋／－ボタン：画面中央を中心に拡大縮小する
-  const stepZoom = (delta) => {
-    const rect = viewportRef.current.getBoundingClientRect();
-    const cx = rect.width / 2, cy = rect.height / 2;
-    const anchorX = (cx - txRef.current) / scaleRef.current;
-    const anchorY = (cy - tyRef.current) / scaleRef.current;
-    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, +(scaleRef.current + delta).toFixed(2)));
-    setScale(newScale);
-    setTx(cx - anchorX * newScale);
-    setTy(cy - anchorY * newScale);
-  };
-  const resetZoom = () => { setScale(1); setTx(0); setTy(0); };
-
-  useEffect(() => subscribeMatches(
-    (matches) => { setViews([1, 2, 3].map((t) => getDisplayForTable(matches, t))); setErr(null); },
+  useEffect(() => subscribeAllMatches(
+    (matches) => {
+      setRaw(matches || {});
+      setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t))));
+      setEta(buildEta(matches || {}, 5));
+      setErr(null);
+    },
     (e) => setErr(e)), []);
 
-  const nextMatches = views
-    .map((v, i) => (v && v.next ? { ...v.next, tableNum: i + 1 } : null))
-    .filter(Boolean);
+  const slots = Math.max(1, ...cols.map((c) => c.length));
+  const total = cols.reduce((a, c) => a + c.length, 0);
+  const doneCount = cols.reduce((a, c) => a + c.filter((e) => e.st === "done").length, 0);
+
+  // 決勝トーナメントが始まるコマ。ここから下がトーナメント、上が予選
+  let bracketStart = null;
+  cols.forEach((col) => col.forEach((e, si) => {
+    if (e && e.m.bracket && (bracketStart === null || si < bracketStart)) bracketStart = si;
+  }));
+  const prelimEntries = cols.flatMap((col) => col.filter((e, si) => bracketStart === null || si < bracketStart));
+  const prelimDone = prelimEntries.length > 0 && prelimEntries.every((e) => e.st === "done");
+  // 予選が全部終わったら、予選のカードは自動でたたむ（自分で開いたあとは勝手に閉じない）
+  useEffect(() => {
+    if (foldPrelim === null && prelimDone && bracketStart !== null) setFoldPrelim(true);
+  }, [prelimDone, bracketStart, foldPrelim]);
+  const folded = foldPrelim === true && bracketStart !== null;
 
   return (
-    <div style={{ height: "100vh", background: C.bg, fontFamily: FONT, padding: "10px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: 6, right: 8, display: "flex", gap: 6, zIndex: 10 }}>
-        <button onClick={() => stepZoom(-0.25)} style={zoomBtn}>−</button>
-        <button onClick={resetZoom} style={zoomBtn} title="等倍に戻す">⟲</button>
-        <button onClick={() => stepZoom(0.25)} style={zoomBtn}>＋</button>
-      </div>
-
-      {/* ここから下が、好きな場所を好きなだけピンチで拡大・1本指でドラッグして動かせる範囲 */}
-      <div ref={viewportRef} style={{ position: "relative", width: "100%", height: "calc(100vh - 20px)", overflow: "hidden", touchAction: "none" }}>
-        <div style={{
-          position: "absolute", left: 0, top: 0, width: "100%", height: "100%",
-          transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "0 0",
-        }}>
-          {portrait ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={1} m={views[0] && views[0].m} next={views[0] && views[0].next} holding={!!(views[0] && views[0].holding)} portrait={portrait} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={2} m={views[1] && views[1].m} next={views[1] && views[1].next} holding={!!(views[1] && views[1].holding)} portrait={portrait} /></div>
-              <div style={{ flex: 1, minHeight: 0 }}><TablePanel tableNum={3} m={views[2] && views[2].m} next={views[2] && views[2].next} holding={!!(views[2] && views[2].holding)} portrait={portrait} /></div>
-            </div>
-          ) : (
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-              gridTemplateAreas: `"t1 t2" "next t3"`, gap: 10,
-              height: "100%", maxWidth: 1600, margin: "0 auto",
-            }}>
-              <div style={{ gridArea: "t1" }}><TablePanel tableNum={1} m={views[0] && views[0].m} next={views[0] && views[0].next} holding={!!(views[0] && views[0].holding)} portrait={portrait} /></div>
-              <div style={{ gridArea: "t2" }}><TablePanel tableNum={2} m={views[1] && views[1].m} next={views[1] && views[1].next} holding={!!(views[1] && views[1].holding)} portrait={portrait} /></div>
-              <div style={{ gridArea: "t3" }}><TablePanel tableNum={3} m={views[2] && views[2].m} next={views[2] && views[2].next} holding={!!(views[2] && views[2].holding)} portrait={portrait} /></div>
-              <div style={{ gridArea: "next" }}><NextList matches={nextMatches} /></div>
-            </div>
-          )}
+    <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
+          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
         </div>
       </div>
-      {err && <div style={{ position: "absolute", left: 0, right: 0, bottom: 4, color: C.red, textAlign: "center", fontSize: 14, fontWeight: 800, zIndex: 10 }}>同期エラー: {err}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "46px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+        <div />
+        {[1, 2, 3].map((t) => (
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
+        ))}
+
+        {/* 予選が終わったら、予選のコマはたたんで1行にまとめる */}
+        {folded && (
+          <div onClick={() => setFoldPrelim(false)} style={{
+            gridColumn: "1 / -1", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+            padding: "11px 0", textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer",
+          }}>▼ 予選 {prelimEntries.length}試合（終了）を見る</div>
+        )}
+
+        {Array.from({ length: slots }, (_, s) => {
+          const isBracketHead = bracketStart !== null && s === bracketStart;
+          if (folded && bracketStart !== null && s < bracketStart) return null;
+          return (
+            <React.Fragment key={s}>
+              {isBracketHead && (
+                <>
+                  <div style={{
+                    gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8,
+                    fontSize: 14.5, fontWeight: 900, color: C.hill, marginTop: 4,
+                  }}>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                    <span style={{ whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</span>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                  </div>
+                  {!folded && (
+                    <div onClick={() => setFoldPrelim(true)} style={{
+                      gridColumn: "1 / -1", textAlign: "center", fontSize: 12, fontWeight: 800,
+                      color: C.sub, cursor: "pointer", marginTop: -2,
+                    }}>▲ 予選をたたむ</div>
+                  )}
+                </>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{s + 1}</span>
+                {(() => {
+                  // その行の試合のうち、いちばん早く始まる（始まった）時刻
+                  const ts = [0, 1, 2].map((ti) => {
+                    const e = cols[ti][s];
+                    if (!e) return null;
+                    const info = eta[e.m.id];
+                    return (e.m.startedAt || (info && info.start)) || null;
+                  }).filter(Boolean);
+                  if (ts.length === 0) return null;
+                  const started = [0, 1, 2].some((ti) => cols[ti][s] && cols[ti][s].m.startedAt);
+                  return (
+                    <span style={{ fontSize: 12.5, fontWeight: 900, color: started ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {fmtClock(Math.min(...ts))}
+                    </span>
+                  );
+                })()}
+              </div>
+              {[0, 1, 2].map((ti) => {
+                const e = cols[ti][s];
+                return <div key={ti}>{e
+                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
+                  : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
+              })}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
 }
-const zoomBtn = {
-  width: 34, height: 28, background: "#fff", border: `2px solid ${C.line}`, borderRadius: 6,
-  color: C.ink, fontSize: 14, fontWeight: 900, cursor: "pointer", fontFamily: FONT,
-  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
-};
+function TimelineSlotCard({ m, st, mine, onPick }) {
+  const names = m.names || ["", ""];
+  const tot = m.tot || [0, 0];
+  const rt = m.raceTo || [0, 0];
+  const w = st === "done" ? matchWinnerIndex(m) : null;
 
-/* 見出しの黒ベタ帯。薄いグレーの面より投影で確実に残る */
-function TitleBadge({ children }) {
-  return (
-    <span style={{
-      display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
-      padding: "3px 12px", fontSize: "clamp(15px, 1.7vw, 26px)", fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
-    }}>{children}</span>
-  );
-}
+  const style =
+    st === "done"
+      ? (m.bothLose
+          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "両者負け" }
+          : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "試合終了" })
+      : st === "live"
+      ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
+      : st === "call"
+      ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
+      : st === "pending"
+      ? { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "勝者待ち" }
+      : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
-function NextList({ matches }) {
+  const won = (i) => !m.bothLose && w === i;
+
+  // 呼び出し中・試合中のカードだけ、押すとその試合のスコアラーになれる。
+  // 誤って別の卓に入ってしまわないよう、確認を1枚はさむ
+  const clickable = (st === "call" || st === "live") && !!onPick;
+  const handleClick = () => {
+    if (!clickable) return;
+    if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
+    onPick(m);
+  };
+
   return (
-    <div style={{ height: "100%", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", boxSizing: "border-box", overflow: "hidden" }}>
-      <div style={{ marginBottom: 8 }}><TitleBadge>次の試合</TitleBadge></div>
-      {matches.length === 0 && <div style={{ color: C.sub, fontSize: "clamp(16px, 1.8vw, 26px)", fontWeight: 800, textAlign: "center", marginTop: 18 }}>予定なし</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {matches.map((m, i) => (
-          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 10, border: `2px solid ${C.line}`, borderRadius: 10, padding: "6px 12px" }}>
-            <span style={{ fontSize: "clamp(14px, 1.5vw, 22px)", fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 8px", flexShrink: 0 }}>T{m.tableNum}</span>
-            <span style={{ fontSize: "clamp(17px, 2vw, 30px)", fontWeight: 800, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
+    <div onClick={clickable ? handleClick : undefined} style={{
+      cursor: clickable ? "pointer" : "default",
+      position: "relative", height: 108, boxSizing: "border-box", background: style.bg,
+      border: `${mine ? 3 : st === "live" || st === "call" ? 2 : 1}px solid ${mine ? C.win : style.border}`,
+      borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 7,
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
+    }}>
+      {clickable && !mine && (
+        <span style={{ position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>▶ 担当する</span>
+      )}
+      {/* 担当中はカードの上に出すと枠で切れてしまうので、「▶ 担当する」と同じ下端に置く */}
+      {mine && <span style={{ position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 900, color: C.win, whiteSpace: "nowrap" }}>● 担当中</span>}
+      <div style={{ textAlign: "center" }}>
+        <span style={{
+          display: "inline-block", background: style.badgeBg, color: style.badgeCol,
+          border: st === "call" ? `1.5px solid ${C.blue}` : "none",
+          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
+        }}>{style.badge}</span>
+      </div>
+      {/* 選手は縦に2段。横に並べると名前が見切れるため、1人ぶんの幅をカード全体に使う。
+          目標点は対戦表では出さない（必要なら予定表やスコア画面で確認できる） */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "0 5px" }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 16, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</span>
+            <span style={{
+              flexShrink: 0, fontVariantNumeric: "tabular-nums", lineHeight: 1.2,
+              fontSize: st === "done" ? 17 : 21, fontWeight: 900,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : C.ink,
+            }}>
+              {st === "done" ? (m.bothLose ? "－" : won(i) ? "勝" : "負") : st === "live" ? tot[i] : ""}
             </span>
           </div>
         ))}
@@ -354,19 +427,292 @@ function NextList({ matches }) {
   );
 }
 
+
+/* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
+function roundLabelOf(m) {
+  if (!m || !m.bracket) return "予選";
+  const total = Math.round(Math.log2(m.bracketSize || 8));
+  const r = m.bracketRound || 1;
+  if (r === total) return "決勝";
+  if (total - r === 1) return "準決勝";
+  if (total - r === 2) return "準々決勝";
+  return `${r}回戦`;
+}
+
+/* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
+   左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
+   進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
+   古いラックは直近5件を残して畳む（タップで開閉） */
+const SHOW_RACKS = 5;
+
+function LiveTablePanel({ tableNum, m }) {
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [openHist, setOpenHist] = useState(false);
+  const [flashing, setFlashing] = useState(false);
+  const lastLiveRef = useRef(null);
+  const flashTimerRef = useRef(null);
+
+  useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
+
+  const balls = (m && m.balls) || [];
+  const live = [
+    balls.filter((b) => b.loc === "p1" && !b.dead).length,
+    balls.filter((b) => b.loc === "p2" && !b.dead).length,
+  ];
+  const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
+
+  // 進行中ラックの点数が変わったら点滅。試合や卓が切り替わった時は点滅させない
+  useEffect(() => {
+    if (!m || m.phase !== "play") { lastLiveRef.current = liveKey; return; }
+    if (lastLiveRef.current !== null && lastLiveRef.current !== liveKey) {
+      setFlashing(true);
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashing(false), 5000);
+    }
+    lastLiveRef.current = liveKey;
+  }, [liveKey]);
+  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
+
+  const panelBox = {
+    background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
+    padding: "10px 12px", marginBottom: 14, boxSizing: "border-box",
+    opacity: m && m.pending ? 0.75 : 1, // 勝者待ちの予定はまだ始められないので薄く
+  };
+  const tBadge = {
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
+    padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+  };
+
+  if (!m) {
+    return (
+      <div style={panelBox}>
+        <div><span style={tBadge}>T{tableNum}</span></div>
+        <div style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.sub, padding: "18px 0" }}>待機中</div>
+      </div>
+    );
+  }
+
+  const names = m.names || ["", ""];
+  const raceTo = m.raceTo || [0, 0];
+  const tot = m.tot || [0, 0];
+  const hist = m.hist || [];
+  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
+  const disp = tot;
+  const bothLose = !!m.bothLose;
+  const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
+  const winner = bothLose ? null
+    : (m.winner === 0 || m.winner === 1) ? m.winner
+    : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
+    : reached[0] ? 0 : reached[1] ? 1 : null;
+  const finished = winner != null || bothLose;
+  // ヒルヒル＝両者とも残り14点以下。このラックの9番で決まるので、残り点数は出さない
+  const hillHill = !finished && m.phase === "play" &&
+    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+
+  const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
+  const badgeOf = (i) => {
+    if (m.phase === "banking") return null;
+    if (bothLose) return { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    const rem = raceTo[i] - disp[i];
+    if (rem <= 0) return { t: "達成" };
+    const toHill = rem - 14;
+    return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
+  };
+
+  // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
+  const clockJsx = (() => {
+    if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
+    if (m.phase === "banking") {
+      return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
+    }
+    if (!m.deadline) return null;
+    const left = m.deadline - (m.finishedAt || nowTs);
+    if (left <= 0) return <span style={{ fontSize: 14, fontWeight: 900, color: C.minus, whiteSpace: "nowrap" }}>⏰ 時間切れ</span>;
+    const sec = Math.floor(left / 1000);
+    const txt = `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+    const col = finished ? C.sub : left < 5 * 60 * 1000 ? C.hill : C.ink;
+    return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
+  })();
+
+  const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+
+  const card = (i) => {
+    const pc = i === 0 ? C.blue : C.red;
+    const b = badgeOf(i);
+    const isBrk = m.brk === i;
+    return (
+      <div style={{
+        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px",
+        textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+      }}>
+        <div style={{
+          fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
+          padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{names[i]}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+          {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
+          {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
+        </div>
+        <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
+          {b && (
+            <span style={{
+              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+            }}>{b.t}</span>
+          )}
+        </div>
+        <div style={{ minHeight: 17, marginTop: 4, fontSize: 11.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+      </div>
+    );
+  };
+
+  // 中央：ラック履歴
+  const hidden = Math.max(0, hist.length - SHOW_RACKS);
+  const shown = openHist ? hist : hist.slice(hidden);
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
+  const numStyle = (side, strong) => ({ width: 22, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+
+  const histJsx = (
+    <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
+      {m.pending || m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>
+          {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
+        </div>
+      ) : (
+        <>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
+            {hidden > 0 && (
+              <div onClick={() => setOpenHist((v) => !v)} style={{
+                fontSize: 10.5, fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
+                border: `1px solid ${C.line}`, borderRadius: 5, marginBottom: 2, cursor: "pointer", background: C.zone,
+              }}>{openHist ? "▲ 畳む" : `▼ 前の${hidden}ラック`}</div>
+            )}
+            {shown.map((h, k) => {
+              const add = h.add || [0, 0];
+              return (
+                <div key={k} style={rowStyle}>
+                  <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
+                  <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                  <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
+                </div>
+              );
+            })}
+            {m.phase === "play" && (
+              <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: 5, animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
+                <span style={numStyle("a")}>{live[0]}</span>
+                <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                <span style={numStyle("b")}>{live[1]}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 4, paddingTop: 4, borderTop: `1.5px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 17, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.blue }}>{disp[0]}</span>
+            <span style={{ color: C.sub, fontSize: 13 }}>-</span>
+            <span style={{ color: C.red }}>{disp[1]}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={panelBox}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span style={tBadge}>T{tableNum}</span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
+          {stateTxt}{clockJsx}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 5, alignItems: "stretch" }}>
+        {card(0)}
+        {histJsx}
+        {card(1)}
+      </div>
+      {bothLose ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ・両者負け</div>
+      ) : winner != null ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
+function TablesTab() {
+  const [queues, setQueues] = useState([[], [], []]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => subscribeAllMatches(
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (e) => setErr(e)), []);
+
+  const nextMatches = queues
+    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+    .filter(Boolean);
+
+  return (
+    <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      {[0, 1, 2].map((i) => (
+        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
+      ))}
+      <NextList matches={nextMatches} />
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+/* B3（観戦ディスプレイ）と同じ見た目にするための配色。
+   薄いグレーの面や細い線を使わず、太い黒枠とベタ塗りで区切る */
+const DC = {
+  ink: "#0E1216", sub: "#3C454E", line: "#0E1216", lineSoft: "#B8BFC6",
+  blue: "#12508F", red: "#A3211A", win: "#1E6B36", hill: "#8A4B0B",
+};
+function TitleBadge({ children }) {
+  return (
+    <span style={{
+      display: "inline-block", background: DC.ink, color: "#fff", borderRadius: 6,
+      padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+    }}>{children}</span>
+  );
+}
+
+function NextList({ matches }) {
+  return (
+    <div style={{ background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 14px", boxSizing: "border-box" }}>
+      <div style={{ marginBottom: 8 }}><TitleBadge>次の試合</TitleBadge></div>
+      {matches.length === 0 && <div style={{ color: DC.sub, fontSize: 15, fontWeight: 800, textAlign: "center", padding: "12px 0" }}>予定なし</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {matches.map((m, i) => (
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, border: `2px solid ${DC.line}`, borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: DC.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>T{m.tableNum}</span>
+            <span style={{ fontSize: 15.5, fontWeight: 800, color: DC.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {(m.names || ["", ""])[0]} <span style={{ color: DC.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 function hillInfo(rt, disp) {
   if (rt <= 0) return null;
   const rem = rt - disp;
   if (rem <= 0) return { label: "達成", value: null };
   const toHill = rem - 14;
-  return toHill > 0 ? { label: "ヒルまで", value: toHill } : { label: "勝ちまで", value: rem };
+  return toHill > 0 ? { label: `あと${toHill}でヒル`, value: null } : { label: `あと${rem}で勝ち`, value: null };
 }
-function TablePanel({ tableNum, m, portrait, next, holding }) {
+function TablePanel({ tableNum, m }) {
   if (!m) {
     return (
-      <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "16px 18px", color: C.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
+      <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "16px 18px", color: DC.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 12 }}>
         <TitleBadge>T{tableNum}</TitleBadge>
-        <div style={{ fontSize: "clamp(22px, 3vw, 44px)", fontWeight: 900, color: C.sub }}>待機中</div>
+        <div style={{ fontSize: 22, fontWeight: 900, color: DC.sub }}>待機中</div>
       </div>
     );
   }
@@ -379,13 +725,13 @@ function TablePanel({ tableNum, m, portrait, next, holding }) {
     balls.filter((b) => b.loc === "p1" && !b.dead).length,
     balls.filter((b) => b.loc === "p2" && !b.dead).length,
   ];
-  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
+  const disp = tot;
   const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
-  const bothLose = !!m.bothLose; // 時間切れでどちらも目標に届かなかった
+  const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const matchWinner = bothLose || m.phase === "banking" ? null :
     (m.winner === 0 || m.winner === 1) ? m.winner :
-    // ヒルヒルで両者が目標に達した場合は、そのラックで9番を落とした方が勝ち
     (reached[0] && reached[1]) ? ((m.hist || []).slice(-1)[0] || { w: 0 }).w :
     reached[0] ? 0 :
     reached[1] ? 1 :
@@ -393,70 +739,58 @@ function TablePanel({ tableNum, m, portrait, next, holding }) {
     (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
   const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
 
-  // 「38/45」のように目標点まで1行に収めているので、桁数が増えるほど横に長くなる。
-  // 画面幅そのままの固定値だと2桁で切れるため、桁数と向きから入る大きさを毎回計算する
-  const halfVw = portrait ? 44 : 22; // 選手1人分の枠の横幅の目安（画面幅に対する％）
-  const scoreFont = (i) => {
-    const d = m.phase === "banking" ? 1 : String(disp[i]).length;
-    const t = String(raceTo[i] || 0).length;
-    const widthEm = 0.62 * d + 0.26 * (1 + t); // 数字1文字≒0.62em、目標点は0.42em表示
-    return `min(${(halfVw / widthEm).toFixed(1)}vw, 19vh)`;
-  };
-
   return (
-    <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${C.line}`, borderRadius: 14, padding: "10px 14px", color: C.ink, display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 12px", color: DC.ink, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <TitleBadge>T{tableNum}</TitleBadge>
-        <span style={{ fontSize: "clamp(14px, 1.6vw, 24px)", color: C.ink, fontWeight: 900 }}>
+        <span style={{ fontSize: 13, color: DC.ink, fontWeight: 900 }}>
           {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
         </span>
       </div>
 
       {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
-        <div style={{ background: C.hill, color: "#fff", borderRadius: 8, padding: "3px 10px", textAlign: "center", fontSize: "clamp(15px, 1.8vw, 26px)", fontWeight: 900, marginBottom: 6, letterSpacing: 2 }}>
+        <div style={{ background: DC.hill, color: "#fff", borderRadius: 8, padding: "3px 10px", textAlign: "center", fontSize: 14, fontWeight: 900, marginBottom: 6, letterSpacing: 2 }}>
           ヒルヒル
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0 }}>
         {[0, 1].map((i) => {
-          const pc = i === 0 ? C.blue : C.red;
+          const pc = i === 0 ? DC.blue : DC.red;
           const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
           const isBreaker = m.brk === i;
           return (
             <div key={i} style={{
               flex: 1, textAlign: "center", borderRadius: 10, padding: "6px 4px",
-              border: `3px solid ${isBreaker ? pc : C.lineSoft}`,
+              border: `3px solid ${isBreaker ? pc : DC.lineSoft}`,
               display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden",
             }}>
               <div style={{
-                fontSize: "clamp(19px, 2.4vw, 36px)", fontWeight: 900, color: "#fff", background: pc,
-                borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                fontSize: 15, fontWeight: 900, color: "#fff", background: pc, borderRadius: 6,
+                padding: "2px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               }}>{names[i]}</div>
 
               <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: scoreFont(i), fontWeight: 900, lineHeight: 1.05, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", color: C.ink }}>
+                <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: DC.ink }}>
                   {m.phase === "banking" ? "–" : disp[i]}
-                  <span style={{ fontSize: "0.42em", color: C.sub }}>/{raceTo[i]}</span>
+                  <span style={{ fontSize: "0.42em", color: DC.sub }}>/{raceTo[i]}</span>
                 </div>
               </div>
 
-              {/* バッジ行とブレイク行は、中身の有無に関わらず同じ高さを確保する。
-                  ブレイクの有無やバンキング中かどうかで、名前とスコアの位置が動かないようにするため */}
-              <div style={{ minHeight: "clamp(24px, 2.6vw, 36px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {/* バッジ行とブレイク行は中身の有無に関わらず高さを確保し、名前とスコアの位置が動かないようにする */}
+              <div style={{ minHeight: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {bothLose ? (
-                  <span style={{ background: C.hill, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
+                  <span style={{ background: DC.hill, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
                     達成率 {(rate(i) * 100).toFixed(0)}％
                   </span>
                 ) : hi ? (
-                  <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "2px 12px", fontSize: "clamp(14px, 1.6vw, 24px)", fontWeight: 900, whiteSpace: "nowrap" }}>
+                  <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
                     {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
                   </span>
                 ) : null}
               </div>
               <div style={{
-                minHeight: "clamp(18px, 1.9vw, 28px)", marginTop: 3,
-                fontSize: "clamp(13px, 1.4vw, 22px)", fontWeight: 900, color: pc, letterSpacing: 1,
+                minHeight: 16, marginTop: 2, fontSize: 12, fontWeight: 900, color: pc, letterSpacing: 1,
                 visibility: isBreaker ? "visible" : "hidden",
               }}>● ブレイク</div>
             </div>
@@ -465,24 +799,51 @@ function TablePanel({ tableNum, m, portrait, next, holding }) {
       </div>
 
       {bothLose ? (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: "clamp(18px, 2.2vw, 34px)", fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "2px 0" }}>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.hill, borderRadius: 8, padding: "2px 0" }}>
           時間切れ・両者負け
         </div>
       ) : matchWinner != null && (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: "clamp(18px, 2.2vw, 34px)", fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "2px 0" }}>
+        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.win, borderRadius: 8, padding: "2px 0" }}>
           🏆 {names[matchWinner]} 勝利
-        </div>
-      )}
-
-      {/* 結果を出したまま次の試合を待っている間だけ、次の顔ぶれを小さく添える */}
-      {holding && (
-        <div style={{ marginTop: 5, textAlign: "center", fontSize: "clamp(13px, 1.5vw, 22px)", fontWeight: 800, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {next ? `次：${(next.names || ["", ""])[0]} 対 ${(next.names || ["", ""])[1]}` : "この卓は終了しました"}
         </div>
       )}
     </div>
   );
 }
+
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"]];
+
+/* ========= 外枠：観戦用。対戦表とテーブルの様子を見るだけで、スコアは付けられない ========= */
+function Shell() {
+  const [tab, setTab] = useState("tables");
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+        {TABS.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(11px, 3.4vw, 14px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            {label}
+          </button>
+        ))}
+        <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
+          <TimelineTab myMatchId={null} onPick={null} />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
+          <TablesTab />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= ルート ========= */
+function App() {
+  return <Shell />;
+}
+
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
