@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.150";
-const BUILD_TIME = "2026-08-06 10:40";
+const APP_VERSION = "1.151";
+const BUILD_TIME = "2026-08-06 12:15";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -254,6 +254,32 @@ function getPrelimForTable(matches, tableNum) {
 }
 // 卓ごとの一覧に状態を付ける。
 // 終了／試合中（スコアラーがバンキング勝者を選んだ）／呼び出し中（次に始める1試合だけ）／待機中（それより先）
+
+/* 卓ごとに実際の進行を追って、各試合の開始見込み時刻を出す。
+   終わった試合はその終了時刻を基準に、進行中は「開始＋持ち時間」で終わる想定、
+   未開始は前の試合の終わり＋入替時間から積み上げる。押していればその分ずれて出る */
+function buildEta(matches, changeoverMin) {
+  const eta = {};
+  const chg = (changeoverMin || 0) * 60000;
+  [1, 2, 3].forEach((t) => {
+    let cursor = null;
+    getAllForTable(matches, t).forEach((m) => {
+      const mins = m.matchMinutes || 30;
+      if (isMatchFinished(m)) {
+        eta[m.id] = { start: m.startedAt || null, end: m.finishedAt || m.updatedAt || null, done: true };
+        cursor = m.finishedAt || m.updatedAt || cursor;
+        return;
+      }
+      const start = m.startedAt
+        ? m.startedAt
+        : Math.max(cursor != null ? cursor + chg : Date.now(), Date.now());
+      eta[m.id] = { start, end: start + mins * 60000, started: !!m.startedAt };
+      cursor = start + mins * 60000;
+    });
+  });
+  return eta;
+}
+
 function annotateColumn(list) {
   let calledYet = false;
   return list.map((m) => {
@@ -2681,10 +2707,12 @@ function HomeTab() {
 
   const [loadErr, setLoadErr] = useState(null);
   const [cols, setCols] = useState([[], [], []]); // 終了分も含む全対戦（タイムライン表示用）
+  const [eta, setEta] = useState({}); // 各試合の開始見込み時刻
   const applyRecord = (rec) => {
     const r = normalizeRecord(rec);
     setQueues([1, 2, 3].map((t) => getQueueForTable(r.matches, t)));
     setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(r.matches, t))));
+    setEta(buildEta(r.matches, parseInt(loadSettings().changeoverMin, 10) || 5));
     setRoster(r.roster);
     setRefereeCounts(r.refereeCounts);
     setLoadErr(null);
@@ -3085,7 +3113,7 @@ function HomeTab() {
 
       {/* ===== スクロールエリア：ラウンドごとのタイムライン ===== */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 8px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 9 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "44px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 9 }}>
           {foldedPrelim && (
             <div onClick={() => setFoldPrelim(false)} style={{
               gridColumn: "1 / -1", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
@@ -3108,7 +3136,26 @@ function HomeTab() {
                   color: C.sub, cursor: "pointer", marginBottom: 2,
                 }}>▲ 予選をたたむ</div>
               )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</span>
+                {(() => {
+                  // その行にある試合のうち、いちばん早く始まる（始まった）時刻を出す
+                  const ts = [0, 1, 2].map((ti) => {
+                    const e = cols[ti][s];
+                    if (!e) return null;
+                    const info = eta[e.m.id];
+                    return (e.m.startedAt || (info && info.start)) || null;
+                  }).filter(Boolean);
+                  if (ts.length === 0) return null;
+                  const t0 = Math.min(...ts);
+                  const started = [0, 1, 2].some((ti) => cols[ti][s] && cols[ti][s].m.startedAt);
+                  return (
+                    <span style={{ fontSize: 12.5, fontWeight: 900, color: started ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {fmtClock(t0)}
+                    </span>
+                  );
+                })()}
+              </div>
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
                 return (
