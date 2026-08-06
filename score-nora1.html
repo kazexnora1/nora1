@@ -132,10 +132,14 @@ function subscribeMatch(matchId, onValue, onError) {
 /* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
 const DEFAULT_MATCH_MINUTES = 30;
 
-/* ライブ配信（ひらりん先生のYouTube）へのリンク。
-   URLを入れると右上のバッジが配信へのリンクになる。空にすると「観戦用」の表示だけになる */
-const LIVE_URL = "";
+/* ライブ配信へのリンクは本部アプリ（B1）の設定から共有される。
+   B1の「基本設定 → ライブ配信のURL」に入れた値がここに届く */
 const LIVE_LABEL = "📺 ライブ配信";
+function subscribeConfig(onValue) {
+  const ref = db.ref("config");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
+  return () => ref.off("value", handler);
+}
 
 /* 動作確認用：URLに &sec=15 を付けると、その試合の持ち時間を15秒にする。
    時間切れ・最終ラック・両者負けの挙動を数十秒で通しで確認するためのもの。
@@ -848,6 +852,9 @@ const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"]];
 /* ========= 外枠：観戦用。対戦表とテーブルの様子を見るだけで、スコアは付けられない ========= */
 function Shell() {
   const [tab, setTab] = useState("tables");
+  const [config, setConfig] = useState({});
+  useEffect(() => subscribeConfig(setConfig), []);
+  const liveUrl = (config.liveUrl || "").trim();
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
       <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
@@ -857,8 +864,8 @@ function Shell() {
             {label}
           </button>
         ))}
-        {LIVE_URL ? (
-          <a href={LIVE_URL} target="_blank" rel="noopener noreferrer" style={{
+        {liveUrl ? (
+          <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{
             flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
             borderRadius: 8, padding: "5px 9px", whiteSpace: "nowrap", textDecoration: "none",
           }}>{LIVE_LABEL}</a>
