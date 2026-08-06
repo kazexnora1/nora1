@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.152";
-const BUILD_TIME = "2026-08-06 13:40";
+const APP_VERSION = "1.153";
+const BUILD_TIME = "2026-08-06 16:10";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -437,7 +437,7 @@ function saveSettings(patch) {
   // 時間割に関わる値だけは共有側にも書いておく。
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
-  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName"].forEach((k) => {
+  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
@@ -1602,11 +1602,17 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [showSingle, setShowSingle] = useState(false);
   const [showBracket, setShowBracket] = useState(false);
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
+  const [liveUrl, setLiveUrl] = useState(() => loadSettings().liveUrl || "");
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
 
   const updateTournamentName = (v) => {
     setTournamentName(v);
     saveSettings({ tournamentName: v });
+  };
+  // 観戦ページ（B3）の右上に出す、ライブ配信へのリンク
+  const updateLiveUrl = (v) => {
+    setLiveUrl(v);
+    saveSettings({ liveUrl: v });
   };
   const toggleRefereeEnabled = () => {
     const next = !refereeEnabled;
@@ -1635,6 +1641,15 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
           placeholder="例：第◯回 身内杯"
           style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
+
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub, margin: "14px 0 6px" }}>ライブ配信のURL</div>
+        <input value={liveUrl} onChange={(e) => updateLiveUrl(e.target.value.trim().slice(0, 200))}
+          placeholder="https://www.youtube.com/@◯◯/live"
+          style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 14, padding: "11px 12px", outline: "none", fontFamily: FONT }} />
+        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.6 }}>
+          観戦ページの右上に「📺 ライブ配信」ボタンとして出ます。空にすると出ません。
+          チャンネルの /live のURLを入れておくと、当日の配信に自動でつながります
+        </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginTop: 14 }}>
           <div>
