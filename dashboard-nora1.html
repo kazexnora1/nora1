@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.149";
-const BUILD_TIME = "2026-08-06 09:20";
+const APP_VERSION = "1.150";
+const BUILD_TIME = "2026-08-06 10:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -778,10 +778,21 @@ function StandingsTab() {
         <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
       </div>
       {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 15, color: C.sub, padding: "28px 0" }}>まだ結果がありません</div>}
-      {rows.map((r) => {
+      {rows.map((r, ri) => {
         const top = r.rank <= 8 && r.played > 0;
+        // 決勝トーナメントの区切り。4人開催なら4位、8人開催なら8位の下に線を引く
+        const prev = ri > 0 ? rows[ri - 1] : null;
+        const cutAbove = prev && prev.played > 0 && (prev.rank === 4 || prev.rank === 8) && r.rank > prev.rank;
         return (
-          <div key={r.name} style={{
+          <React.Fragment key={r.name}>
+          {cutAbove && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0 10px" }}>
+              <div style={{ flex: 1, height: 2, background: C.blue, opacity: 0.4 }} />
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>ここまで{prev.rank}位</div>
+              <div style={{ flex: 1, height: 2, background: C.blue, opacity: 0.4 }} />
+            </div>
+          )}
+          <div style={{
             display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
             background: top ? C.lightBlue : "#fff", border: `1.5px solid ${top ? C.blue : C.line}`,
             borderRadius: 12, padding: "15px 12px", marginBottom: 8,
@@ -792,6 +803,7 @@ function StandingsTab() {
             <div style={{ textAlign: "center", fontSize: 25, fontWeight: 800, color: C.sub }}>{r.loss}</div>
             <div style={{ textAlign: "right", fontSize: 19, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
           </div>
+          </React.Fragment>
         );
       })}
       <div style={{ fontSize: 13.5, color: C.sub, marginTop: 16, lineHeight: 1.7 }}>
@@ -2661,6 +2673,7 @@ function HomeTab() {
   const [refModalMatch, setRefModalMatch] = useState(null); // ✏️で開くスコアラー候補モーダルの対象試合
   const [refereeBusy, setRefereeBusy] = useState(false);
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
+  const [foldPrelim, setFoldPrelim] = useState(null); // 予選のコマをたたむ。null=まだ自動判定していない
   const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
   const [globalBusy, setGlobalBusy] = useState(false);
   const [tLenPct, setTLenPct] = useState(100);
@@ -3002,6 +3015,14 @@ function HomeTab() {
   const bracketStartRow = Math.min(
     ...cols.map((c) => { const idx = c.findIndex((e) => e.m && e.m.bracket); return idx === -1 ? Infinity : idx; })
   );
+  // 予選が全部終わったら、予選のコマは自動でたたむ（自分で開いたあとは勝手に閉じない）
+  const hasBracketRow = bracketStartRow !== Infinity;
+  const prelimEntries = cols.flatMap((c) => c.filter((e, si) => !hasBracketRow || si < bracketStartRow));
+  const prelimAllDone = prelimEntries.length > 0 && prelimEntries.every((e) => e.st === "done");
+  useEffect(() => {
+    if (foldPrelim === null && prelimAllDone && hasBracketRow) setFoldPrelim(true);
+  }, [prelimAllDone, hasBracketRow, foldPrelim]);
+  const foldedPrelim = foldPrelim === true && hasBracketRow;
   const tinfo = [0, 1, 2].map((ti) => {
     const q = queues[ti];
     const cur = q[0];
@@ -3065,7 +3086,14 @@ function HomeTab() {
       {/* ===== スクロールエリア：ラウンドごとのタイムライン ===== */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 8px 24px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 9 }}>
+          {foldedPrelim && (
+            <div onClick={() => setFoldPrelim(false)} style={{
+              gridColumn: "1 / -1", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+              padding: "11px 0", textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer",
+            }}>▼ 予選 {prelimEntries.length}試合（終了）を見る</div>
+          )}
           {Array.from({ length: slots }, (_, s) => (
+            foldedPrelim && s < bracketStartRow ? null : (
             <React.Fragment key={s}>
               {s === bracketStartRow && (
                 <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, margin: "6px 0 2px" }}>
@@ -3073,6 +3101,12 @@ function HomeTab() {
                   <div style={{ fontSize: 13, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</div>
                   <div style={{ flex: 1, height: 2, background: C.blue }} />
                 </div>
+              )}
+              {s === bracketStartRow && !foldedPrelim && (
+                <div onClick={() => setFoldPrelim(true)} style={{
+                  gridColumn: "1 / -1", textAlign: "center", fontSize: 11.5, fontWeight: 800,
+                  color: C.sub, cursor: "pointer", marginBottom: 2,
+                }}>▲ 予選をたたむ</div>
               )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</div>
               {[0, 1, 2].map((ti) => {
@@ -3088,6 +3122,7 @@ function HomeTab() {
                 );
               })}
             </React.Fragment>
+            )
           ))}
           {slots === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", color: C.sub, fontSize: 14, padding: "24px 0" }}>対戦がまだ登録されていません</div>}
         </div>
