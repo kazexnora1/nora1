@@ -283,6 +283,18 @@ function TimelineTab({ myMatchId, onPick }) {
     if (foldPrelim === null && prelimDone && bracketStart !== null) setFoldPrelim(true);
   }, [prelimDone, bracketStart, foldPrelim]);
   const folded = foldPrelim === true && bracketStart !== null;
+  // その行の試合のうち、いちばん早い開始（見込み）時刻
+  const rowStartAt = (si) => {
+    const ts = [0, 1, 2].map((ti) => {
+      const e = cols[ti][si];
+      if (!e) return null;
+      const info = eta[e.m.id];
+      return (e.m.startedAt || (info && info.start)) || null;
+    }).filter(Boolean);
+    return ts.length ? Math.min(...ts) : null;
+  };
+  const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
+  const firstVisibleRow = folded ? bracketStart : 0;
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
@@ -293,7 +305,7 @@ function TimelineTab({ myMatchId, onPick }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "46px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "46px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 22 }}>
         <div />
         {[1, 2, 3].map((t) => (
           <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
@@ -330,24 +342,20 @@ function TimelineTab({ myMatchId, onPick }) {
                   )}
                 </>
               )}
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+              {/* 時刻はカードとカードの間（行の境目）に出す。
+                  そこが「前の試合が終わる時刻」であり「次の試合が始まる時刻」でもあるため */}
+              <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{s + 1}</span>
-                {(() => {
-                  // その行の試合のうち、いちばん早く始まる（始まった）時刻
-                  const ts = [0, 1, 2].map((ti) => {
-                    const e = cols[ti][s];
-                    if (!e) return null;
-                    const info = eta[e.m.id];
-                    return (e.m.startedAt || (info && info.start)) || null;
-                  }).filter(Boolean);
-                  if (ts.length === 0) return null;
-                  const started = [0, 1, 2].some((ti) => cols[ti][s] && cols[ti][s].m.startedAt);
-                  return (
-                    <span style={{ fontSize: 12.5, fontWeight: 900, color: started ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                      {fmtClock(Math.min(...ts))}
-                    </span>
-                  );
-                })()}
+                {s === firstVisibleRow && rowStartAt(s) != null && (
+                  <span style={{ position: "absolute", top: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    {fmtClock(rowStartAt(s))}
+                  </span>
+                )}
+                {rowStartAt(s + 1) != null && (
+                  <span style={{ position: "absolute", bottom: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s + 1) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    {fmtClock(rowStartAt(s + 1))}
+                  </span>
+                )}
               </div>
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
