@@ -132,6 +132,11 @@ function subscribeMatch(matchId, onValue, onError) {
 /* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
 const DEFAULT_MATCH_MINUTES = 30;
 
+/* ライブ配信（ひらりん先生のYouTube）へのリンク。
+   URLを入れると右上のバッジが配信へのリンクになる。空にすると「観戦用」の表示だけになる */
+const LIVE_URL = "";
+const LIVE_LABEL = "📺 ライブ配信";
+
 /* 動作確認用：URLに &sec=15 を付けると、その試合の持ち時間を15秒にする。
    時間切れ・最終ラック・両者負けの挙動を数十秒で通しで確認するためのもの。
    本番ではURLに付けなければ従来どおり（分）で動く */
@@ -852,7 +857,14 @@ function Shell() {
             {label}
           </button>
         ))}
-        <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
+        {LIVE_URL ? (
+          <a href={LIVE_URL} target="_blank" rel="noopener noreferrer" style={{
+            flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
+            borderRadius: 8, padding: "5px 9px", whiteSpace: "nowrap", textDecoration: "none",
+          }}>{LIVE_LABEL}</a>
+        ) : (
+          <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
+        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
