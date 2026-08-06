@@ -245,11 +245,17 @@ function bracketTotalRounds(size) { return Math.round(Math.log2(size || 8)); }
 function TimelineTab({ myMatchId, onPick }) {
   const [cols, setCols] = useState([[], [], []]);
   const [raw, setRaw] = useState({});
+  const [eta, setEta] = useState({}); // 各試合の開始見込み時刻
   const [foldPrelim, setFoldPrelim] = useState(null); // null=まだ自動判定していない
   const [err, setErr] = useState(null);
 
   useEffect(() => subscribeAllMatches(
-    (matches) => { setRaw(matches || {}); setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t)))); setErr(null); },
+    (matches) => {
+      setRaw(matches || {});
+      setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t))));
+      setEta(buildEta(matches || {}, 5));
+      setErr(null);
+    },
     (e) => setErr(e)), []);
 
   const slots = Math.max(1, ...cols.map((c) => c.length));
@@ -278,7 +284,7 @@ function TimelineTab({ myMatchId, onPick }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "26px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "46px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 9 }}>
         <div />
         {[1, 2, 3].map((t) => (
           <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
@@ -315,7 +321,25 @@ function TimelineTab({ myMatchId, onPick }) {
                   )}
                 </>
               )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{s + 1}</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{s + 1}</span>
+                {(() => {
+                  // その行の試合のうち、いちばん早く始まる（始まった）時刻
+                  const ts = [0, 1, 2].map((ti) => {
+                    const e = cols[ti][s];
+                    if (!e) return null;
+                    const info = eta[e.m.id];
+                    return (e.m.startedAt || (info && info.start)) || null;
+                  }).filter(Boolean);
+                  if (ts.length === 0) return null;
+                  const started = [0, 1, 2].some((ti) => cols[ti][s] && cols[ti][s].m.startedAt);
+                  return (
+                    <span style={{ fontSize: 12.5, fontWeight: 900, color: started ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {fmtClock(Math.min(...ts))}
+                    </span>
+                  );
+                })()}
+              </div>
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
                 return <div key={ti}>{e
