@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.155";
-const BUILD_TIME = "2026-08-07 09:10";
+const APP_VERSION = "1.156";
+const BUILD_TIME = "2026-08-07 10:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3079,6 +3079,20 @@ function HomeTab() {
   };
   const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
   const firstVisibleRow = foldedPrelim ? bracketStartRow : 0;
+  // 予選が終わる見込み（すべて終わっていれば実際に終わった時刻）
+  const prelimEndAt = (() => {
+    const ends = [];
+    [0, 1, 2].forEach((ti) => {
+      (cols[ti] || []).forEach((e) => {
+        if (e.m.bracket) return;
+        const info = eta[e.m.id];
+        const t = isMatchFinished(e.m) ? (e.m.finishedAt || e.m.updatedAt) : (info && info.end);
+        if (t) ends.push(t);
+      });
+    });
+    return ends.length ? Math.max(...ends) : null;
+  })();
+
   const tinfo = [0, 1, 2].map((ti) => {
     const q = queues[ti];
     const cur = q[0];
@@ -3102,12 +3116,20 @@ function HomeTab() {
           <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "18px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "44px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
           <div />
           {tinfo.map(({ ti }) => (
             <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>T{ti + 1}</div>
           ))}
-          <div />
+          {/* 左の空きスペースに、予選が終わる見込みを出す */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.25 }}>
+            {prelimEndAt != null && (
+              <>
+                <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, whiteSpace: "nowrap" }}>予選終了</span>
+                <span style={{ fontSize: 12.5, fontWeight: 900, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtClock(prelimEndAt)}</span>
+              </>
+            )}
+          </div>
           {tinfo.map(({ ti, cur, status, settingSrc }) => (
             <div key={ti} onClick={() => openTableAdjust(ti)} style={{
               position: "relative", textAlign: "center", cursor: "pointer", boxSizing: "border-box", width: "100%",
