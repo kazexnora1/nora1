@@ -215,6 +215,15 @@ function getQueueForTable(matches, tableNum) {
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
 }
+
+/* この試合より前に、同じ卓でまだ終わっていない試合があるか。
+   前の試合が終わらないうちに次のスコアを付け始めるのを防ぐために使う */
+function earlierUnfinished(matches, m) {
+  if (!m) return [];
+  const mine = m.createdAt || m.updatedAt || 0;
+  return getAllForTable(matches || {}, Number(m.table))
+    .filter((x) => x.id !== m.id && (x.createdAt || x.updatedAt || 0) < mine && !isMatchFinished(x));
+}
 /* 試合終了／試合中／呼び出し中（次に始める1試合だけ）／待機中 */
 function annotateColumn(list) {
   let calledYet = false;
@@ -343,7 +352,7 @@ function TimelineTab({ myMatchId, onPick }) {
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
                 return <div key={ti}>{e
-                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
+                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} blockedBy={earlierUnfinished(raw, e.m)} />
                   : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
               })}
             </React.Fragment>
@@ -354,7 +363,7 @@ function TimelineTab({ myMatchId, onPick }) {
     </div>
   );
 }
-function TimelineSlotCard({ m, st, mine, onPick }) {
+function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
@@ -363,7 +372,7 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
   const style =
     st === "done"
       ? (m.bothLose
-          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "両者負け" }
+          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "時間切れ" }
           : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "試合終了" })
       : st === "live"
       ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
@@ -380,6 +389,15 @@ function TimelineSlotCard({ m, st, mine, onPick }) {
   const clickable = (st === "call" || st === "live") && !!onPick;
   const handleClick = () => {
     if (!clickable) return;
+    // 同じ卓で前の試合がまだ終わっていない時は、先にそちらを片付けてもらう
+    const blocked = blockedBy || [];
+    if (blocked.length > 0) {
+      const b = blocked[0];
+      const bn = b.names || ["", ""];
+      if (!window.confirm(
+        `⚠️ T${m.table}の前の試合がまだ終わっていません。\n\n${bn[0]} 対 ${bn[1]}\n\n` +
+        `先にそちらを終わらせてください。\nそれでもこの試合のスコアを付けますか？`)) return;
+    }
     if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
     onPick(m);
   };
@@ -637,7 +655,7 @@ function LiveTablePanel({ tableNum, m }) {
         {card(1)}
       </div>
       {bothLose ? (
-        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ・両者負け</div>
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ</div>
       ) : winner != null ? (
         <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
       ) : null}
@@ -801,7 +819,7 @@ function TablePanel({ tableNum, m }) {
 
       {bothLose ? (
         <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.hill, borderRadius: 8, padding: "2px 0" }}>
-          時間切れ・両者負け
+          時間切れ
         </div>
       ) : matchWinner != null && (
         <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.win, borderRadius: 8, padding: "2px 0" }}>
@@ -934,6 +952,13 @@ function ScheduleTab({ onPick }) {
   const openMatch = (r) => {
     if (!canOpen(r)) return;
     const nm = r.m.names || ["", ""];
+    const blocked = earlierUnfinished(matches, r.m);
+    if (blocked.length > 0) {
+      const bn = blocked[0].names || ["", ""];
+      if (!window.confirm(
+        `⚠️ T${r.m.table}の前の試合がまだ終わっていません。\n\n${bn[0]} 対 ${bn[1]}\n\n` +
+        `先にそちらを終わらせてください。\nそれでもこの試合のスコアを付けますか？`)) return;
+    }
     if (!window.confirm(`T${r.m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
     onPick(r.m);
   };
@@ -1030,7 +1055,7 @@ function ScheduleTab({ onPick }) {
             bottomText = "担当終了";
             bottomColor = C.sub;
           } else {
-            bottomText = r.m.bothLose ? "両者負け" : iWon ? "勝ち" : "負け";
+            bottomText = r.m.bothLose ? "時間切れ" : iWon ? "勝ち" : "負け";
             bottomColor = r.m.bothLose ? C.hill : iWon ? C.win : C.sub;
             rightText = `${tot[meIdx]} - ${tot[1 - meIdx]}`;
           }
@@ -1531,7 +1556,7 @@ function MatchScreen({ setupInfo, onExit }) {
         <div style={{ marginBottom: 6 }}>
           {bothLose ? (
             <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ・両者負け</div>
+              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ</div>
               <div style={{ fontSize: 12.5, marginTop: 2, fontWeight: 700 }}>
                 達成率 {pl[0].name} {(rate(0) * 100).toFixed(1)}％ ／ {pl[1].name} {(rate(1) * 100).toFixed(1)}％
               </div>
