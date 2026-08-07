@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.176";
-const BUILD_TIME = "2026-08-08 08:10";
+const APP_VERSION = "1.177";
+const BUILD_TIME = "2026-08-08 08:50";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1785,7 +1785,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </div>
 
       {/* 以下は大会当日の流れの順に並べる：① メンバー → ② 予選を組む → ③ 決勝トーナメント */}
-      <Section icon="👥" title="① メンバー" sub="名前とレートの登録・並べ替え" note={`${roster.length}人`}>
+      <Section icon="👥" title="メンバー" sub="名前とレートの登録・並べ替え" note={`${roster.length}人`}>
         <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       </Section>
 
@@ -1821,24 +1821,29 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </Section>
 
-      <Section icon="🎱" title="② 予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
+      <Section icon="🎱" title="予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
         <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
       </Section>
 
-      <Section icon="🏆" title="③ 決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
+      <Section icon="🏆" title="決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
         <BracketTab roster={roster} />
       </Section>
 
-      <Section icon="🛟" title="困った時" sub="バックアップから戻す・つながり具合の確認">
+      <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
           <BackupPanel />
           <ConnectionTest />
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 2 }}>個別に対戦を追加する</div>
+            <div style={{ ...HELP }}>組んだあとに1試合だけ足したい時に使います</div>
+          </div>
+          <ScheduleTab roster={roster} />
+        </div>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
           <BannerPanel />
         </div>
-      </Section>
-
-      <Section icon="➕" title="個別に対戦を追加する" sub="組んだあとに1試合だけ足したい時">
-        <ScheduleTab roster={roster} />
       </Section>
 
       <div style={{ textAlign: "center", padding: "18px 0 6px", fontSize: 13.5, color: C.sub }}>
