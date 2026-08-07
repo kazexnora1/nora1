@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.177";
-const BUILD_TIME = "2026-08-08 08:50";
+const APP_VERSION = "1.178";
+const BUILD_TIME = "2026-08-08 09:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1805,6 +1805,8 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             チャンネルの /live のURLを入れておくと、当日の配信に自動でつながります
           </div>
 
+          <RulesPanel />
+
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 14px", marginTop: 16 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
@@ -1855,6 +1857,63 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 /* ========= メンバータブ ========= */
 
 
+
+
+/* ========= ルールのメモ =========
+   自由に書ける文章。選手側（B2）の対戦表とスコアラーの左上のボタンから読める */
+function RulesPanel() {
+  const [text, setText] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try { const cur = await dbGet("config/rules"); setText(cur == null ? "" : String(cur)); }
+      catch { setText(""); }
+    })();
+  }, []);
+  const update = (v) => {
+    setText(v); setSaved(false);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      try { await dbUpdate("config", { rules: v }); setSaved(true); } catch {}
+    }, 600);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const lines = String(text || "").split("\n").filter((x) => x.trim()).length;
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <button onClick={() => setOpen((v) => !v)} style={{
+        width: "100%", background: "none", border: "none", padding: "2px 0 7px",
+        display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: FONT, textAlign: "left",
+      }}>
+        <span style={{ fontSize: 16, fontWeight: 800, color: C.ink, flex: 1 }}>ルール設定</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{lines ? `${lines}行` : "未記入"}</span>
+        <span style={{ fontSize: 15, color: C.sub }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <>
+          <div style={{ ...HELP, marginBottom: 8 }}>
+            自由に書けます。選手のアプリの対戦表とスコアラーの左上に「📖 ルール」のボタンが出て、
+            ここに書いた内容がそのまま読めます。空にするとボタンは出ません
+          </div>
+          <textarea value={text == null ? "" : text} onChange={(e) => update(e.target.value)} rows={10}
+            placeholder={"例：\n・9番を落とした側がそのラック＋14点\n・持ち時間30分、時間切れの時は最終ラック\n・遅刻は10分まで、それ以降は不戦敗"}
+            style={{
+              width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`,
+              borderRadius: 10, color: C.ink, fontSize: 16, lineHeight: 1.8, padding: "12px",
+              outline: "none", fontFamily: FONT, resize: "vertical",
+            }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6, minHeight: 20 }}>
+            {saved && <span style={{ fontSize: 13.5, fontWeight: 800, color: C.win }}>保存しました</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /* ========= バナーの編集 =========
    1行に1つ書くと、待機中の卓やスコアラー画面の下にランダムで出る。
