@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.169";
-const BUILD_TIME = "2026-08-08 02:20";
+const APP_VERSION = "1.170";
+const BUILD_TIME = "2026-08-08 03:00";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2812,11 +2812,12 @@ function BannerLine({ style, boxed }) {
     return () => clearTimeout(t);
   }, [ready, text]);
 
-  const h = boxed ? 46 : 24;
+  const h = boxed ? 50 : 26;
   const base = {
     height: "100%", boxSizing: "border-box",
     display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 14, fontWeight: 800, color: C.sub,
+    // 画面の幅に合わせて大きさを変える。狭い端末では自動で少し小さくなるので見切れにくい
+    fontSize: "clamp(14px, 4.3vw, 17px)", fontWeight: 800, color: C.sub,
     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
     opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
   };
