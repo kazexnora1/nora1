@@ -633,7 +633,13 @@ function useBanner(intervalMs) {
 }
 function BannerLine({ style, boxed }) {
   const text = useBanner();
-  if (!text) return null;
+  // 画面が出た直後は出さず、3秒おいてから表示する（開いた瞬間に目移りしないように）
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+  if (!text || !ready) return null;
   const base = {
     textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
