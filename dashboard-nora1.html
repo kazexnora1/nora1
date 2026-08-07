@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.175";
-const BUILD_TIME = "2026-08-08 07:30";
+const APP_VERSION = "1.176";
+const BUILD_TIME = "2026-08-08 08:10";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1789,14 +1789,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       </Section>
 
-      <Section icon="🎱" title="② 予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
-        <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
-      </Section>
-
-      <Section icon="🏆" title="③ 決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
-        <BracketTab roster={roster} />
-      </Section>
-
       <Section icon="⚙️" title="大会の設定" sub="大会名・配信リンク・スコアラー機能">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>大会名</div>
@@ -1812,8 +1804,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             観戦ページの右上に「📺 ライブ配信」ボタンとして出ます。空にすると出ません。
             チャンネルの /live のURLを入れておくと、当日の配信に自動でつながります
           </div>
-
-          <BannerPanel />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 14px", marginTop: 16 }}>
             <div style={{ minWidth: 0 }}>
@@ -1831,10 +1821,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </Section>
 
+      <Section icon="🎱" title="② 予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
+        <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
+      </Section>
+
+      <Section icon="🏆" title="③ 決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
+        <BracketTab roster={roster} />
+      </Section>
+
       <Section icon="🛟" title="困った時" sub="バックアップから戻す・つながり具合の確認">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
           <BackupPanel />
           <ConnectionTest />
+          <BannerPanel />
         </div>
       </Section>
 
