@@ -653,11 +653,12 @@ function BannerLine({ style, boxed }) {
     return () => clearTimeout(t);
   }, [ready, text]);
 
-  const h = boxed ? 46 : 24;
+  const h = boxed ? 50 : 26;
   const base = {
     height: "100%", boxSizing: "border-box",
     display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 14, fontWeight: 800, color: C.sub,
+    // 画面の幅に合わせて大きさを変える。狭い端末では自動で少し小さくなるので見切れにくい
+    fontSize: "clamp(14px, 4.3vw, 17px)", fontWeight: 800, color: C.sub,
     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
     opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
   };
