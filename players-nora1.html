@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>JCL9Match B2テスト</title>
+<title>JCL9Match 観戦ページ</title>
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
@@ -114,39 +114,13 @@ function normalizeMatch(m) {
   };
 }
 
-
-/* 復元用の履歴。値が大きく動く操作の前に、その試合のスナップショットを控える。
-   本部（B1）のカードメニュー「🕘 前の状態に戻す」から、この控えに戻せる */
-const HISTORY_KEEP = 20;
-async function saveMatchHistory(matchId, m, label) {
-  try {
-    const keep = ["names", "table", "slot", "tot", "raceTo", "hist", "rack", "brk", "balls", "phase",
-      "lastResult", "r1", "r2", "lenPct", "matchMinutes", "scheduledAt", "startedAt", "deadline",
-      "finishedAt", "elapsedMs", "winner", "bothLose", "referee", "createdAt", "version",
-      "bracket", "bracketRound", "bracketPos", "bracketSize", "pending"];
-    const snap = {};
-    keep.forEach((k) => { if (m[k] !== undefined && m[k] !== null) snap[k] = m[k]; });
-    const ref = db.ref("history/" + matchId).push();
-    await ref.set({ at: Date.now(), label, snap });
-    const all = (await db.ref("history/" + matchId).once("value")).val() || {};
-    const keys = Object.keys(all).sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
-    const drop = keys.slice(0, Math.max(0, keys.length - HISTORY_KEEP));
-    if (drop.length) {
-      const upd = {};
-      drop.forEach((k) => { upd[k] = null; });
-      await db.ref("history/" + matchId).update(upd);
-    }
-  } catch {}
-}
-
 /* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
 async function loadMatchRemote(matchId) {
   const snap = await db.ref("matches/" + matchId).once("value");
   return normalizeMatch(snap.val());
 }
-async function saveMatchRemote(matchId, state) {
-  await db.ref("matches/" + matchId).set({ ...state, updatedAt: Date.now() });
-}
+/* 観戦ページは表示専用。書き込みは一切おこなわない */
+async function saveMatchRemote() { /* no-op */ }
 /* この対戦の変更を購読する。ポーリング不要で、相手の端末の操作が即座に届く */
 function subscribeMatch(matchId, onValue, onError) {
   const ref = db.ref("matches/" + matchId);
@@ -157,6 +131,15 @@ function subscribeMatch(matchId, onValue, onError) {
 
 /* 試合の持ち時間（分）。対戦データに matchMinutes があればそれを優先（B1側で調整可能） */
 const DEFAULT_MATCH_MINUTES = 30;
+
+/* ライブ配信へのリンクは本部アプリ（B1）の設定から共有される。
+   B1の「基本設定 → ライブ配信のURL」に入れた値がここに届く */
+const LIVE_LABEL = "📺 ライブ配信";
+function subscribeConfig(onValue) {
+  const ref = db.ref("config");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
+  return () => ref.off("value", handler);
+}
 
 /* 動作確認用：URLに &sec=15 を付けると、その試合の持ち時間を15秒にする。
    時間切れ・最終ラック・両者負けの挙動を数十秒で通しで確認するためのもの。
@@ -239,15 +222,6 @@ function getQueueForTable(matches, tableNum) {
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
   return list;
-}
-
-/* この試合より前に、同じ卓でまだ終わっていない試合があるか。
-   前の試合が終わらないうちに次のスコアを付け始めるのを防ぐために使う */
-function earlierUnfinished(matches, m) {
-  if (!m) return [];
-  const mine = m.createdAt || m.updatedAt || 0;
-  return getAllForTable(matches || {}, Number(m.table))
-    .filter((x) => x.id !== m.id && (x.createdAt || x.updatedAt || 0) < mine && !isMatchFinished(x));
 }
 /* 試合終了／試合中／呼び出し中（次に始める1試合だけ）／待機中 */
 function annotateColumn(list) {
@@ -385,7 +359,7 @@ function TimelineTab({ myMatchId, onPick }) {
               {[0, 1, 2].map((ti) => {
                 const e = cols[ti][s];
                 return <div key={ti}>{e
-                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} blockedBy={earlierUnfinished(raw, e.m)} />
+                  ? <TimelineSlotCard m={e.m} st={e.st} mine={e.m.id === myMatchId} onPick={onPick} />
                   : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
               })}
             </React.Fragment>
@@ -396,7 +370,7 @@ function TimelineTab({ myMatchId, onPick }) {
     </div>
   );
 }
-function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
+function TimelineSlotCard({ m, st, mine, onPick }) {
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
   const rt = m.raceTo || [0, 0];
@@ -422,15 +396,6 @@ function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
   const clickable = (st === "call" || st === "live") && !!onPick;
   const handleClick = () => {
     if (!clickable) return;
-    // 同じ卓で前の試合がまだ終わっていない時は、先にそちらを片付けてもらう
-    const blocked = blockedBy || [];
-    if (blocked.length > 0) {
-      const b = blocked[0];
-      const bn = b.names || ["", ""];
-      if (!window.confirm(
-        `⚠️ T${m.table}の前の試合がまだ終わっていません。\n\n${bn[0]} 対 ${bn[1]}\n\n` +
-        `先にそちらを終わらせてください。\nそれでもこの試合のスコアを付けますか？`)) return;
-    }
     if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合のスコアを担当しますか？`)) return;
     onPick(m);
   };
@@ -479,6 +444,33 @@ function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
   );
 }
 
+
+/* 卓ごとに実際の進行を追って、各試合の開始見込み時刻を出す。
+   終わった試合はその終了時刻を基準に、進行中は「開始＋持ち時間」で終わる想定、
+   未開始は前の試合の終わり＋入替時間から積み上げる */
+function buildEta(matches, changeoverMin) {
+  const eta = {};
+  const chg = (changeoverMin || 0) * 60000;
+  [1, 2, 3].forEach((t) => {
+    let cursor = null;
+    getAllForTable(matches, t).forEach((m) => {
+      const mins = m.matchMinutes || 30;
+      if (isMatchFinished(m)) {
+        eta[m.id] = { start: m.startedAt || null, end: m.finishedAt || m.updatedAt || null, done: true };
+        cursor = m.finishedAt || m.updatedAt || cursor;
+        return;
+      }
+      const start = m.startedAt ? m.startedAt : Math.max(cursor != null ? cursor + chg : Date.now(), Date.now());
+      eta[m.id] = { start, end: start + mins * 60000, started: !!m.startedAt };
+      cursor = start + mins * 60000;
+    });
+  });
+  return eta;
+}
+const fmtClock = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
 
 /* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
 function roundLabelOf(m) {
@@ -864,363 +856,38 @@ function TablePanel({ tableNum, m }) {
   );
 }
 
-/* ========= スケジュールタブ：選手ごとの予定表 =========
-   自分の名前を1度選ぶと端末に覚える。出場する試合とスコアラー担当を時系列に並べて出す */
-const MYNAME_KEY = "jcl9_b2_myname_v1";
-function subscribeRoster(onValue) {
-  const ref = db.ref("roster");
-  const handler = ref.on("value", (snap) => onValue(Array.isArray(snap.val()) ? snap.val() : []));
-  return () => ref.off("value", handler);
-}
-// コマ（slot）がある対戦はその順、無い対戦は作成順で後ろに並べる
-function scheduleOrder(m) {
-  return m.slot != null ? m.slot : 9999;
-}
-function subscribeConfig(onValue) {
-  const ref = db.ref("config");
-  const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
-  return () => ref.off("value", handler);
-}
-/* 卓ごとに実際の進行を追って、各試合の開始見込み時刻を出す。
-   ・終わった試合はその終了時刻を基準にする
-   ・進行中の試合は「開始時刻＋持ち時間」で終わる想定
-   ・未開始の試合は、前の試合の終わり＋入替時間から順に積み上げる
-   時間割そのものではなく“今の進み具合”から出すので、押していればその分ずれて表示される */
-function buildEta(matches, changeoverMin) {
-  const eta = {};
-  const chg = (changeoverMin || 0) * 60000;
-  [1, 2, 3].forEach((t) => {
-    let cursor = null; // 前の試合が終わる見込み（ミリ秒）
-    getAllForTable(matches, t).forEach((m) => {
-      const mins = m.matchMinutes || 30;
-      if (isMatchFinished(m)) {
-        cursor = m.finishedAt || m.updatedAt || cursor;
-        return;
-      }
-      const start = m.startedAt
-        ? m.startedAt
-        : Math.max(cursor != null ? cursor + chg : Date.now(), Date.now());
-      eta[m.id] = { start, end: start + mins * 60000, started: !!m.startedAt };
-      cursor = start + mins * 60000;
-    });
-  });
-  return eta;
-}
-const fmtClock = (ms) => {
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"]];
 
-function ScheduleTab({ onPick }) {
-  const [matches, setMatches] = useState({});
-  const [roster, setRoster] = useState([]);
-  const [me, setMe] = useState(() => { try { return localStorage.getItem(MYNAME_KEY) || ""; } catch { return ""; } });
-  const [picking, setPicking] = useState(false);
-  const [err, setErr] = useState(null);
-  const [config, setConfig] = useState({});
-  // 時間が経つだけでも見込み時刻がずれるので、定期的に描き直す
-  const [, forceTick] = useState(0);
-
-  useEffect(() => subscribeAllMatches((m) => { setMatches(m || {}); setErr(null); }, (e) => setErr(e)), []);
-  useEffect(() => subscribeRoster(setRoster), []);
-  useEffect(() => subscribeConfig(setConfig), []);
-  useEffect(() => { const iv = setInterval(() => forceTick((n) => n + 1), 30000); return () => clearInterval(iv); }, []);
-
-  const changeover = parseInt(config.changeoverMin, 10);
-  const eta = React.useMemo(
-    () => buildEta(matches, isNaN(changeover) ? 5 : changeover),
-    [matches, changeover, config]
-  );
-
-  const choose = (name) => {
-    setMe(name);
-    try { localStorage.setItem(MYNAME_KEY, name); } catch {}
-    setPicking(false);
-  };
-
-  const rows = React.useMemo(() => {
-    const all = [];
-    [1, 2, 3].forEach((t) => annotateColumn(getAllForTable(matches, t)).forEach((e) => all.push(e)));
-    all.sort((a, b) => (scheduleOrder(a.m) - scheduleOrder(b.m)) || ((a.m.createdAt || 0) - (b.m.createdAt || 0)));
-    if (!me) return [];
-    return all
-      .filter((e) => (e.m.names || []).includes(me) || e.m.referee === me)
-      .map((e) => ({ ...e, role: (e.m.names || []).includes(me) ? "play" : "referee" }));
-  }, [matches, me]);
-
-  const playRows = rows.filter((r) => r.role === "play");
-  const remain = playRows.filter((r) => r.st !== "done").length;
-  const upNext = rows.find((r) => r.st !== "done") || null;
-
-  const nameList = roster.map((p) => p && p.name).filter(Boolean);
-
-  if (!me || picking) {
-    return (
-      <div style={{ padding: "22px 16px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
-        <div style={{ fontSize: 19, fontWeight: 800, textAlign: "center", marginBottom: 6 }}>自分の名前を選んでください</div>
-        <div style={{ fontSize: 13, color: C.sub, textAlign: "center", marginBottom: 18, lineHeight: 1.7 }}>
-          この端末に覚えておきます。あとから変更できます
-        </div>
-        {nameList.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 14 }}>メンバーがまだ登録されていません</div>}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-          {nameList.map((n) => (
-            <button key={n} onClick={() => choose(n)} style={{
-              background: n === me ? C.blue : "#fff", color: n === me ? "#fff" : C.ink,
-              border: `1.5px solid ${n === me ? C.blue : C.line}`, borderRadius: 12,
-              padding: "12px 16px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-            }}>{n}</button>
-          ))}
-        </div>
-        {me && (
-          <button onClick={() => setPicking(false)} style={{
-            width: "100%", marginTop: 20, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12,
-            padding: "12px 0", fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT,
-          }}>キャンセル</button>
-        )}
-      </div>
-    );
-  }
-
-  // 呼び出し中・試合中の予定は、そのままスコアリング画面に入れる
-  const canOpen = (r) => (r.st === "call" || r.st === "live") && !!onPick;
-  const openMatch = (r) => {
-    if (!canOpen(r)) return;
-    const nm = r.m.names || ["", ""];
-    const blocked = earlierUnfinished(matches, r.m);
-    if (blocked.length > 0) {
-      const bn = blocked[0].names || ["", ""];
-      if (!window.confirm(
-        `⚠️ T${r.m.table}の前の試合がまだ終わっていません。\n\n${bn[0]} 対 ${bn[1]}\n\n` +
-        `先にそちらを終わらせてください。\nそれでもこの試合のスコアを付けますか？`)) return;
-    }
-    if (!window.confirm(`T${r.m.table}　${nm[0]} 対 ${nm[1]}\nこの試合のスコアを担当しますか？`)) return;
-    onPick(r.m);
-  };
-
-  const stLabel = (st) => (st === "done" ? "終了" : st === "live" ? "試合中" : st === "call" ? "呼び出し中" : "待機中");
-  const stColor = (st) => (st === "done" ? C.sub : st === "live" ? C.blue : st === "call" ? C.win : C.sub);
-
-  /* 「いつ」＝時刻。終了した試合は実際に終わった時刻、それ以外は今の進み具合からの見込み */
-  const whenText = (r) => {
-    const e = eta[r.m.id];
-    if (r.st === "done") return r.m.finishedAt ? fmtClock(r.m.finishedAt) : "終了";
-    if (!e) return "―";
-    return r.st === "live" ? `〜${fmtClock(e.end)}頃` : `${fmtClock(e.start)}頃`;
-  };
-  /* 「誰と」＝自分が出る試合は相手の名前、スコアラー担当は担当する2人 */
-  const whoText = (r) => {
-    const names = r.m.names || ["", ""];
-    if (r.role === "referee") return `${names[0]} 対 ${names[1]}`;
-    const meIdx = names.indexOf(me);
-    return names[1 - meIdx] || "";
-  };
-  /* 予定を1つの文として読ませる：「14:20頃　T1で 宗宮さんと試合」 */
-  const lineJsx = (r, big) => {
-    const done = r.st === "done";
-    const size = big ? 17 : 16;
-    const strong = { fontWeight: 900, color: r.role === "referee" ? C.hill : done ? C.sub : C.ink };
-    return (
-      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", columnGap: 6, minWidth: 0, fontSize: size, fontWeight: 700, color: done ? C.sub : C.ink }}>
-        <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 800, whiteSpace: "nowrap" }}>{whenText(r)}</span>
-        <span style={{ whiteSpace: "nowrap" }}><b style={{ fontWeight: 900 }}>T{r.m.table}</b>で</span>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <span style={strong}>{whoText(r)}</span>
-          {r.role === "referee"
-            ? (r.m.bracket ? `の${roundLabelOf(r.m)}のスコアラー` : "のスコアラー")
-            : (r.m.bracket ? `さんと${roundLabelOf(r.m)}` : "さんと試合")}
-        </span>
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ padding: "16px 12px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 900 }}>{me} さんの予定</div>
-          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>
-            残り {remain} 試合 ／ 全 {playRows.length} 試合
-          </div>
-          <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>時刻は今の進み具合からの目安です</div>
-        </div>
-        <button onClick={() => setPicking(true)} style={{
-          background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 12px",
-          fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT, flexShrink: 0,
-        }}>名前を変更</button>
-      </div>
-
-      {upNext && (
-        <div onClick={() => openMatch(upNext)} style={{
-          background: upNext.role === "referee" ? "#FFF3E0" : C.lightBlue,
-          border: `2px solid ${upNext.role === "referee" ? C.hill : C.blue}`,
-          borderRadius: 14, padding: "12px 14px", marginBottom: 14,
-          cursor: canOpen(upNext) ? "pointer" : "default",
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: upNext.role === "referee" ? C.hill : C.blue, marginBottom: 4 }}>
-            {upNext.role === "referee" ? "📝 次はスコアラー担当" : "🎱 次の試合"}
-          </div>
-          {lineJsx(upNext, true)}
-          <div style={{ fontSize: 12.5, fontWeight: 800, color: canOpen(upNext) ? C.blue : C.sub, marginTop: 6 }}>
-            {canOpen(upNext) ? "▶ タップしてスコア画面へ" : stLabel(upNext.st)}
-          </div>
-        </div>
-      )}
-
-      {rows.length === 0 && (
-        <div style={{ textAlign: "center", color: C.sub, fontSize: 14, padding: "28px 0" }}>予定されている試合がありません</div>
-      )}
-
-      {rows.map((r, idx) => {
-        const names = r.m.names || ["", ""];
-        const meIdx = names.indexOf(me);
-        const tot = r.m.tot || [0, 0];
-        const rtArr = r.m.raceTo || [0, 0];
-        const w = r.st === "done" ? matchWinnerIndex(r.m) : null;
-        const iWon = r.role === "play" && w === meIdx;
-        const done = r.st === "done";
-
-        // 下段：状態またはタップ導線（終了した試合は結果）
-        let bottomText, bottomColor, rightText = null;
-        if (canOpen(r)) {
-          bottomText = "▶ タップしてスコア画面へ";
-          bottomColor = C.blue;
-        } else if (done) {
-          if (r.role === "referee") {
-            bottomText = "担当終了";
-            bottomColor = C.sub;
-          } else {
-            bottomText = r.m.bothLose ? "時間切れ" : iWon ? "勝ち" : "負け";
-            bottomColor = r.m.bothLose ? C.hill : iWon ? C.win : C.sub;
-            rightText = `${tot[meIdx]} - ${tot[1 - meIdx]}`;
-          }
-        } else {
-          bottomText = stLabel(r.st);
-          bottomColor = stColor(r.st);
-          if (r.role === "play" && rtArr[meIdx] > 0) rightText = `目標 ${rtArr[meIdx]}`;
-        }
-
-        return (
-          <div key={r.m.id || idx} onClick={() => openMatch(r)} style={{
-            background: done ? C.zone : "#fff",
-            border: `1.5px solid ${r.role === "referee" ? C.hill : canOpen(r) ? C.blue : C.line}`,
-            borderRadius: 12, padding: "10px 12px", marginBottom: 8,
-            cursor: canOpen(r) ? "pointer" : "default",
-          }}>
-            {/* 上段：「14:20頃　T1で 宗宮さんと試合」の1文 */}
-            {lineJsx(r, false)}
-            {/* 下段：状態またはタップ導線 */}
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: bottomColor, whiteSpace: "nowrap" }}>{bottomText}</span>
-              {rightText && (
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{rightText}</span>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-      {err && <div style={{ textAlign: "center", fontSize: 12.5, color: C.minus, marginTop: 10 }}>同期エラー: {err}</div>}
-    </div>
-  );
-}
-
-/* ========= スコアラー未選択の画面 =========
-   以前はQRを読み取って対戦を特定していたが、対戦表のカードから直接入る方式に変更した。
-   カメラの許可も外部ライブラリも要らず、会場の明るさにも左右されない */
-function ScorerEmpty({ onGoTimeline }) {
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "64px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 10 }}>担当する試合を選んでください</div>
-      <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.8 }}>
-        「対戦表」で、呼び出し中または試合中のカードを押すと、この画面でその試合のスコアを付けられます。
-      </div>
-      <button onClick={onGoTimeline} style={{
-        background: C.blue, color: "#fff", border: "none", borderRadius: 18,
-        padding: "20px 30px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-        boxShadow: "0 4px 14px rgba(46,109,181,0.3)",
-      }}>🗓 対戦表をひらく</button>
-    </div>
-  );
-}
-
-/* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
-   スコアラーの中身（未選択なら案内画面、選択済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
-const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"], ["schedule", "📋 予定表"], ["scorer", "🎯 スコアラー"]];
+/* ========= 外枠：観戦用。対戦表とテーブルの様子を見るだけで、スコアは付けられない ========= */
 function Shell() {
-  const params = new URLSearchParams(window.location.search);
-  const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
-  const [setupInfo, setSetupInfo] = useState(() => {
-    if (!hasSetup) return null;
-    return {
-      matchId: params.get("m"),
-      names: [params.get("p1"), params.get("p2")],
-      ratings: [Number(params.get("r1")), Number(params.get("r2"))],
-      lenPct: Number(params.get("len")),
-      raceToParam: params.get("rt1") && params.get("rt2")
-        ? [Number(params.get("rt1")), Number(params.get("rt2"))]
-        : null,
-      table: Number(params.get("t")) || 1,
-    };
-  });
-  const [tab, setTab] = useState("scorer");
-
-  // 対戦表のカードから、その試合のスコアラーとして入る
-  const handlePick = (m) => {
-    applyPickedMatch({
-      matchId: m.id,
-      names: m.names || ["P1", "P2"],
-      ratings: [Number(m.r1) || 0, Number(m.r2) || 0],
-      lenPct: Number(m.lenPct) || 100,
-      raceToParam: Array.isArray(m.raceTo) ? [Number(m.raceTo[0]) || 0, Number(m.raceTo[1]) || 0] : null,
-      table: Number(m.table) || 1,
-    });
-  };
-  // 選んだ対戦をURLにも書き込んでおく（リロードしても同じ試合に戻れる）
-  const applyPickedMatch = (info) => {
-    // 再読み込みしても復元できるよう、URLにも同じ情報を反映しておく
-    const url = new URL(window.location.href);
-    url.searchParams.set("m", info.matchId);
-    url.searchParams.set("p1", info.names[0]);
-    url.searchParams.set("p2", info.names[1]);
-    url.searchParams.set("r1", info.ratings[0]);
-    url.searchParams.set("r2", info.ratings[1]);
-    url.searchParams.set("len", info.lenPct);
-    url.searchParams.set("t", info.table);
-    if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
-    window.history.replaceState({}, "", url.toString());
-    setSetupInfo(info);
-    setTab("scorer");
-  };
-  // 試合が終わって「終了」を押した時に呼ばれる。対戦表から選び直す画面に戻す
-  const handleExit = () => {
-    window.history.replaceState({}, "", window.location.pathname);
-    setSetupInfo(null);
-  };
-
+  const [tab, setTab] = useState("tables");
+  const [config, setConfig] = useState({});
+  useEffect(() => subscribeConfig(setConfig), []);
+  const liveUrl = (config.liveUrl || "").trim();
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(10.5px, 3.2vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(11px, 3.4vw, 14px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
+        {liveUrl ? (
+          <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{
+            flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
+            borderRadius: 8, padding: "5px 9px", whiteSpace: "nowrap", textDecoration: "none",
+          }}>{LIVE_LABEL}</a>
+        ) : (
+          <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
+        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
-          <TimelineTab myMatchId={setupInfo ? setupInfo.matchId : null} onPick={handlePick} />
+          <TimelineTab myMatchId={null} onPick={null} />
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
           <TablesTab />
-        </div>
-        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" }}>
-          <ScheduleTab onPick={handlePick} />
-        </div>
-        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
-          {setupInfo
-            ? <MatchScreen setupInfo={setupInfo} onExit={handleExit} />
-            : <ScorerEmpty onGoTimeline={() => setTab("timeline")} />}
         </div>
       </div>
     </div>
@@ -1232,515 +899,6 @@ function App() {
   return <Shell />;
 }
 
-/* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
-function MatchScreen({ setupInfo, onExit }) {
-  const { matchId, names, lenPct, table } = setupInfo;
-  const [res] = useState(() => setupInfo.raceToParam
-    ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
-    : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
-  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
-  const [loaded, setLoaded] = useState(false);
-  const [syncStatus, setSyncStatus] = useState(null);
-  const [nowTs, setNowTs] = useState(Date.now());
-  useEffect(() => {
-    const iv = setInterval(() => setNowTs(Date.now()), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // 球エリア内では画面スクロール（スワイプ）を無効化し、球の操作だけ効くようにする
-  const playAreaRef = useRef(null);
-  useEffect(() => {
-    const el = playAreaRef.current;
-    if (!el) return;
-    const block = (e) => e.preventDefault();
-    el.addEventListener("touchmove", block, { passive: false });
-    return () => el.removeEventListener("touchmove", block, { passive: false });
-  });
-  const [pressed, setPressed] = useState(null);
-  const [undoStack, setUndoStack] = useState([]);
-  const lastTapRef = useRef({});
-  const dirtyRef = useRef(false);
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const pushTimer = useRef(null);
-
-  const pl = [{ name: names[0], raceTo: String(state.raceTo[0]) }, { name: names[1], raceTo: String(state.raceTo[1]) }];
-
-  const applyLocal = (updater) => {
-    setState((s) => {
-      const next = typeof updater === "function" ? updater(s) : updater;
-      return { ...next, version: s.version + 1 };
-    });
-    dirtyRef.current = true;
-  };
-
-  const [resetDetected, setResetDetected] = useState(false); // 本部が対戦表を組み直し、この対戦が無くなった時に立てる
-
-  // 初回：既存の共有stateを取り込む。ここでは絶対に新規作成しない——
-  // 対戦は必ずB1（本部）が先に作成しているので、無ければ「本部が対戦表を組み直した」等でこの対戦が
-  // 無くなったということ。ここで作り直してしまうと、消えたはずの対戦が復活してB1側を汚してしまう
-  useEffect(() => {
-    (async () => {
-      try {
-        const remote = await loadMatchRemote(matchId);
-        if (remote) {
-          setState(remote);
-        } else {
-          setResetDetected(true);
-        }
-        setSyncStatus({ ok: true });
-      } catch (err) {
-        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
-      }
-      setLoaded(true);
-    })();
-  }, []);
-
-  // 相手の端末の変更を購読する（ポーリングしないので通信量がほぼゼロ）。
-  // 本部が対戦表を組み直すと、この対戦IDのデータが丸ごと消えて null が届く——その場合はリセット扱いにする
-  useEffect(() => {
-    if (!loaded) return;
-    return subscribeMatch(matchId,
-      (remote) => {
-        if (!remote) { setResetDetected(true); return; }
-        if (remote.version > stateRef.current.version) setState(remote);
-        setSyncStatus({ ok: true });
-      },
-      (err) => setSyncStatus({ ok: false, err }));
-  }, [loaded, matchId]);
-
-  // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む（リセット後は何も書き込まない）
-  useEffect(() => {
-    if (!loaded || !dirtyRef.current || resetDetected) return;
-    clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(async () => {
-      dirtyRef.current = false;
-      try {
-        await saveMatchRemote(matchId, stateRef.current);
-        setSyncStatus({ ok: true });
-      } catch (err) {
-        setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
-      }
-    }, 500);
-  }, [state, loaded, resetDetected]);
-
-  const rt = (i) => state.raceTo[i] || 0;
-  const { tot, rack, brk, balls, phase, lastResult, hist } = state;
-  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
-  // 得点・目標点・ヒントは「ラックが終わって確定した分」だけを出す（ラック中は動かない）。
-  // 勝敗の判定だけは台上の球を足した値で見る（目標に届いた時点で決着させるため）
-  const disp = [tot[0], tot[1]];
-  const liveTot = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
-  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
-
-  // ===== 持ち時間タイマー =====
-  // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
-  // matchMinutes を後から変えても既に始まっている試合の残り時間は動かない
-  const deadline = state.deadline || null;
-  // 勝敗が決まったらその時点で停止（finishedAt で固定）
-  const msLeft = deadline ? deadline - (state.finishedAt || nowTs) : null;
-  const isTimeUp = msLeft != null && msLeft <= 0;
-  const timeParts = msLeft == null ? ["--", "--"] : (() => {
-    const s = Math.max(0, Math.floor(msLeft / 1000));
-    return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
-  })();
-  // 目標達成率（確定分のみ）。100%を超えることがあるが、成績では100%を上限とする
-  const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
-
-  // ===== 勝敗判定 =====
-  // ・通常どおり、目標点に到達した方が勝ち
-  // ・ヒルヒルで両者が到達した場合は、そのラックで9番を落とした方（最終ラックの勝者）が勝ち
-  const reached = [rt(0) > 0 && tot[0] >= rt(0), rt(1) > 0 && tot[1] >= rt(1)];
-  let matchWinner = null;
-  if (reached[0] && reached[1]) matchWinner = lastResult ? lastResult.w : 0;
-  else if (reached[0]) matchWinner = 0;
-  else if (reached[1]) matchWinner = 1;
-  else if (phase === "play" && !hillHill) {
-    if (liveTot[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
-    else if (liveTot[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
-  }
-  // 時間切れ後は、今やっているラックが最終ラック。
-  // そのラックが終わってもどちらも目標に届かなければ両者負け（それぞれ達成率で評価される）
-  const bothLose = matchWinner == null && isTimeUp && phase === "done";
-  const isFinalRack = isTimeUp && matchWinner == null && !bothLose;
-
-  // 試合が決まった時点で所要時間を記録（画面には出さない）。訂正で決着が戻ったら記録も消す
-  useEffect(() => {
-    if (!loaded) return;
-    if ((matchWinner != null || bothLose) && !state.finishedAt) {
-      const fin = Date.now();
-      // 9番を落とす前に目標点へ到達して決着した場合、その時点で台上にある球はまだ tot に入っていない。
-      // ここで確定させておかないと、本部（B1）や観戦画面（B3）が「試合中」のままになる
-      const midRackWin = matchWinner != null && phase === "play" && !reached[matchWinner];
-      applyLocal((s) => ({
-        ...s,
-        ...(midRackWin ? { tot: [liveTot[0], liveTot[1]], balls: mkBalls(), phase: "done", lastResult: null } : {}),
-        finishedAt: fin,
-        elapsedMs: s.startedAt ? fin - s.startedAt : null,
-        winner: matchWinner,
-        bothLose,
-      }));
-    } else if (matchWinner == null && !bothLose && state.finishedAt) {
-      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null, bothLose: false }));
-    }
-  }, [matchWinner, bothLose, loaded, state.finishedAt]);
-
-  const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
-
-  const finish = (nb, w) => {
-    pushUndo();
-    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
-    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
-    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
-    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
-    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
-    saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
-    applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
-  };
-  const move = (n, dir) => {
-    if (phase !== "play") return;
-    const b = balls.find((x) => x.n === n);
-    let loc = b.loc;
-    if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
-    else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
-    const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
-    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
-    else { pushUndo(); applyLocal((s) => ({ ...s, balls: nb })); }
-  };
-  const toggleDead = (n) => {
-    if (phase !== "play") return;
-    pushUndo();
-    applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
-  };
-  const correct = () => {
-    if (!lastResult) return;
-    saveMatchHistory(matchId, stateRef.current, "訂正の前");
-    pushUndo();
-    applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
-  };
-  const nextRack = () => {
-    pushUndo();
-    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
-  };
-  const undoRack = () => {
-    saveMatchHistory(matchId, stateRef.current, "1ラック戻すの前");
-    pushUndo();
-    applyLocal((s) => {
-      if (!s.hist.length) return s;
-      const last = s.hist[s.hist.length - 1];
-      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
-    });
-  };
-  const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
-  const rematch = () => {
-    pushUndo();
-    applyLocal((s) => {
-      const now = Date.now();
-      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: now + matchDurationMs(s), finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
-    });
-  };
-  const backToSetup = () => {
-    window.history.replaceState({}, "", window.location.pathname);
-    if (onExit) onExit(); else window.location.reload();
-  };
-  const swapBreak = () => {
-    if (phase !== "play") return;
-    if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
-  };
-  // バンキング勝者を選んだ瞬間に試合開始を確定する（＝B1へ「試合中」を通知するトリガー）。
-  // 既に他端末で開始済みなら startedAt/deadline は変更しない
-  const chooseBreak = (i) => {
-    applyLocal((s) => {
-      if (s.startedAt) return { ...s, brk: i, phase: "play" };
-      const now = Date.now();
-      return { ...s, brk: i, phase: "play", startedAt: now, deadline: now + matchDurationMs(s) };
-    });
-  };
-
-  const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
-  const gestureImpl = (n, dy) => {
-    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
-    const now = Date.now();
-    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
-    else lastTapRef.current[n] = now;
-  };
-  const gestureRef = useRef(gestureImpl);
-  gestureRef.current = gestureImpl;
-  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
-
-  const hillInfoLocal = (i) => {
-    if (rt(i) <= 0) return { txt: "", on: false };
-    const rem = rt(i) - disp[i];
-    if (rem <= 0) return { txt: "達成", on: true };
-    // ヒルヒルはこのラックの9番で決まるので、残り点数ではなくその旨を出す
-    if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : "9番勝負！", on: true };
-    const toHill = rem - 14;
-    return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
-  };
-  const col = (loc) => balls.filter((b) => b.loc === loc);
-  const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
-  let cum = [0, 0];
-  const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
-
-  if (!loaded) {
-    return <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, color: C.sub }}>読み込み中…</div>;
-  }
-
-  if (resetDetected) {
-    return (
-      <div style={{ maxWidth: 480, margin: "0 auto", padding: "70px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>この対戦はリセットされました</div>
-        <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.7 }}>
-          本部が対戦表を組み直したようです。お手数ですが、「対戦表」から担当する試合を選び直してください。
-        </div>
-        {onExit && (
-          <button onClick={onExit} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "16px 26px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
-            🗓 対戦表にもどる
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (phase === "banking") {
-    return (
-      <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px", fontFamily: FONT, color: C.ink, textAlign: "center" }}>
-        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>バンキング</div>
-        <div style={{ fontSize: 14, color: C.sub, marginBottom: 20 }}>先攻を選んでください（どちらの端末からでもOK）</div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[0].name}<br />が先攻</button>
-          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[1].name}<br />が先攻</button>
-        </div>
-        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
-          目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
-        </div>
-        <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
-          持ち時間 <b style={{ fontSize: 20, color: TEST_SEC ? C.minus : C.ink }}>{TEST_SEC ? `${TEST_SEC}秒` : `${state.matchMinutes || DEFAULT_MATCH_MINUTES}分`}</b>（先攻を選んだ時点から計測開始）
-          {TEST_SEC ? <span style={{ color: C.minus, fontWeight: 800 }}>　※動作確認モード</span> : null}
-        </div>
-        <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.7 }}>もう1台で同じ試合を開くときは、その端末の「対戦表」から同じカードを押してください</div>
-        {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
-      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ width: 90 }} />
-        <div style={{
-          position: "absolute", left: "50%", transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", pointerEvents: "none",
-          fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
-          color: matchWinner != null ? C.sub : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
-        }}>
-          {matchWinner == null && isTimeUp ? (
-            <span>時間切れ</span>
-          ) : (
-            <>
-              <span style={{ width: 26, textAlign: "right" }}>{timeParts[0]}</span>
-              <span style={{ width: 8, textAlign: "center" }}>:</span>
-              <span style={{ width: 26, textAlign: "left" }}>{timeParts[1]}</span>
-            </>
-          )}
-        </div>
-        <span style={{ fontSize: 12.5, color: C.sub }}>T{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
-      </div>
-
-      {isFinalRack && (
-        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
-          時間切れ：このラックが最終ラック（届かなければ両者負け）
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-        {[0, 1].map((i) => {
-          const pc = PC[i]; const hi = hillInfoLocal(i);
-          return (
-            <div key={i} style={{ flex: 1, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none" }}>
-              <div style={{
-                fontSize: 15, fontWeight: 800, borderRadius: 7, padding: "2px 0", marginBottom: 2,
-                background: `linear-gradient(to right, rgba(255,255,255,0.42) ${Math.min(100, Math.round(rate(i) * 100))}%, rgba(0,0,0,0.14) ${Math.min(100, Math.round(rate(i) * 100))}%)`,
-                textShadow: "0 1px 2px rgba(0,0,0,0.35)",
-              }}>{pl[i].name}</div>
-              <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
-                {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
-              </div>
-              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
-              {/* ラックが終わっている間は、次のラックでブレイクする側に「次ブレイク」を出す。
-                  次のラックに入ったら通常の「ブレイク」表示に戻る */}
-              <div style={{ minHeight: 18, marginTop: 4 }}>
-                {phase === "done" && lastResult ? (
-                  (1 - brk) === i && (
-                    <span style={{ color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 }}>● 次ブレイク</span>
-                  )
-                ) : brk === i && (
-                  <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {hillHill && matchWinner == null && phase === "play" && (
-        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
-          ヒルヒル：このラックで9番を落とした方が勝ち
-        </div>
-      )}
-
-      {matchWinner != null || bothLose ? (
-        <div style={{ marginBottom: 6 }}>
-          {bothLose ? (
-            <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ</div>
-              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
-            </div>
-          ) : (
-            <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
-              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
-            <button onClick={correct} style={ctrl}>◀ 訂正</button>
-            <button onClick={backToSetup} style={{ ...ctrl, background: C.ink, color: "#fff", border: "none" }}>終了</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
-          {phase === "done" && lastResult ? (
-            <button onClick={correct} style={{ ...ctrl, flex: 1 }}>◀ 訂正</button>
-          ) : (
-            <button onClick={undoLast} disabled={!undoStack.length} style={{ ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 }}>↶ 1手戻す</button>
-          )}
-          {/* このラックの現在のスコア。ラック中は台上の球の数、ラックが終わったらその結果 */}
-          <div style={{ minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-            {phase === "done" && lastResult ? (
-              <>
-                <span style={{ color: C.blue }}>{lastResult.add[0]}</span>
-                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
-                <span style={{ color: C.red }}>{lastResult.add[1]}</span>
-              </>
-            ) : phase === "play" ? (
-              <>
-                <span style={{ color: C.blue }}>{live[0]}</span>
-                <span style={{ color: C.sub, margin: "0 4px" }}>-</span>
-                <span style={{ color: C.red }}>{live[1]}</span>
-              </>
-            ) : null}
-          </div>
-          {phase === "done" && lastResult ? (
-            <button onClick={nextRack} style={{ ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" }}>次のラック ▶</button>
-          ) : (
-            <button onClick={undoRack} disabled={!hist.length} style={{ ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 }}>◀ 1ラック戻す</button>
-          )}
-        </div>
-      )}
-
-      <div ref={playAreaRef} style={{ touchAction: "none" }}>
-        <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
-          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
-            {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 7, flexShrink: 0 }}>
-            {balls.map((b) => {
-              const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
-            })}
-          </div>
-          <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6 }}>
-            {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
-          </div>
-        </div>
-
-        <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
-      </div>
-
-      {histRows.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>ラック毎のスコア（履歴 {histRows.length}）</div>
-          {histRows.slice().reverse().map((h, k) => (
-            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
-              <span style={{ fontSize: 13.5, color: C.sub }}>第{h.rack}R　<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}</span>
-              <span style={{ fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 }}>
-                <b style={{ fontSize: 16.5 }}><span style={{ color: C.blue }}>{h.add[0]}</span><span style={{ color: C.sub, margin: "0 2px" }}>–</span><span style={{ color: C.red }}>{h.add[1]}</span></b>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-    </div>
-  );
-}
-
-function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
-  return (
-    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
-      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
-        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
-      </div>
-    </div>
-  );
-}
-function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
-  const size = big ? 52 : 34;
-  const base = BALL[b.n]; const nine = b.n === 9;
-  const ref = useRef(null);
-  const startYRef = useRef(0);
-
-  useEffect(() => {
-    const el = ref.current; if (!el) return;
-    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
-    const move = (e) => { e.preventDefault(); };
-    const end = (e) => {
-      e.preventDefault();
-      onPress(b.n, false);
-      const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
-      onGesture(b.n, y - startYRef.current);
-    };
-    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
-    const opts = { passive: false };
-    el.addEventListener("touchstart", start, opts);
-    el.addEventListener("touchmove", move, opts);
-    el.addEventListener("touchend", end, opts);
-    el.addEventListener("touchcancel", cancel, opts);
-    return () => {
-      el.removeEventListener("touchstart", start, opts);
-      el.removeEventListener("touchmove", move, opts);
-      el.removeEventListener("touchend", end, opts);
-      el.removeEventListener("touchcancel", cancel, opts);
-    };
-  }, [b.n, onPress, onGesture]);
-
-  return (
-    <div ref={ref}
-      onContextMenu={(e) => e.preventDefault()}
-      style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
-        background: b.dead ? C.dead : nine ? "#fff" : base,
-        border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
-        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
-        color: nine && !b.dead ? base : "#fff",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
-        touchAction: "none", cursor: "pointer", position: "relative",
-        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
-        transform: pressed ? "scale(1.25)" : "scale(1)",
-        transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
-        zIndex: pressed ? 10 : 1,
-        ...style }}>
-      {b.n}
-      {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
-      {sub && !b.dead && <span style={{ position: "absolute", top: -4, right: -4, background: C.minus, color: "#fff", width: 19, height: 19, borderRadius: 19, fontSize: 16.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</span>}
-    </div>
-  );
-}
-const ctrl = { flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 2px", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT };
 
 try {
   ReactDOM.createRoot(document.getElementById("root")).render(<App />);
