@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.162";
-const BUILD_TIME = "2026-08-07 20:30";
+const APP_VERSION = "1.163";
+const BUILD_TIME = "2026-08-07 21:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -893,7 +893,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                   <button onClick={() => setMenu("menu")} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>もどる</button>
                   <button onClick={saveEdit} disabled={saving} style={{ flex: 1, background: C.blue, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: "#fff", cursor: "pointer", fontFamily: FONT }}>{saving ? "保存中…" : "保存"}</button>
                 </div>
-                <div style={{ fontSize: 13, color: "#4A5560", marginTop: 10, lineHeight: 1.75 }}>
+                <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 10, lineHeight: 1.75 }}>
                   目標点に達していれば終了、届かなければ試合中に戻ります。
                 </div>
               </>
@@ -1511,7 +1511,7 @@ function BracketTab({ roster }) {
           </div>
 
           <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>出場者と抽選番号</div>
-          <div style={{ fontSize: 13, color: "#4A5560", marginBottom: 8, lineHeight: 1.75 }}>
+          <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 8, lineHeight: 1.75 }}>
             予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。
             1番と2番、3番と4番…が1回戦で当たります
           </div>
@@ -1542,14 +1542,14 @@ function BracketTab({ roster }) {
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>1回戦の開始予定</div>
             <TimeInput h={startH} m={startM} onH={setStartH} onM={setStartM} />
-            <div style={{ fontSize: 13, color: "#4A5560", marginTop: 6, lineHeight: 1.75 }}>
+            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 6, lineHeight: 1.75 }}>
               以降の回戦は、前の回戦が終わってから入替{changeover}分を空けて始まる想定で計算します
             </div>
           </div>
 
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 2 }}>回戦ごとの長さ</div>
-            <div style={{ fontSize: 13, color: "#4A5560", marginBottom: 10 }}>予選（{basePct}%）を基準に、勝ち上がるほど長くしています</div>
+            <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 10 }}>予選（{basePct}%）を基準に、勝ち上がるほど長くしています</div>
             {roundPlan.map((pl, i) => (
               <div key={pl.round} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
@@ -1589,7 +1589,7 @@ function BracketTab({ roster }) {
           <button onClick={registerAll} disabled={registering} style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
             {registering ? "登録中…" : `全${size - 1}試合をまとめて登録する`}
           </button>
-          <div style={{ fontSize: 13, color: "#4A5560", marginTop: 8, lineHeight: 1.75 }}>
+          <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 8, lineHeight: 1.75 }}>
             2回戦以降は「◯回戦①の勝者」の枠で押さえておき、前の回戦が終わった時点で名前と目標点が入ります。
             相手が決まるまでは卓の待機列やタイムラインには出ません。
           </div>
@@ -1716,7 +1716,7 @@ function SectionLabel({ children }) {
 }
 
 /* 説明文の共通スタイル。小さすぎ・薄すぎを避けて、離れても読める濃さにする */
-const HELP = { fontSize: 13, color: "#4A5560", lineHeight: 1.75 };
+const HELP = { fontSize: 14, color: "#3F4A55", lineHeight: 1.8 };
 
 /* 設定タブの折りたたみセクション。使う時だけ開く形にして、画面をすっきりさせる */
 function Section({ icon, title, note, sub, defaultOpen, children }) {
@@ -1727,13 +1727,13 @@ function Section({ icon, title, note, sub, defaultOpen, children }) {
         width: "100%", background: "#fff", border: "none", padding: "16px 16px",
         display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontFamily: FONT, textAlign: "left",
       }}>
-        <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
+        <span style={{ fontSize: 22, flexShrink: 0 }}>{icon}</span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 17, fontWeight: 900, color: C.ink }}>{title}</span>
-          {sub && <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: C.sub, marginTop: 2 }}>{sub}</span>}
+          <span style={{ display: "block", fontSize: 18.5, fontWeight: 900, color: C.ink }}>{title}</span>
+          {sub && <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: "#5A646E", marginTop: 3 }}>{sub}</span>}
         </span>
-        {note && <span style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, flexShrink: 0 }}>{note}</span>}
-        <span style={{ fontSize: 15, color: C.sub, flexShrink: 0 }}>{open ? "▲" : "▼"}</span>
+        {note && <span style={{ fontSize: 14, fontWeight: 800, color: C.sub, flexShrink: 0 }}>{note}</span>}
+        <span style={{ fontSize: 17, color: C.sub, flexShrink: 0 }}>{open ? "▲" : "▼"}</span>
       </button>
       {open && <div style={{ paddingBottom: 8 }}>{children}</div>}
     </div>
@@ -1768,12 +1768,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <div style={{ display: "flex", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: 4 }}>
           <button onClick={() => onSetDeviceMode("mobile")} style={{
             flex: 1, background: deviceMode !== "pc" ? "#fff" : "none", color: deviceMode !== "pc" ? C.blue : C.sub,
-            border: "none", borderRadius: 9, padding: "12px 4px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            border: "none", borderRadius: 9, padding: "13px 4px", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
             boxShadow: deviceMode !== "pc" ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
           }}>📱 スマホ操作用</button>
           <button onClick={() => onSetDeviceMode("pc")} style={{
             flex: 1, background: deviceMode === "pc" ? "#fff" : "none", color: deviceMode === "pc" ? C.blue : C.sub,
-            border: "none", borderRadius: 9, padding: "12px 4px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            border: "none", borderRadius: 9, padding: "13px 4px", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
             boxShadow: deviceMode === "pc" ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
           }}>🖥 PC表示用</button>
         </div>
@@ -1794,12 +1794,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
       <Section icon="⚙️" title="大会の設定" sub="大会名・配信リンク・スコアラー機能">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
-          <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, marginBottom: 6 }}>大会名</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>大会名</div>
           <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
             placeholder="例：第◯回 身内杯"
-            style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 16, padding: "12px 12px", outline: "none", fontFamily: FONT }} />
+            style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 17, padding: "13px 12px", outline: "none", fontFamily: FONT }} />
 
-          <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, margin: "16px 0 6px" }}>ライブ配信のURL</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, margin: "18px 0 7px" }}>ライブ配信のURL</div>
           <input value={liveUrl} onChange={(e) => updateLiveUrl(e.target.value.trim().slice(0, 200))}
             placeholder="https://www.youtube.com/@◯◯/live"
             style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 16, padding: "12px 12px", outline: "none", fontFamily: FONT }} />
@@ -1810,12 +1810,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 14px", marginTop: 16 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
               <div style={{ ...HELP, marginTop: 2 }}>人数が少ない大会などでオフにできます</div>
             </div>
             <button onClick={toggleRefereeEnabled} style={{
               background: refereeEnabled ? C.win : C.line, color: refereeEnabled ? "#fff" : C.sub,
-              border: "none", borderRadius: 20, padding: "10px 18px", fontSize: 14, fontWeight: 800,
+              border: "none", borderRadius: 20, padding: "11px 20px", fontSize: 15, fontWeight: 800,
               cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
             }}>
               {refereeEnabled ? "ON" : "OFF"}
@@ -1835,7 +1835,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <ScheduleTab roster={roster} />
       </Section>
 
-      <div style={{ textAlign: "center", padding: "18px 0 6px", fontSize: 12.5, color: C.sub }}>
+      <div style={{ textAlign: "center", padding: "18px 0 6px", fontSize: 13.5, color: C.sub }}>
         カゼログ ver{APP_VERSION}　{BUILD_TIME}
       </div>
     </div>
@@ -1878,7 +1878,7 @@ function BackupPanel() {
 
   return (
     <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
-      <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 6 }}>🗄 バックアップから戻す</div>
+      <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 7 }}>🗄 バックアップから戻す</div>
       <div style={{ ...HELP, marginBottom: 12 }}>
         対戦表の組み直し・レートの反映・決勝トーナメントの登録の直前に、その時点の全対戦を控えています。
         操作を間違えた時はここから戻せます（直近{BACKUP_KEEP}件）
@@ -1886,7 +1886,7 @@ function BackupPanel() {
       {!open ? (
         <button onClick={openPanel} style={{
           width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
-          color: C.blue, fontSize: 15, fontWeight: 800, padding: "13px 0", cursor: "pointer", fontFamily: FONT,
+          color: C.blue, fontSize: 16, fontWeight: 800, padding: "14px 0", cursor: "pointer", fontFamily: FONT,
         }}>控えを見る</button>
       ) : (
         <>
@@ -1894,11 +1894,11 @@ function BackupPanel() {
           {list && list.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>まだ控えがありません</div>}
           {list && list.map((b) => (
             <div key={b.k} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6 }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: C.ink }}>{fmtDateTime(b.at)}</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.ink }}>{fmtDateTime(b.at)}</div>
               <div style={{ ...HELP, marginBottom: 8 }}>{b.label || ""}　{b.count || 0}試合</div>
               <button onClick={() => restore(b)} disabled={busy} style={{
                 width: "100%", background: "#fff", border: `1px solid ${C.hill}`, borderRadius: 8,
-                color: C.hill, fontSize: 14.5, fontWeight: 800, padding: "11px 0", cursor: "pointer", fontFamily: FONT,
+                color: C.hill, fontSize: 15.5, fontWeight: 800, padding: "12px 0", cursor: "pointer", fontFamily: FONT,
               }}>この状態に戻す</button>
             </div>
           ))}
@@ -1982,14 +1982,14 @@ function RateApplyPanel({ roster }) {
 
   return (
     <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
-      <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 6 }}>レート変更を試合に反映</div>
+      <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 7 }}>レート変更を試合に反映</div>
       <div style={{ ...HELP, marginBottom: 12 }}>
         上でレートを直したあとに押してください。<b>まだ始まっていない試合</b>だけを、今のレートで組み直します。
         進行中・終了した試合の目標点は変わりません。
       </div>
       <button onClick={scan} disabled={scanning} style={{
         width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
-        color: C.blue, fontSize: 15, fontWeight: 800, padding: "13px 0", cursor: "pointer", fontFamily: FONT,
+        color: C.blue, fontSize: 16, fontWeight: 800, padding: "14px 0", cursor: "pointer", fontFamily: FONT,
         opacity: scanning ? 0.5 : 1,
       }}>{scanning ? "確認中…" : "🔍 変わる試合を確認する"}</button>
 
@@ -2113,7 +2113,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
           🎲 抽選番号順に並び替える
         </button>
       )}
-      <div style={{ fontSize: 13, color: "#4A5560", marginTop: 8, lineHeight: 1.75 }}>
+      <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 8, lineHeight: 1.75 }}>
         当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
       </div>
 
@@ -2407,7 +2407,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: roundRobin ? C.lightBlue : C.zone, border: `1.5px solid ${roundRobin ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>総当たりモード</div>
-          <div style={{ fontSize: 13, color: "#4A5560", marginTop: 2, lineHeight: 1.7 }}>ONの間は全員と1回ずつ対戦する総当たり戦で組みます。プレイヤータブに対戦表も表示されます</div>
+          <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>ONの間は全員と1回ずつ対戦する総当たり戦で組みます。プレイヤータブに対戦表も表示されます</div>
         </div>
         <button onClick={() => onSetRoundRobin(!roundRobin)} style={{
           background: roundRobin ? C.blue : C.line, color: roundRobin ? "#fff" : C.sub,
@@ -2486,7 +2486,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
                 style={{ background: lenPct === idealLenPct.pct ? C.win : "#fff", color: lenPct === idealLenPct.pct ? "#fff" : C.blue, border: `1.5px solid ${lenPct === idealLenPct.pct ? C.win : C.blue}`, borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
                 {lenPct === idealLenPct.pct ? "✓ " : "⏱ "}終了時刻に合わせて{idealLenPct.pct}%にする
               </button>
-              {idealLenPct.clampedHigh && <div style={{ fontSize: 13, color: "#4A5560", marginTop: 6 }}>時間に余裕があるので140%（上限）でも収まります</div>}
+              {idealLenPct.clampedHigh && <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 6 }}>時間に余裕があるので140%（上限）でも収まります</div>}
               {idealLenPct.clampedLow && <div style={{ fontSize: 11.5, color: C.hill, marginTop: 6 }}>40%（下限）にしても間に合わない可能性があります</div>}
             </div>
           )}
