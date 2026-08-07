@@ -328,7 +328,8 @@ function TimelineTab({ myMatchId, onPick }) {
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
+      <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
+        <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
         <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
         <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
           <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
@@ -600,6 +601,55 @@ function StandingsSheet({ onClose }) {
 }
 
 
+
+
+/* ========= ルールのメモ =========
+   本部（B1）の設定に書いた文章を、対戦表とスコアラーの左上のボタンから読めるようにする。
+   config/rules に平文で入っている。空なら何も出さない */
+function useRules() {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const ref = db.ref("config/rules");
+    const handler = ref.on("value", (snap) => setText(String(snap.val() || "")));
+    return () => ref.off("value", handler);
+  }, []);
+  return text;
+}
+function RulesButton({ style }) {
+  const text = useRules();
+  const [open, setOpen] = useState(false);
+  if (!text.trim()) return null;
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10,
+        padding: "6px 11px", fontSize: 13, fontWeight: 800, color: C.ink,
+        cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", ...style,
+      }}>📖 ルール</button>
+      {open && (
+        <div onClick={() => setOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000,
+          display: "flex", alignItems: "flex-end",
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: "#fff", width: "100%", maxHeight: "86vh", overflowY: "auto",
+            borderRadius: "18px 18px 0 0", padding: "16px 16px 26px", boxSizing: "border-box",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 17, fontWeight: 900, flex: 1 }}>📖 ルール</span>
+              <button onClick={() => setOpen(false)} style={{
+                background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+                padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: C.ink,
+                fontFamily: FONT, cursor: "pointer",
+              }}>閉じる</button>
+            </div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text}</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /* ========= 1行バナー =========
    本部（B1）の設定タブで編集した文言を、待機中の卓やスコアラー画面の下にランダムで出す。
@@ -1779,7 +1829,7 @@ function MatchScreen({ setupInfo, onExit }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ width: 90 }} />
+        <span style={{ width: 90 }}><RulesButton /></span>
         <div style={{
           position: "absolute", left: "50%", transform: "translateX(-50%)",
           display: "flex", alignItems: "center", pointerEvents: "none",
