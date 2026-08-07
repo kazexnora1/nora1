@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.157";
-const BUILD_TIME = "2026-08-07 11:45";
+const APP_VERSION = "1.158";
+const BUILD_TIME = "2026-08-07 15:20";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -161,6 +161,16 @@ const STALE_MS = 1000 * 60 * 60 * 6;
 /* 試合を組むときの既定の時間割。
    開始は「今から5分後」を5分刻みで切り上げた時刻（＝今から5〜10分後のキリのいい時刻）、
    終了はその3時間後。当日その場で組むことが多いので、前回の値ではなく毎回いまの時刻から出す */
+const fmtDateTime = (ms) => {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const fmtStamp = (ms) => {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 const fmtClock = (ms) => {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -172,6 +182,54 @@ function defaultSchedule() {
   st.setMinutes(Math.ceil(st.getMinutes() / 5) * 5);
   const en = new Date(st.getTime() + 3 * 60 * 60000);
   return { startH: p2(st.getHours()), startM: p2(st.getMinutes()), endH: p2(en.getHours()), endM: p2(en.getMinutes()) };
+}
+
+
+/* ========= 復元のしくみ =========
+   ・試合ごとの履歴：値を書き換える前に、その試合のスナップショットを history/<試合ID> に積む。
+     間違えて消した・直したときに、その時点へ戻せる（直近HISTORY_KEEP件だけ残す）
+   ・まるごとバックアップ：対戦表の組み直しなど、全体を入れ替える操作の前に matches 全体を控える */
+const HISTORY_KEEP = 20;
+const BACKUP_KEEP = 10;
+async function dbPush(path, value) {
+  const ref = db.ref(path).push();
+  await ref.set(value);
+  return ref.key;
+}
+async function pruneOldest(path, keep) {
+  const all = (await dbGet(path)) || {};
+  const keys = Object.keys(all).sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+  const drop = keys.slice(0, Math.max(0, keys.length - keep));
+  if (!drop.length) return;
+  const upd = {};
+  drop.forEach((k) => { upd[k] = null; });
+  await dbUpdate(path, upd);
+}
+// 復元に必要な項目だけを控える（試合の中身がそのまま戻せる粒度）
+function snapOfMatch(m) {
+  if (!m) return null;
+  const keep = ["names", "table", "slot", "tot", "raceTo", "hist", "rack", "brk", "balls", "phase",
+    "lastResult", "r1", "r2", "lenPct", "matchMinutes", "scheduledAt", "startedAt", "deadline",
+    "finishedAt", "elapsedMs", "winner", "bothLose", "referee", "createdAt", "version",
+    "bracket", "bracketRound", "bracketPos", "bracketSize", "pending"];
+  const o = {};
+  keep.forEach((k) => { if (m[k] !== undefined && m[k] !== null) o[k] = m[k]; });
+  return o;
+}
+async function saveMatchHistory(matchId, m, label) {
+  try {
+    const snap = snapOfMatch(m);
+    if (!snap) return;
+    await dbPush("history/" + matchId, { at: Date.now(), label, snap });
+    await pruneOldest("history/" + matchId, HISTORY_KEEP);
+  } catch {}
+}
+async function saveBackup(label) {
+  try {
+    const matches = (await dbGet("matches")) || {};
+    await dbPush("backups", { at: Date.now(), label, count: Object.keys(matches).length, matches });
+    await pruneOldest("backups", BACKUP_KEEP);
+  } catch {}
 }
 
 function normalizeMatch(m) {
@@ -605,9 +663,35 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
 
   // カードを押すと操作メニューが開く（スコア修正／終了にする／試合を無かったことにする）。
   // 誤タップでいきなり値が変わらないよう、必ずメニューを経由させている
-  const [menu, setMenu] = useState(null); // null | "menu" | "score" | "finish"
+  const [menu, setMenu] = useState(null); // null | "menu" | "score" | "finish" | "history"
   const [draft, setDraft] = useState(["", ""]);
   const [saving, setSaving] = useState(false);
+  const [hist, setHist] = useState(null); // 復元候補（新しい順）
+
+  // 「元に戻す」を開いた時に履歴を読む
+  const openHistory = async () => {
+    setMenu("history"); setHist(null);
+    try {
+      const all = (await dbGet("history/" + m.id)) || {};
+      const list = Object.entries(all)
+        .map(([k, v]) => ({ k, ...v }))
+        .sort((a, b) => (b.at || 0) - (a.at || 0));
+      setHist(list);
+    } catch { setHist([]); }
+  };
+  // 選んだ時点の内容で上書きする。相手の端末にも届くよう版を上げる
+  const restoreFrom = async (entry) => {
+    const sn = entry.snap || {};
+    const t = sn.tot || [0, 0];
+    if (!window.confirm(`${fmtStamp(entry.at)} の状態（${t[0]} - ${t[1]}）に戻します。\nいまのスコアは失われます。\n担当者が操作中なら、ひと声かけてから実行してください。\n\nよろしいですか？`)) return;
+    setSaving(true);
+    try {
+      await saveMatchHistory(m.id, m, "元に戻す前");
+      await dbSet("matches/" + m.id, { ...sn, version: (m.version || sn.version || 1) + 1, updatedAt: Date.now() });
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
 
   const openScore = () => { setDraft([String(tot[0]), String(tot[1])]); setMenu("score"); };
   const saveEdit = async () => {
@@ -617,6 +701,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
     const newWinner = recomputeWinner(rt, newTot, m.hist);
     setSaving(true);
     try {
+      await saveMatchHistory(m.id, m, "スコアを直す前");
       await dbUpdate("matches/" + m.id, {
         tot: newTot, winner: newWinner, version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
@@ -628,6 +713,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const finishAs = async (winner, bothLose) => {
     setSaving(true);
     try {
+      await saveMatchHistory(m.id, m, "終了にする前");
       await dbUpdate("matches/" + m.id, {
         winner, bothLose: !!bothLose, finishedAt: Date.now(),
         version: (m.version || 1) + 1, updatedAt: Date.now(),
@@ -640,6 +726,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const reopen = async () => {
     setSaving(true);
     try {
+      await saveMatchHistory(m.id, m, "終了を取り消す前");
       await dbUpdate("matches/" + m.id, {
         winner: null, bothLose: false, finishedAt: null,
         version: (m.version || 1) + 1, updatedAt: Date.now(),
@@ -650,9 +737,12 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   };
   // 試合そのものを消す。タイムラインからも成績からも消え、元には戻せない
   const removeMatch = async () => {
-    if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合を削除します。元に戻せません。よろしいですか？`)) return;
+    if (!window.confirm(`T${m.table}　${names[0]} 対 ${names[1]}\nこの試合を削除します。\n（あとで「🕘 元に戻す」から復元できます）\nよろしいですか？`)) return;
     setSaving(true);
-    try { await dbSet("matches/" + m.id, null); } catch {}
+    try {
+      await saveMatchHistory(m.id, m, "削除する前");
+      await dbSet("matches/" + m.id, null);
+    } catch {}
     setSaving(false);
   };
 
@@ -740,8 +830,34 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                 <button onClick={openScore} style={menuBtn}>✏️ スコアを修正する</button>
                 {st !== "done" && <button onClick={() => setMenu("finish")} style={menuBtn}>🏁 この試合を終了にする</button>}
                 {st === "done" && <button onClick={reopen} disabled={saving} style={menuBtn}>↩︎ 終了を取り消して試合中に戻す</button>}
+                <button onClick={openHistory} style={menuBtn}>🕘 前の状態に戻す</button>
                 <button onClick={removeMatch} disabled={saving} style={{ ...menuBtn, color: C.minus, borderColor: C.minus }}>🗑 この試合を無かったことにする</button>
                 <button onClick={() => setMenu(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
+              </div>
+            )}
+
+            {menu === "history" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  値を書き換える前の状態を控えてあります。戻したい時点を選んでください
+                </div>
+                {hist === null && <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: "14px 0" }}>読み込み中…</div>}
+                {hist && hist.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: "14px 0" }}>まだ履歴がありません</div>}
+                {hist && hist.map((h) => {
+                  const t = (h.snap && h.snap.tot) || [0, 0];
+                  return (
+                    <button key={h.k} onClick={() => restoreFrom(h)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
+                      <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 900 }}>{fmtStamp(h.at)}</span>
+                      <span style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>{h.label || ""}</span>
+                      <span style={{ float: "right", fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+                        <span style={{ color: C.blue }}>{t[0]}</span>
+                        <span style={{ color: C.sub, margin: "0 3px" }}>-</span>
+                        <span style={{ color: C.red }}>{t[1]}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+                <button onClick={() => setMenu("menu")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
 
@@ -1316,6 +1432,7 @@ function BracketTab({ roster }) {
           }
         }
       }
+      await saveBackup("決勝トーナメントを登録する前");
       await dbUpdate("matches", next);
       setMsg({ ok: true, text: `全${totalMatches}試合を登録しました` });
     } catch (e) {
@@ -1651,6 +1768,8 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
           チャンネルの /live のURLを入れておくと、当日の配信に自動でつながります
         </div>
 
+        <BackupPanel />
+
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginTop: 14 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>スコアラー機能</div>
@@ -1696,6 +1815,76 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 }
 
 /* ========= メンバータブ ========= */
+
+
+/* ========= まるごとバックアップから戻す =========
+   対戦表の組み直しなど、全体を入れ替える操作の直前に控えた状態へ戻す。
+   いまの対戦はすべて置き換わるので、確認を2回はさむ */
+function BackupPanel() {
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const all = (await dbGet("backups")) || {};
+      setList(Object.entries(all).map(([k, v]) => ({ k, ...v })).sort((a, b) => (b.at || 0) - (a.at || 0)));
+    } catch (e) { setMsg({ ok: false, text: String(e && e.message ? e.message : e) }); }
+    setBusy(false);
+  };
+  const openPanel = () => { setOpen(true); load(); };
+
+  const restore = async (b) => {
+    if (!window.confirm(`${fmtDateTime(b.at)} の状態（${b.count || 0}試合）に戻します。\nいまの対戦はすべて置き換わります。\n\nよろしいですか？`)) return;
+    if (!window.confirm("本当に戻しますか？　進行中の試合があると、その端末の表示も戻ります。")) return;
+    setBusy(true);
+    try {
+      await saveBackup("バックアップから戻す前");
+      await dbSet("matches", b.matches || {});
+      setMsg({ ok: true, text: "戻しました" });
+      load();
+    } catch (e) { setMsg({ ok: false, text: String(e && e.message ? e.message : e) }); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
+      <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🗄 バックアップから戻す</div>
+      <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginBottom: 10 }}>
+        対戦表の組み直し・レートの反映・決勝トーナメントの登録の直前に、その時点の全対戦を控えています。
+        操作を間違えた時はここから戻せます（直近{BACKUP_KEEP}件）
+      </div>
+      {!open ? (
+        <button onClick={openPanel} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
+          color: C.blue, fontSize: 14, fontWeight: 800, padding: "11px 0", cursor: "pointer", fontFamily: FONT,
+        }}>控えを見る</button>
+      ) : (
+        <>
+          {busy && <div style={{ fontSize: 12.5, color: C.sub }}>読み込み中…</div>}
+          {list && list.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>まだ控えがありません</div>}
+          {list && list.map((b) => (
+            <div key={b.k} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>{fmtDateTime(b.at)}</div>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>{b.label || ""}　{b.count || 0}試合</div>
+              <button onClick={() => restore(b)} disabled={busy} style={{
+                width: "100%", background: "#fff", border: `1px solid ${C.hill}`, borderRadius: 8,
+                color: C.hill, fontSize: 13, fontWeight: 800, padding: "8px 0", cursor: "pointer", fontFamily: FONT,
+              }}>この状態に戻す</button>
+            </div>
+          ))}
+          <button onClick={() => setOpen(false)} style={{
+            width: "100%", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+            color: C.ink, fontSize: 13, fontWeight: 700, padding: "9px 0", cursor: "pointer", fontFamily: FONT, marginTop: 2,
+          }}>閉じる</button>
+        </>
+      )}
+      {msg && <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
+    </div>
+  );
+}
 
 /* ========= レート変更を未開始の試合に反映する =========
    公式ファーゴレートを持たない選手は運営側で暫定レートを入れる。
@@ -1754,6 +1943,7 @@ function RateApplyPanel({ roster }) {
         upd[d.id + "/updatedAt"] = now;
         upd[d.id + "/version"] = d.version + 1; // 選手の端末（B2）に確実に届くよう版を上げる
       });
+      await saveBackup("レートを試合に反映する前");
       await dbUpdate("matches", upd);
       setMsg({ ok: true, text: `${diffs.length}試合の目標点を組み直しました` });
       setDiffs(null);
@@ -2145,6 +2335,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
           createdAt: m.createdAt, updatedAt: now,
         };
       });
+      await saveBackup("対戦表を組み直す前");
       await dbSet("matches", next);
       // 対戦表を組み直したら、スコアラーの担当回数も新しい大会として0からやり直す
       await dbSet("refereeCounts", {});
