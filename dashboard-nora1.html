@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.173";
-const BUILD_TIME = "2026-08-08 06:00";
+const APP_VERSION = "1.174";
+const BUILD_TIME = "2026-08-08 06:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2806,8 +2806,11 @@ function useBanner(intervalMs) {
   }, []);
   useEffect(() => {
     if (list.length < 2) return;
-    // 順番ではなく、毎回リスト全体から完全にランダムで選ぶ
-    const iv = setInterval(() => setIdx(Math.floor(Math.random() * list.length)), intervalMs || 15000);
+    // 毎回リスト全体からランダムで選ぶ。ただし直前と同じものは避ける
+    const iv = setInterval(() => setIdx((n) => {
+      const r = Math.floor(Math.random() * (list.length - 1));
+      return r >= n ? r + 1 : r;
+    }), intervalMs || 15000);
     return () => clearInterval(iv);
   }, [list, intervalMs]);
   return list[idx % list.length] || "";
