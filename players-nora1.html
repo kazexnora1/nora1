@@ -564,8 +564,9 @@ function LiveTablePanel({ tableNum, m }) {
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
     if (m.phase === "banking") return null;
-    if (bothLose) return { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
-    if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    // 達成率は本部（B1）だけが見る情報。ここでは出さない
+    if (bothLose) return { t: "時間切れ", gray: true };
+    if (winner != null) return winner === i ? { t: "勝ち" } : { t: "負け", gray: true };
     if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
@@ -833,7 +834,7 @@ function TablePanel({ tableNum, m }) {
               <div style={{ minHeight: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {bothLose ? (
                   <span style={{ background: DC.hill, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
-                    達成率 {(rate(i) * 100).toFixed(0)}％
+                    時間切れ
                   </span>
                 ) : hi ? (
                   <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
@@ -1593,17 +1594,11 @@ function MatchScreen({ setupInfo, onExit }) {
           {bothLose ? (
             <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ</div>
-              <div style={{ fontSize: 12.5, marginTop: 2, fontWeight: 700 }}>
-                達成率 {pl[0].name} {(rate(0) * 100).toFixed(1)}％ ／ {pl[1].name} {(rate(1) * 100).toFixed(1)}％
-              </div>
               <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
             </div>
           ) : (
             <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 17.5, fontWeight: 800 }}>🏆 {pl[matchWinner].name} 勝利</div>
-              <div style={{ fontSize: 12.5, marginTop: 2, color: C.hill, fontWeight: 700 }}>
-                {pl[1 - matchWinner].name} 達成率 {(rate(1 - matchWinner) * 100).toFixed(1)}％
-              </div>
               <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0]} － {disp[1]}</div>
             </div>
           )}
