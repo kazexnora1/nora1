@@ -556,8 +556,9 @@ function LiveTablePanel({ tableNum, m }) {
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
     if (m.phase === "banking") return null;
-    if (bothLose) return { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
-    if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
+    // 達成率は本部（B1）だけが見る情報。ここでは出さない
+    if (bothLose) return { t: "時間切れ", gray: true };
+    if (winner != null) return winner === i ? { t: "勝ち" } : { t: "負け", gray: true };
     if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
@@ -825,7 +826,7 @@ function TablePanel({ tableNum, m }) {
               <div style={{ minHeight: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {bothLose ? (
                   <span style={{ background: DC.hill, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
-                    達成率 {(rate(i) * 100).toFixed(0)}％
+                    時間切れ
                   </span>
                 ) : hi ? (
                   <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
