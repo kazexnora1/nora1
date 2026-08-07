@@ -1171,7 +1171,8 @@ function Shell() {
               const st = startRef.current; const t = e.changedTouches[0];
               if (!st || !t) return;
               const dx = t.clientX - st.x, dy = Math.abs(t.clientY - st.y);
-              if (key === "tables" && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
+              // バナーを✕で消してある時だけ開く（ふたつ揃って初めての抜け道）
+              if (key === "tables" && bannersClosed && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
               startRef.current = null;
             }}
             style={{ flexShrink: 0, padding: "12px 18px", background: "none", border: "none", fontSize: "clamp(12px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
