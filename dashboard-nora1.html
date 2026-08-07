@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.163";
-const BUILD_TIME = "2026-08-07 21:30";
+const APP_VERSION = "1.164";
+const BUILD_TIME = "2026-08-07 22:40";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -632,7 +632,7 @@ const menuBtn = {
    選手名は横書きのまま上下2段に並べる（B2の対戦表と同じ形）。
    横並びだと3列レイアウトでは名前が見切れるため、1人ぶんの幅をカード全体に使い、
    同じ行の右側にスコアと目標点を置く */
-const TL_CARD_H = 128; // 空きカードとも高さを揃える。中身が入りきる高さにする（呼び出し中は枠が太いぶん背が高くなる）
+const TL_CARD_H = 140; // 空きカードとも高さを揃える。中身が入りきる高さにする（呼び出し中は枠が太いぶん背が高くなる）
 
 function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
   const names = m.names || ["", ""];
@@ -783,7 +783,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
         <span style={{
           display: "inline-block", background: style.badgeBg, color: style.badgeCol,
           border: st === "call" ? `1.5px solid ${C.blue}` : "none",
-          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
+          borderRadius: 12, padding: "3px 10px", fontSize: 14.5, fontWeight: 800, whiteSpace: "nowrap",
         }}>{style.badge}</span>
       </div>
 
@@ -792,7 +792,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 4px" }}>
         {[0, 1].map((i) => (
           <div key={i} style={{
-            textAlign: "left", fontSize: 16.5, fontWeight: won(i) ? 900 : 700,
+            textAlign: "left", fontSize: 18, fontWeight: won(i) ? 900 : 700,
             color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.25,
           }}>{names[i]}</div>
@@ -801,13 +801,13 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
 
       {/* 3: この試合の設定（試合の長さ％と持ち時間）。卓見出しと同じ書き方に揃える */}
       <div style={{
-        textAlign: "center", fontSize: 11.5, fontWeight: 700, color: C.sub, flexShrink: 0,
+        textAlign: "center", fontSize: 12.5, fontWeight: 700, color: C.sub, flexShrink: 0,
         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3,
       }}>🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分</div>
 
       {/* 4: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 14, flexShrink: 0 }}>
-        {st === "done" && <span style={{ fontSize: 12, opacity: 0.6 }}>✏️</span>}
+        {st === "done" && <span style={{ fontSize: 13, opacity: 0.6 }}>✏️</span>}
         {st === "live" && (
           <div style={{ width: "100%", height: 5, background: "rgba(0,0,0,0.1)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${Math.round(finishProgress * 100)}%`, background: finishColor, borderRadius: 3, transition: "width 400ms ease" }} />
@@ -818,8 +818,8 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
       {menu && (
         <div onClick={(e) => { e.stopPropagation(); setMenu(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{m.table}・{style.badge}</div>
-            <div style={{ fontSize: 16.5, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.4 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{m.table}・{style.badge}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.4 }}>
               <span style={{ color: C.blue }}>{names[0]}</span>
               <span style={{ color: C.sub, fontSize: 13, margin: "0 6px" }}>対</span>
               <span style={{ color: C.red }}>{names[1]}</span>
@@ -838,7 +838,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
 
             {menu === "history" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
                   値を書き換える前の状態を控えてあります。戻したい時点を選んでください
                 </div>
                 {hist === null && <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: "14px 0" }}>読み込み中…</div>}
@@ -848,7 +848,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                   return (
                     <button key={h.k} onClick={() => restoreFrom(h)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
                       <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 900 }}>{fmtStamp(h.at)}</span>
-                      <span style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>{h.label || ""}</span>
+                      <span style={{ color: C.sub, fontSize: 13, marginLeft: 8 }}>{h.label || ""}</span>
                       <span style={{ float: "right", fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
                         <span style={{ color: C.blue }}>{t[0]}</span>
                         <span style={{ color: C.sub, margin: "0 3px" }}>-</span>
@@ -863,7 +863,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
 
             {menu === "finish" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>結果を選ぶと、その時点で試合終了になります</div>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>結果を選ぶと、その時点で試合終了になります</div>
                 <button onClick={() => finishAs(0, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>🏆 {names[0]} の勝ちで終了</button>
                 <button onClick={() => finishAs(1, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>🏆 {names[1]} の勝ちで終了</button>
                 <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 時間切れで終了（両者とも届かず）</button>
@@ -876,7 +876,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                 <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
                   {[0, 1].map((i) => (
                     <div key={i} style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: i === 0 ? C.blue : C.red, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
                       <input
                         type="text" inputMode="numeric" value={draft[i]} autoFocus={i === 0}
                         onChange={(e) => {
@@ -885,7 +885,7 @@ function TimelineSlotCard({ m, st, refereeEnabled, onEditReferee }) {
                         }}
                         style={{ width: "100%", boxSizing: "border-box", textAlign: "center", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "10px 0", fontSize: 22, fontWeight: 800, color: C.ink, outline: "none", fontFamily: FONT }}
                       />
-                      <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>目標 {rt[i]}</div>
+                      <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>目標 {rt[i]}</div>
                     </div>
                   ))}
                 </div>
@@ -2741,7 +2741,7 @@ function LiveTablePanel({ tableNum, m }) {
   };
   const tBadge = {
     display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
-    padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+    padding: "3px 11px", fontSize: 15, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
   };
 
   if (!m) {
@@ -2784,17 +2784,17 @@ function LiveTablePanel({ tableNum, m }) {
 
   // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
   const clockJsx = (() => {
-    if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
+    if (m.pending) return <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
     if (m.phase === "banking") {
-      return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
+      return <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
     }
     if (!m.deadline) return null;
     const left = m.deadline - (m.finishedAt || nowTs);
-    if (left <= 0) return <span style={{ fontSize: 14, fontWeight: 900, color: C.minus, whiteSpace: "nowrap" }}>⏰ 時間切れ</span>;
+    if (left <= 0) return <span style={{ fontSize: 15, fontWeight: 900, color: C.minus, whiteSpace: "nowrap" }}>⏰ 時間切れ</span>;
     const sec = Math.floor(left / 1000);
     const txt = `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
     const col = finished ? C.sub : left < 5 * 60 * 1000 ? C.hill : C.ink;
-    return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
+    return <span style={{ fontSize: 15, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
   })();
 
   const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
@@ -2809,23 +2809,23 @@ function LiveTablePanel({ tableNum, m }) {
         textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
       }}>
         <div style={{
-          fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
+          fontSize: 16.5, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
-        <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
           {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
-          {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
+          {!m.pending && <span style={{ fontSize: 21, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
               flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
             }}>{b.t}</span>
           )}
         </div>
-        <div style={{ minHeight: 17, marginTop: 4, fontSize: 11.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+        <div style={{ minHeight: 18, marginTop: 4, fontSize: 12.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
       </div>
     );
   };
@@ -2833,12 +2833,12 @@ function LiveTablePanel({ tableNum, m }) {
   // 中央：ラック履歴
   const hidden = Math.max(0, hist.length - SHOW_RACKS);
   const shown = openHist ? hist : hist.slice(hidden);
-  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
-  const numStyle = (side, strong) => ({ width: 22, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 15, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.4 };
+  const numStyle = (side, strong) => ({ width: 24, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
 
   const histJsx = (
-    <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
-      <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
+    <div style={{ width: 78, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
       {m.pending || m.phase === "banking" ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>
           {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
@@ -2848,7 +2848,7 @@ function LiveTablePanel({ tableNum, m }) {
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
             {hidden > 0 && (
               <div onClick={() => setOpenHist((v) => !v)} style={{
-                fontSize: 10.5, fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
+                fontSize: 11.5, fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
                 border: `1px solid ${C.line}`, borderRadius: 5, marginBottom: 2, cursor: "pointer", background: C.zone,
               }}>{openHist ? "▲ 畳む" : `▼ 前の${hidden}ラック`}</div>
             )}
@@ -2857,7 +2857,7 @@ function LiveTablePanel({ tableNum, m }) {
               return (
                 <div key={k} style={rowStyle}>
                   <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
-                  <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                  <span style={{ color: "#B8BFC6", fontSize: 12 }}>-</span>
                   <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
                 </div>
               );
@@ -2865,14 +2865,14 @@ function LiveTablePanel({ tableNum, m }) {
             {m.phase === "play" && (
               <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: 5, animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
                 <span style={numStyle("a")}>{live[0]}</span>
-                <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                <span style={{ color: "#B8BFC6", fontSize: 12 }}>-</span>
                 <span style={numStyle("b")}>{live[1]}</span>
               </div>
             )}
           </div>
-          <div style={{ marginTop: 4, paddingTop: 4, borderTop: `1.5px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 17, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ marginTop: 4, paddingTop: 4, borderTop: `1.5px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 19, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
             <span style={{ color: C.blue }}>{disp[0]}</span>
-            <span style={{ color: C.sub, fontSize: 13 }}>-</span>
+            <span style={{ color: C.sub, fontSize: 14 }}>-</span>
             <span style={{ color: C.red }}>{disp[1]}</span>
           </div>
         </>
@@ -2885,9 +2885,9 @@ function LiveTablePanel({ tableNum, m }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
           <span style={tBadge}>T{tableNum}</span>
-          <span style={{ fontSize: 13, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
+          <span style={{ fontSize: 14.5, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 900, color: C.ink }}>
           {stateTxt}{clockJsx}
         </span>
       </div>
@@ -2897,9 +2897,9 @@ function LiveTablePanel({ tableNum, m }) {
         {card(1)}
       </div>
       {bothLose ? (
-        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ</div>
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 16.5, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ</div>
       ) : winner != null ? (
-        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 16.5, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
       ) : null}
     </div>
   );
@@ -3330,7 +3330,7 @@ function HomeTab() {
         {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 10 }}>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 16, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{totalMatches}試合</div>
+            <div style={{ fontSize: 17.5, color: C.ink, fontWeight: 900 }}>終了 {doneCount} / 全{totalMatches}試合</div>
             <div style={{ height: 7, width: 160, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
               <div style={{ height: "100%", width: `${totalMatches ? Math.round((doneCount / totalMatches) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
             </div>
@@ -3341,14 +3341,14 @@ function HomeTab() {
         <div style={{ display: "grid", gridTemplateColumns: "44px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
           <div />
           {tinfo.map(({ ti }) => (
-            <div key={ti} style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.ink }}>T{ti + 1}</div>
+            <div key={ti} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink }}>T{ti + 1}</div>
           ))}
           {/* 左の空きスペースに、予選が終わる見込みを出す */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.25 }}>
             {headEnd.at != null && (
               <>
-                <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, whiteSpace: "nowrap" }}>{headEnd.label}</span>
-                <span style={{ fontSize: 12.5, fontWeight: 900, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtClock(headEnd.at)}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, whiteSpace: "nowrap" }}>{headEnd.label}</span>
+                <span style={{ fontSize: 13.5, fontWeight: 900, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtClock(headEnd.at)}</span>
               </>
             )}
           </div>
@@ -3376,7 +3376,7 @@ function HomeTab() {
                   )}
                 </>
               ) : (
-                <div style={{ fontSize: 11.5, color: tableAdjust === ti ? "#fff" : C.sub }}>予定なし</div>
+                <div style={{ fontSize: 12.5, color: tableAdjust === ti ? "#fff" : C.sub }}>予定なし</div>
               )}
             </div>
           ))}
@@ -3398,7 +3398,7 @@ function HomeTab() {
               {s === bracketStartRow && (
                 <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, margin: "6px 0 2px" }}>
                   <div style={{ flex: 1, height: 2, background: C.blue }} />
-                  <div style={{ fontSize: 13, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</div>
                   <div style={{ flex: 1, height: 2, background: C.blue }} />
                 </div>
               )}
@@ -3411,11 +3411,11 @@ function HomeTab() {
               {/* 時刻はカードとカードの間（行の境目）に出す。
                   そこが「前の試合が終わる時刻」であり「次の試合が始まる時刻」でもあるため */}
               <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.sub }}>{s + 1}</span>
                 {/* いちばん上のカードの上には時刻を出さない。
                     そこは「予選終了◯◯」の表示と重なってしまうため */}
                 {rowStartAt(s + 1) != null && (
-                  <span style={{ position: "absolute", bottom: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s + 1) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                  <span style={{ position: "absolute", bottom: -17, left: 0, right: 0, textAlign: "center", fontSize: 13.5, fontWeight: 900, color: rowStarted(s + 1) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                     {fmtClock(rowStartAt(s + 1))}
                   </span>
                 )}
@@ -3427,7 +3427,7 @@ function HomeTab() {
                     {e ? (
                       <TimelineSlotCard m={e.m} st={e.st} refereeEnabled={refereeEnabled} onEditReferee={(m) => setRefModalMatch(m)} />
                     ) : (
-                      <div style={{ height: TL_CARD_H, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>
+                      <div style={{ height: TL_CARD_H, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 16 }}>空き</div>
                     )}
                   </div>
                 );
