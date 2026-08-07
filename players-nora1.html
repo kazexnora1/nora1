@@ -655,19 +655,22 @@ function RulesButton({ style }) {
    本部（B1）の設定タブで編集した文言を、待機中の卓やスコアラー画面の下にランダムで出す。
    config/banners に改行区切りで入っている。空なら下の既定文言を使う */
 const DEFAULT_BANNERS = [
-  "🐾本日のミカおすすめ→レバニラ",
-  "🐾初デートのおすすめ→ガスト",
-  "🐾NO！スポハラ！",
-  "🐾球場外は1回100円(常連のみ)",
-  "🐾モスセーフティにご注意",
-  "🐾コワーキングスペースNORA",
-  "🐾あれ、髪切りました？",
-  "🐾プレデターのネコ",
-  "🐾中野軽率署",
-  "🐾それはちょっとタランティーノ",
+  "本日のミカおすすめ→レバニラ",
+  "初デートのおすすめ→ガスト",
+  "NO！スポハラ！",
+  "球場外は1回100円(常連のみ)",
+  "モスセーフティにご注意",
+  "コワーキングスペースNORA",
+  "あれ、髪切りました？",
+  "プレデターのネコ",
+  "中野軽率署",
+  "それはちょっとタランティーノ",
 ];
+/* 🐾は表示するときに必ず先頭へ付ける。保存する文章には含めない
+   （前に🐾込みで保存されたものが残っていても、ここで取り除く） */
+const stripPaw = (x) => String(x || "").replace(/^[\s🐾]+/, "").trim();
 function parseBanners(raw) {
-  const arr = String(raw == null ? "" : raw).split("\n").map((x) => x.trim()).filter(Boolean);
+  const arr = String(raw == null ? "" : raw).split("\n").map(stripPaw).filter(Boolean);
   return arr.length ? arr : DEFAULT_BANNERS;
 }
 /* 一定時間ごとに別の文言へ入れ替える */
@@ -713,6 +716,7 @@ function BannerLine({ style, boxed }) {
   const [vis, setVis] = useState(false);
   const [shift, setShift] = useState(0); // 枠からはみ出した分（横に流す量）
   const [closed, setClosed] = useState(bannersClosed);
+  const [editing, setEditing] = useState(false); // タップで開く入力窓
   const boxRef = useRef(null);
   const textRef = useRef(null);
 
@@ -763,14 +767,76 @@ function BannerLine({ style, boxed }) {
 
   return (
     <div style={{ height: h, flexShrink: 0, ...style }}>
-      <div ref={boxRef} style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26 }}>
-        <span ref={textRef} style={inner}>{shown}</span>
+      <div ref={boxRef} onClick={() => setEditing(true)} style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26, cursor: "pointer" }}>
+        <span ref={textRef} style={inner}>{shown ? "🐾" + shown : ""}</span>
         {/* うるさい時はここで閉じられる。読み込み直せばまた出る */}
-        <button onClick={closeBanners} aria-label="バナーを閉じる" style={{
+        <button onClick={(e) => { e.stopPropagation(); closeBanners(); }} aria-label="バナーを閉じる" style={{
           position: "absolute", right: 2, top: 0, bottom: 0, width: 34,
           background: "none", border: "none", color: C.sub, fontSize: 15, lineHeight: 1,
           cursor: "pointer", fontFamily: FONT, opacity: vis ? 0.7 : 0, transition: "opacity 600ms ease",
         }}>✕</button>
+      </div>
+      {editing && <BannerCompose onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+/* バナーをタップした時に出る入力窓。登録するとリストのいちばん上に入る。
+   🐾は表示するときに自動で付くので、ここでは書かない */
+function BannerCompose({ onClose }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const save = async () => {
+    const line = stripPaw(value);
+    if (!line) { onClose(); return; }
+    setBusy(true);
+    try {
+      const cur = (await db.ref("config/banners").once("value")).val();
+      const list = String(cur == null ? DEFAULT_BANNERS.join("\n") : cur)
+        .split("\n").map(stripPaw).filter(Boolean);
+      const next = [line, ...list.filter((x) => x !== line)]; // 新しいものを先頭に
+      await db.ref("config").update({ banners: next.join("\n") });
+      onClose();
+    } catch (e) {
+      setErr(String(e && e.message ? e.message : e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2100,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 18,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, padding: "18px 16px", width: "100%", maxWidth: 420, boxSizing: "border-box",
+      }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: C.ink, marginBottom: 4 }}>ひとこと追加</div>
+        <div style={{ fontSize: 13, color: "#5A646E", lineHeight: 1.7, marginBottom: 10 }}>
+          みんなの画面に出ます。先頭の🐾は自動で付きます
+        </div>
+        <input value={value} onChange={(e) => setValue(e.target.value.slice(0, 40))} autoFocus
+          placeholder="例：本日のミカおすすめ→レバニラ"
+          onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+          style={{
+            width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`,
+            borderRadius: 10, color: C.ink, fontSize: 16, padding: "12px", outline: "none", fontFamily: FONT,
+          }} />
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6, minHeight: 18 }}>
+          {err ? <span style={{ color: C.minus, fontWeight: 700 }}>{err}</span> : `${value.length}/40　プレビュー：🐾${stripPaw(value)}`}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={onClose} style={{
+            flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+            padding: "12px 0", fontSize: 15, fontWeight: 800, color: C.ink, fontFamily: FONT, cursor: "pointer",
+          }}>やめる</button>
+          <button onClick={save} disabled={busy || !stripPaw(value)} style={{
+            flex: 1, background: busy || !stripPaw(value) ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 10,
+            padding: "12px 0", fontSize: 15, fontWeight: 800, fontFamily: FONT, cursor: busy ? "wait" : "pointer",
+          }}>{busy ? "登録中…" : "登録する"}</button>
+        </div>
       </div>
     </div>
   );
