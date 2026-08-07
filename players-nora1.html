@@ -635,8 +635,11 @@ function useBanner(intervalMs) {
   }, []);
   useEffect(() => {
     if (list.length < 2) return;
-    // 順番ではなく、毎回リスト全体から完全にランダムで選ぶ
-    const iv = setInterval(() => setIdx(Math.floor(Math.random() * list.length)), intervalMs || 15000);
+    // 毎回リスト全体からランダムで選ぶ。ただし直前と同じものは避ける
+    const iv = setInterval(() => setIdx((n) => {
+      const r = Math.floor(Math.random() * (list.length - 1));
+      return r >= n ? r + 1 : r;
+    }), intervalMs || 15000);
     return () => clearInterval(iv);
   }, [list, intervalMs]);
   return list[idx % list.length] || "";
