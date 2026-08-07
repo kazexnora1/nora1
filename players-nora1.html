@@ -492,6 +492,109 @@ function roundLabelOf(m) {
 }
 
 
+/* ========= 隠しの順位表 =========
+   本来は本部（B1）だけが見る情報。表には出さないが、
+   🐾のタブを右にスワイプすると開く（知っている人だけが使える抜け道） */
+function buildStandings(matches, roster) {
+  const stats = {};
+  const ensure = (name) => {
+    if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
+    return stats[name];
+  };
+  roster.forEach((p) => { if (p.name) ensure(p.name); });
+
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || !isMatchFinished(m)) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    const names = m.names || [];
+    const tot = m.tot || [0, 0];
+    const rt = m.raceTo || [0, 0];
+    const w = matchWinnerIndex(m); // null なら両者負け
+    [0, 1].forEach((i) => {
+      if (!names[i]) return;
+      const s = ensure(names[i]);
+      s.pf += tot[i] || 0;
+      s.pa += tot[1 - i] || 0;
+      if (i === w) s.win++;
+      else {
+        s.loss++;
+        if (rt[i] > 0) s.rates.push(Math.min(1, (tot[i] || 0) / rt[i])); // 100%を上限にする
+      }
+    });
+  }
+
+  const rows = Object.values(stats).map((s) => ({
+    ...s,
+    played: s.win + s.loss,
+    avgRate: s.rates.length ? s.rates.reduce((a, b) => a + b, 0) / s.rates.length : null,
+  }));
+  rows.sort((a, b) => {
+    if (b.win !== a.win) return b.win - a.win;
+    // 負け試合がない（＝全勝）方を上に
+    const ar = a.avgRate == null ? 2 : a.avgRate;
+    const br = b.avgRate == null ? 2 : b.avgRate;
+    if (br !== ar) return br - ar;
+    return (b.pf - b.pa) - (a.pf - a.pa);
+  });
+  // 同着は同じ順位にし、次の順位は同着人数ぶん飛ばす（一般的な順位付け）
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      const p = rows[i - 1];
+      const same = p.win === r.win && (p.avgRate == null ? 2 : p.avgRate) === (r.avgRate == null ? 2 : r.avgRate) && (p.pf - p.pa) === (r.pf - r.pa);
+      r.rank = same ? p.rank : i + 1;
+    } else {
+      r.rank = 1;
+    }
+  });
+  return rows;
+}
+const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
+
+
+function StandingsSheet({ onClose }) {
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {})), []);
+  useEffect(() => subscribeRoster(setRoster), []);
+  const rows = buildStandings(matches, roster);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "#fff", width: "100%", maxHeight: "88vh", overflowY: "auto",
+        borderRadius: "18px 18px 0 0", padding: "16px 14px 26px",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 17, fontWeight: 900, flex: 1 }}>🐾 順位表</span>
+          <button onClick={onClose} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: C.ink, fontFamily: FONT, cursor: "pointer" }}>閉じる</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 54px 62px", gap: 6, fontSize: 12, fontWeight: 800, color: C.sub, padding: "0 4px 6px" }}>
+          <div>順位</div><div>名前</div><div style={{ textAlign: "center" }}>勝-負</div><div style={{ textAlign: "right" }}>達成率</div>
+        </div>
+        {rows.filter((r) => r.played > 0).map((r) => (
+          <div key={r.name} style={{
+            display: "grid", gridTemplateColumns: "34px 1fr 54px 62px", gap: 6, alignItems: "center",
+            padding: "9px 4px", borderTop: `1px solid ${C.line}`,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: r.rank <= 4 ? C.blue : C.ink }}>{r.rank}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{r.win}-{r.loss}</div>
+            <div style={{ fontSize: 15, fontWeight: 900, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtRate(r.avgRate)}</div>
+          </div>
+        ))}
+        {rows.filter((r) => r.played > 0).length === 0 && (
+          <div style={{ textAlign: "center", color: C.sub, fontSize: 14, padding: "26px 0" }}>まだ終わった試合がありません</div>
+        )}
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
+          勝ち数 → 負け試合の達成率の平均 → 得失点差 の順で並べています
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -1164,6 +1267,9 @@ function Shell() {
     };
   });
   const [tab, setTab] = useState("scorer");
+  const [showStandings, setShowStandings] = useState(false);
+  const startRef = useRef(null);   // タブをなぞり始めた位置
+  const swipedRef = useRef(false); // なぞった直後のタップでタブが切り替わらないようにする
 
   // 対戦表のカードから、その試合のスコアラーとして入る
   const handlePick = (m) => {
@@ -1202,8 +1308,18 @@ function Shell() {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(10.5px, 3.2vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+          <button key={key}
+            onClick={() => { if (swipedRef.current) { swipedRef.current = false; return; } setTab(key); }}
+            onTouchStart={(e) => { const t = e.touches[0]; startRef.current = { x: t.clientX, y: t.clientY }; swipedRef.current = false; }}
+            onTouchEnd={(e) => {
+              // 🐾のタブを右へなぞると順位表が出る（知っている人だけの抜け道）
+              const st = startRef.current; const t = e.changedTouches[0];
+              if (!st || !t) return;
+              const dx = t.clientX - st.x, dy = Math.abs(t.clientY - st.y);
+              if (key === "tables" && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
+              startRef.current = null;
+            }}
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(10.5px, 3.2vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
             {label}
           </button>
         ))}
@@ -1224,6 +1340,7 @@ function Shell() {
             : <ScorerEmpty onGoTimeline={() => setTab("timeline")} />}
         </div>
       </div>
+      {showStandings && <StandingsSheet onClose={() => setShowStandings(false)} />}
     </div>
   );
 }
