@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.161";
-const BUILD_TIME = "2026-08-07 19:40";
+const APP_VERSION = "1.162";
+const BUILD_TIME = "2026-08-07 20:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3296,7 +3296,6 @@ function HomeTab() {
     return ts.length ? Math.min(...ts) : null;
   };
   const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
-  const firstVisibleRow = foldedPrelim ? bracketStartRow : 0;
   // 予選／決勝トーナメントが終わる見込み（終わっていれば実際に終わった時刻）
   const endAtOf = (wantBracket) => {
     const ends = [];
@@ -3413,11 +3412,8 @@ function HomeTab() {
                   そこが「前の試合が終わる時刻」であり「次の試合が始まる時刻」でもあるため */}
               <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <span style={{ fontSize: 11.5, fontWeight: 800, color: C.sub }}>{s + 1}</span>
-                {s === firstVisibleRow && rowStartAt(s) != null && (
-                  <span style={{ position: "absolute", top: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                    {fmtClock(rowStartAt(s))}
-                  </span>
-                )}
+                {/* いちばん上のカードの上には時刻を出さない。
+                    そこは「予選終了◯◯」の表示と重なってしまうため */}
                 {rowStartAt(s + 1) != null && (
                   <span style={{ position: "absolute", bottom: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s + 1) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                     {fmtClock(rowStartAt(s + 1))}
