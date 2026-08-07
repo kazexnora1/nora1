@@ -17,6 +17,11 @@
     0%,49%   { background:#FFD23F; box-shadow:0 0 0 2px #E8A400; }
     50%,100% { background:#FFF6CC; box-shadow:none; }
   }
+  /* バナーの文字が枠より長い時に、ゆっくり左右へ流す */
+  @keyframes bannerScroll {
+    0%, 10%   { transform: translateX(0); }
+    90%, 100% { transform: translateX(var(--shift, 0px)); }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -78,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.170";
-const BUILD_TIME = "2026-08-08 03:00";
+const APP_VERSION = "1.172";
+const BUILD_TIME = "2026-08-08 05:10";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1852,6 +1857,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
    config/banners に改行区切りで保存し、選手側の端末にはすぐ届く */
 function BannerPanel() {
   const [text, setText] = useState(null);
+  const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const timer = useRef(null);
 
@@ -1878,7 +1884,17 @@ function BannerPanel() {
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>ひとことバナー</div>
+      {/* ふだんは触らないので畳んでおく */}
+      <button onClick={() => setOpen((v) => !v)} style={{
+        width: "100%", background: "none", border: "none", padding: "2px 0 7px",
+        display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: FONT, textAlign: "left",
+      }}>
+        <span style={{ fontSize: 16, fontWeight: 800, color: C.ink, flex: 1 }}>ひとことバナー</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{count}件</span>
+        <span style={{ fontSize: 15, color: C.sub }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {!open ? null : (
+      <>
       <div style={{ ...HELP, marginBottom: 8 }}>
         1行に1つ書いてください。空いている卓と、スコアラー画面の下に、順番を変えながら出ます。
         空にすると既定の文言に戻ります
@@ -1890,10 +1906,11 @@ function BannerPanel() {
           borderRadius: 10, color: C.ink, fontSize: 16, lineHeight: 1.8, padding: "12px",
           outline: "none", fontFamily: FONT, resize: "vertical",
         }} />
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-        <span style={{ ...HELP }}>{count}件</span>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6, minHeight: 20 }}>
         {saved && <span style={{ fontSize: 13.5, fontWeight: 800, color: C.win }}>保存しました</span>}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -2801,6 +2818,10 @@ function BannerLine({ style, boxed }) {
   const [ready, setReady] = useState(false);
   const [shown, setShown] = useState("");
   const [vis, setVis] = useState(false);
+  const [shift, setShift] = useState(0); // 枠からはみ出した分（横に流す量）
+  const boxRef = useRef(null);
+  const textRef = useRef(null);
+
   useEffect(() => {
     const t = setTimeout(() => setReady(true), 3000);
     return () => clearTimeout(t);
@@ -2812,22 +2833,38 @@ function BannerLine({ style, boxed }) {
     return () => clearTimeout(t);
   }, [ready, text]);
 
+  // 文字が枠に収まらない時は、左右にゆっくり流して最後まで読めるようにする
+  useEffect(() => {
+    const bx = boxRef.current, tx = textRef.current;
+    if (!bx || !tx) return;
+    const over = tx.scrollWidth - bx.clientWidth;
+    setShift(over > 4 ? over + 8 : 0);
+  }, [shown]);
+
   const h = boxed ? 50 : 26;
-  const base = {
+  const box = {
     height: "100%", boxSizing: "border-box",
     display: "flex", alignItems: "center", justifyContent: "center",
-    // 画面の幅に合わせて大きさを変える。狭い端末では自動で少し小さくなるので見切れにくい
-    fontSize: "clamp(14px, 4.3vw, 17px)", fontWeight: 800, color: C.sub,
-    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+    overflow: "hidden",
     opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
+    ...(boxed ? {
+      background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "0 12px",
+    } : {}),
   };
-  const box = boxed ? {
-    background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
-    padding: "0 12px", color: "#5A646E",
-  } : {};
+  const inner = {
+    fontSize: "clamp(14px, 4.3vw, 17px)", fontWeight: 800,
+    color: boxed ? "#5A646E" : C.sub, whiteSpace: "nowrap",
+    ...(shift > 0 ? {
+      // はみ出す量に応じて時間を決める（速すぎると読めない）
+      animation: `bannerScroll ${Math.max(6, Math.round(shift / 18) + 5)}s ease-in-out infinite alternate`,
+      "--shift": `-${shift}px`,
+    } : {}),
+  };
   return (
     <div style={{ height: h, flexShrink: 0, ...style }}>
-      <div style={{ ...base, ...box }}>{shown}</div>
+      <div ref={boxRef} style={box}>
+        <span ref={textRef} style={inner}>{shown}</span>
+      </div>
     </div>
   );
 }
@@ -2877,11 +2914,11 @@ function LiveTablePanel({ tableNum, m }) {
   };
 
   if (!m) {
+    // 予定のない卓は情報が無いので、場所を取らないように1行だけにする
     return (
-      <div style={panelBox}>
-        <div><span style={tBadge}>T{tableNum}</span></div>
-        {/* 待機中の卓には、本部で決めた1行バナーを出す */}
-        <div style={{ padding: "18px 4px" }}><BannerLine /></div>
+      <div style={{ ...panelBox, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>予定なし</span>
       </div>
     );
   }
@@ -3051,6 +3088,8 @@ function LiveTablesTab() {
         <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
       ))}
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+      {/* バナーはこの画面で1つだけ。下までスクロールした時に目に入る位置に置く */}
+      <BannerLine boxed style={{ marginTop: 18 }} />
     </div>
   );
 }
