@@ -635,15 +635,19 @@ function useBanner(intervalMs) {
   }, [list, intervalMs]);
   return list[idx % list.length] || "";
 }
-function BannerLine({ style }) {
+function BannerLine({ style, boxed }) {
   const text = useBanner();
   if (!text) return null;
-  return (
-    <div style={{
-      textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
-      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...style,
-    }}>{text}</div>
-  );
+  const base = {
+    textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+  };
+  // boxed：帯にして「広告枠」らしく見せる。唐突に文字が出てくる感じを避ける
+  const box = boxed ? {
+    background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+    padding: "11px 12px", color: "#5A646E",
+  } : {};
+  return <div style={{ ...base, ...box, ...style }}>{text}</div>;
 }
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
@@ -1844,7 +1848,7 @@ function MatchScreen({ setupInfo, onExit }) {
       )}
 
       {/* 画面のいちばん下に1行バナー */}
-      <BannerLine style={{ marginTop: 14, paddingBottom: 4 }} />
+      <BannerLine boxed style={{ marginTop: 16 }} />
     </div>
   );
 }
