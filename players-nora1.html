@@ -393,7 +393,6 @@ function TimelineTab({ myMatchId, onPick }) {
         })}
       </div>
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
-      <PawRow />
     </div>
   );
 }
@@ -492,22 +491,6 @@ function roundLabelOf(m) {
   return `${r}回戦`;
 }
 
-
-/* 画面の隅に置く🐾。ここでは飾りで、押しても何も起きない。
-   観戦ページ（B3）にも同じ🐾があり、そちらには隠しの仕掛けが入っている。
-   3つのアプリで同じ模様が出ることで、B3の🐾だけが浮いて見えないようにしている */
-function PawRow({ style }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 22px", ...style }}>
-      {[0, 1, 2].map((i) => (
-        <span key={i} onContextMenu={(e) => e.preventDefault()} style={{
-          userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
-          color: C.line, fontSize: 13, lineHeight: 1, opacity: 0.85,
-        }}>🐾</span>
-      ))}
-    </div>
-  );
-}
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
@@ -735,7 +718,6 @@ function TablesTab() {
       ))}
       <NextList matches={nextMatches} />
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
-      <PawRow />
     </div>
   );
 }
@@ -1139,7 +1121,6 @@ function ScheduleTab({ onPick }) {
       })}
 
       {err && <div style={{ textAlign: "center", fontSize: 12.5, color: C.minus, marginTop: 10 }}>同期エラー: {err}</div>}
-      <PawRow />
     </div>
   );
 }
@@ -1165,7 +1146,7 @@ function ScorerEmpty({ onGoTimeline }) {
 
 /* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
    スコアラーの中身（未選択なら案内画面、選択済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
-const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"], ["schedule", "📋 予定表"], ["scorer", "🎯 スコアラー"]];
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🐾 テーブル"], ["schedule", "📋 予定表"], ["scorer", "🎯 スコアラー"]];
 function Shell() {
   const params = new URLSearchParams(window.location.search);
   const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
