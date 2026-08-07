@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.174";
-const BUILD_TIME = "2026-08-08 06:40";
+const APP_VERSION = "1.175";
+const BUILD_TIME = "2026-08-08 07:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2815,6 +2815,16 @@ function useBanner(intervalMs) {
   }, [list, intervalMs]);
   return list[idx % list.length] || "";
 }
+/* バナーを閉じる仕組み。うるさいと感じた人が✖️で消せるようにする。
+   画面を読み込み直すとまた出る（設定として残さない）。
+   同じアプリ内の他のバナーもまとめて消えるように、閉じたことを共有する */
+let bannersClosed = false;
+const bannerClosers = new Set();
+function closeBanners() {
+  bannersClosed = true;
+  bannerClosers.forEach((fn) => fn(true));
+}
+
 function BannerLine({ style, boxed }) {
   const text = useBanner();
   // 画面が出た直後は出さず、3秒おいてからふわっと表示する。
@@ -2823,8 +2833,14 @@ function BannerLine({ style, boxed }) {
   const [shown, setShown] = useState("");
   const [vis, setVis] = useState(false);
   const [shift, setShift] = useState(0); // 枠からはみ出した分（横に流す量）
+  const [closed, setClosed] = useState(bannersClosed);
   const boxRef = useRef(null);
   const textRef = useRef(null);
+
+  useEffect(() => {
+    bannerClosers.add(setClosed);
+    return () => { bannerClosers.delete(setClosed); };
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setReady(true), 3000);
@@ -2864,10 +2880,18 @@ function BannerLine({ style, boxed }) {
       "--shift": `-${shift}px`,
     } : {}),
   };
+  if (closed) return null;
+
   return (
     <div style={{ height: h, flexShrink: 0, ...style }}>
-      <div ref={boxRef} style={box}>
+      <div ref={boxRef} style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26 }}>
         <span ref={textRef} style={inner}>{shown}</span>
+        {/* うるさい時はここで閉じられる。読み込み直せばまた出る */}
+        <button onClick={closeBanners} aria-label="バナーを閉じる" style={{
+          position: "absolute", right: 2, top: 0, bottom: 0, width: 34,
+          background: "none", border: "none", color: C.sub, fontSize: 15, lineHeight: 1,
+          cursor: "pointer", fontFamily: FONT, opacity: vis ? 0.7 : 0, transition: "opacity 600ms ease",
+        }}>✕</button>
       </div>
     </div>
   );
