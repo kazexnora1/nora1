@@ -549,27 +549,6 @@ function subscribeRoster(onValue) {
   return () => ref.off("value", handler);
 }
 
-/* 🐾。長押し（1.2秒）で onHit を呼ぶ。ハズレの🐾は何も起きない */
-function Paw({ hit, onHit, style }) {
-  const t = useRef(null);
-  const clear = () => { clearTimeout(t.current); t.current = null; };
-  const start = () => {
-    clear();
-    if (!hit) return;
-    t.current = setTimeout(() => { onHit(); clear(); }, 1200);
-  };
-  useEffect(() => clear, []);
-  return (
-    <span
-      onPointerDown={start} onPointerUp={clear} onPointerLeave={clear} onPointerCancel={clear}
-      onContextMenu={(e) => e.preventDefault()}
-      style={{
-        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
-        cursor: "default", color: C.line, fontSize: 13, lineHeight: 1, opacity: 0.85, ...style,
-      }}>🐾</span>
-  );
-}
-
 function StandingsSheet({ onClose }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
@@ -985,21 +964,33 @@ function TablePanel({ tableNum, m }) {
   );
 }
 
-const TABS = [["timeline", "🗓 対戦表"], ["tables", "🖥 テーブル"]];
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🐾 テーブル"]];
 
 /* ========= 外枠：観戦用。対戦表とテーブルの様子を見るだけで、スコアは付けられない ========= */
 function Shell() {
   const [tab, setTab] = useState("tables");
   const [config, setConfig] = useState({});
   const [showStandings, setShowStandings] = useState(false);
+  const startRef = useRef(null);   // タブをなぞり始めた位置
+  const swipedRef = useRef(false); // なぞった直後のタップでタブが切り替わらないようにする
   useEffect(() => subscribeConfig(setConfig), []);
   const liveUrl = (config.liveUrl || "").trim();
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
       <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(11px, 3.4vw, 14px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+          <button key={key}
+            onClick={() => { if (swipedRef.current) { swipedRef.current = false; return; } setTab(key); }}
+            onTouchStart={(e) => { const t = e.touches[0]; startRef.current = { x: t.clientX, y: t.clientY }; swipedRef.current = false; }}
+            onTouchEnd={(e) => {
+              // 🐾のタブを右へなぞると順位表が出る（本部だけが知っている抜け道）
+              const st = startRef.current; const t = e.changedTouches[0];
+              if (!st || !t) return;
+              const dx = t.clientX - st.x, dy = Math.abs(t.clientY - st.y);
+              if (key === "tables" && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
+              startRef.current = null;
+            }}
+            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(11px, 3.4vw, 14px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
             {label}
           </button>
         ))}
@@ -1011,24 +1002,13 @@ function Shell() {
         ) : (
           <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
         )}
-        <Paw style={{ marginRight: 10 }} />
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
           <TimelineTab myMatchId={null} onPick={null} />
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 14px 22px" }}>
-            <Paw />
-            <Paw />
-            <Paw hit onHit={() => setShowStandings(true)} />
-          </div>
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
           <TablesTab />
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 14px 22px" }}>
-            <Paw />
-            <Paw />
-            <Paw />
-          </div>
         </div>
       </div>
       {showStandings && <StandingsSheet onClose={() => setShowStandings(false)} />}
