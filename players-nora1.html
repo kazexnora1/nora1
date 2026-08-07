@@ -393,6 +393,7 @@ function TimelineTab({ myMatchId, onPick }) {
         })}
       </div>
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+      <PawRow />
     </div>
   );
 }
@@ -489,6 +490,23 @@ function roundLabelOf(m) {
   if (total - r === 1) return "準決勝";
   if (total - r === 2) return "準々決勝";
   return `${r}回戦`;
+}
+
+
+/* 画面の隅に置く🐾。ここでは飾りで、押しても何も起きない。
+   観戦ページ（B3）にも同じ🐾があり、そちらには隠しの仕掛けが入っている。
+   3つのアプリで同じ模様が出ることで、B3の🐾だけが浮いて見えないようにしている */
+function PawRow({ style }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 22px", ...style }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} onContextMenu={(e) => e.preventDefault()} style={{
+          userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
+          color: C.line, fontSize: 13, lineHeight: 1, opacity: 0.85,
+        }}>🐾</span>
+      ))}
+    </div>
+  );
 }
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
@@ -717,6 +735,7 @@ function TablesTab() {
       ))}
       <NextList matches={nextMatches} />
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+      <PawRow />
     </div>
   );
 }
@@ -1120,6 +1139,7 @@ function ScheduleTab({ onPick }) {
       })}
 
       {err && <div style={{ textAlign: "center", fontSize: 12.5, color: C.minus, marginTop: 10 }}>同期エラー: {err}</div>}
+      <PawRow />
     </div>
   );
 }
@@ -1570,7 +1590,7 @@ function MatchScreen({ setupInfo, onExit }) {
               {/* ラックが終わっている間は、次のラックでブレイクする側に「次ブレイク」を出す。
                   次のラックに入ったら通常の「ブレイク」表示に戻る */}
               <div style={{ minHeight: 18, marginTop: 4 }}>
-                {phase === "done" && lastResult ? (
+                {matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (
                   (1 - brk) === i && (
                     <span style={{ color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 }}>● 次ブレイク</span>
                   )
