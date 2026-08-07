@@ -990,10 +990,11 @@ function Shell() {
               if (key === "tables" && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
               startRef.current = null;
             }}
-            style={{ flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(11px, 3.4vw, 14px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
+            style={{ flexShrink: 0, padding: "12px 18px", background: "none", border: "none", fontSize: "clamp(12px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
             {label}
           </button>
         ))}
+        <span style={{ flex: 1 }} />
         {liveUrl ? (
           <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{
             flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
