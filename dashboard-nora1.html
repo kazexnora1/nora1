@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.159";
-const BUILD_TIME = "2026-08-07 17:00";
+const APP_VERSION = "1.160";
+const BUILD_TIME = "2026-08-07 18:30";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1705,6 +1705,23 @@ function ConnectionTest() {
   );
 }
 
+
+/* 画面の隅に置く🐾。ここでは飾りで、押しても何も起きない。
+   観戦ページ（B3）にも同じ🐾があり、そちらには隠しの仕掛けが入っている。
+   3つのアプリで同じ模様が出ることで、B3の🐾だけが浮いて見えないようにしている */
+function PawRow({ style }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 22px", ...style }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} onContextMenu={(e) => e.preventDefault()} style={{
+          userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
+          color: C.line, fontSize: 13, lineHeight: 1, opacity: 0.85,
+        }}>🐾</span>
+      ))}
+    </div>
+  );
+}
+
 /* 設定タブの見出し（基本設定／メンバーリスト／試合の設定を仕切る小さなラベル） */
 function SectionLabel({ children }) {
   return (
@@ -1834,9 +1851,10 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <ScheduleTab roster={roster} />
       </Section>
 
-      <div style={{ textAlign: "center", padding: "18px 0 28px", fontSize: 12.5, color: C.sub }}>
+      <div style={{ textAlign: "center", padding: "18px 0 6px", fontSize: 12.5, color: C.sub }}>
         カゼログ ver{APP_VERSION}　{BUILD_TIME}
       </div>
+      <PawRow />
     </div>
   );
 }
@@ -2917,6 +2935,7 @@ function LiveTablesTab() {
         <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
       ))}
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+      <PawRow />
     </div>
   );
 }
