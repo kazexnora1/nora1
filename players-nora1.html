@@ -114,6 +114,31 @@ function normalizeMatch(m) {
   };
 }
 
+
+/* 復元用の履歴。値が大きく動く操作の前に、その試合のスナップショットを控える。
+   本部（B1）のカードメニュー「🕘 前の状態に戻す」から、この控えに戻せる */
+const HISTORY_KEEP = 20;
+async function saveMatchHistory(matchId, m, label) {
+  try {
+    const keep = ["names", "table", "slot", "tot", "raceTo", "hist", "rack", "brk", "balls", "phase",
+      "lastResult", "r1", "r2", "lenPct", "matchMinutes", "scheduledAt", "startedAt", "deadline",
+      "finishedAt", "elapsedMs", "winner", "bothLose", "referee", "createdAt", "version",
+      "bracket", "bracketRound", "bracketPos", "bracketSize", "pending"];
+    const snap = {};
+    keep.forEach((k) => { if (m[k] !== undefined && m[k] !== null) snap[k] = m[k]; });
+    const ref = db.ref("history/" + matchId).push();
+    await ref.set({ at: Date.now(), label, snap });
+    const all = (await db.ref("history/" + matchId).once("value")).val() || {};
+    const keys = Object.keys(all).sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+    const drop = keys.slice(0, Math.max(0, keys.length - HISTORY_KEEP));
+    if (drop.length) {
+      const upd = {};
+      drop.forEach((k) => { upd[k] = null; });
+      await db.ref("history/" + matchId).update(upd);
+    }
+  } catch {}
+}
+
 /* この対戦のデータだけを読み書きする（他の卓には一切触れない） */
 async function loadMatchRemote(matchId) {
   const snap = await db.ref("matches/" + matchId).once("value");
@@ -1368,6 +1393,7 @@ function MatchScreen({ setupInfo, onExit }) {
     const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
     const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
     const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
     applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
   };
   const move = (n, dir) => {
@@ -1387,6 +1413,7 @@ function MatchScreen({ setupInfo, onExit }) {
   };
   const correct = () => {
     if (!lastResult) return;
+    saveMatchHistory(matchId, stateRef.current, "訂正の前");
     pushUndo();
     applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
   };
@@ -1395,6 +1422,7 @@ function MatchScreen({ setupInfo, onExit }) {
     applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
   };
   const undoRack = () => {
+    saveMatchHistory(matchId, stateRef.current, "1ラック戻すの前");
     pushUndo();
     applyLocal((s) => {
       if (!s.hist.length) return s;
