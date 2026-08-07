@@ -637,23 +637,39 @@ function useBanner(intervalMs) {
 }
 function BannerLine({ style, boxed }) {
   const text = useBanner();
-  // 画面が出た直後は出さず、3秒おいてから表示する（開いた瞬間に目移りしないように）
+  // 画面が出た直後は出さず、3秒おいてからふわっと表示する。
+  // 高さは最初から確保しておき、出た時に他のカードがずれないようにする
   const [ready, setReady] = useState(false);
+  const [shown, setShown] = useState("");
+  const [vis, setVis] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setReady(true), 3000);
     return () => clearTimeout(t);
   }, []);
-  if (!text || !ready) return null;
+  useEffect(() => {
+    if (!ready) return;
+    setVis(false); // いったん消してから入れ替える（文言が変わる時もふわっと切り替わる）
+    const t = setTimeout(() => { setShown(text); setVis(true); }, 260);
+    return () => clearTimeout(t);
+  }, [ready, text]);
+
+  const h = boxed ? 46 : 24;
   const base = {
-    textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
+    height: "100%", boxSizing: "border-box",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 14, fontWeight: 800, color: C.sub,
     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+    opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
   };
-  // boxed：帯にして「広告枠」らしく見せる。唐突に文字が出てくる感じを避ける
   const box = boxed ? {
     background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
-    padding: "11px 12px", color: "#5A646E",
+    padding: "0 12px", color: "#5A646E",
   } : {};
-  return <div style={{ ...base, ...box, ...style }}>{text}</div>;
+  return (
+    <div style={{ height: h, flexShrink: 0, ...style }}>
+      <div style={{ ...base, ...box }}>{shown}</div>
+    </div>
+  );
 }
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
@@ -705,7 +721,7 @@ function LiveTablePanel({ tableNum, m }) {
       <div style={panelBox}>
         <div><span style={tBadge}>T{tableNum}</span></div>
         {/* 待機中の卓には、本部で決めた1行バナーを出す */}
-        <div style={{ padding: "18px 4px" }}><BannerLine style={{ fontSize: 16 }} /></div>
+        <div style={{ padding: "18px 4px" }}><BannerLine /></div>
       </div>
     );
   }
