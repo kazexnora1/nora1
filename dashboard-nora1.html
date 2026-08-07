@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.166";
-const BUILD_TIME = "2026-08-08 00:10";
+const APP_VERSION = "1.167";
+const BUILD_TIME = "2026-08-08 01:00";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2794,15 +2794,19 @@ function useBanner(intervalMs) {
   }, [list, intervalMs]);
   return list[idx % list.length] || "";
 }
-function BannerLine({ style }) {
+function BannerLine({ style, boxed }) {
   const text = useBanner();
   if (!text) return null;
-  return (
-    <div style={{
-      textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
-      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...style,
-    }}>{text}</div>
-  );
+  const base = {
+    textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+  };
+  // boxed：帯にして「広告枠」らしく見せる。唐突に文字が出てくる感じを避ける
+  const box = boxed ? {
+    background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+    padding: "11px 12px", color: "#5A646E",
+  } : {};
+  return <div style={{ ...base, ...box, ...style }}>{text}</div>;
 }
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
