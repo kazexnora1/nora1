@@ -591,6 +591,57 @@ function StandingsSheet({ onClose }) {
   );
 }
 
+
+/* ========= 1行バナー =========
+   本部（B1）の設定タブで編集した文言を、待機中の卓やスコアラー画面の下にランダムで出す。
+   config/banners に改行区切りで入っている。空なら下の既定文言を使う */
+const DEFAULT_BANNERS = [
+  "🐾本日のミカおすすめ→レバニラ",
+  "🐾初デートのおすすめ→ガスト",
+  "🐾NO！スポハラ！",
+  "🐾球場外は1回100円(常連のみ)",
+  "🐾モスセーフティにご注意",
+  "🐾コワーキングスペースNORA",
+  "🐾あれ、髪切りました？",
+  "🐾プレデターのネコ",
+  "🐾中野軽率署",
+  "🐾それはちょっとタランティーノ",
+];
+function parseBanners(raw) {
+  const arr = String(raw == null ? "" : raw).split("\n").map((x) => x.trim()).filter(Boolean);
+  return arr.length ? arr : DEFAULT_BANNERS;
+}
+/* 一定時間ごとに別の文言へ入れ替える */
+function useBanner(intervalMs) {
+  const [list, setList] = useState(DEFAULT_BANNERS);
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * DEFAULT_BANNERS.length));
+  useEffect(() => {
+    const ref = db.ref("config/banners");
+    const handler = ref.on("value", (snap) => {
+      const arr = parseBanners(snap.val());
+      setList(arr);
+      setIdx(Math.floor(Math.random() * arr.length));
+    });
+    return () => ref.off("value", handler);
+  }, []);
+  useEffect(() => {
+    if (list.length < 2) return;
+    const iv = setInterval(() => setIdx((n) => (n + 1) % list.length), intervalMs || 15000);
+    return () => clearInterval(iv);
+  }, [list, intervalMs]);
+  return list[idx % list.length] || "";
+}
+function BannerLine({ style }) {
+  const text = useBanner();
+  if (!text) return null;
+  return (
+    <div style={{
+      textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub,
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...style,
+    }}>{text}</div>
+  );
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -639,7 +690,8 @@ function LiveTablePanel({ tableNum, m }) {
     return (
       <div style={panelBox}>
         <div><span style={tBadge}>T{tableNum}</span></div>
-        <div style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.sub, padding: "18px 0" }}>待機中</div>
+        {/* 待機中の卓には、本部で決めた1行バナーを出す */}
+        <div style={{ padding: "18px 4px" }}><BannerLine style={{ fontSize: 16 }} /></div>
       </div>
     );
   }
