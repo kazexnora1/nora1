@@ -1560,7 +1560,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </div>
 
-      <Section icon="🎲" title="抽選（本名の確定）" sub="番号にひもづく本名を入力" note={`${roster.filter((p) => p.name).length}/14人`} defaultOpen>
+      <Section icon="🎲" title="メンバー" sub="メンバー登録と抽選番号入力" note={`${roster.filter((p) => p.name).length}人`} defaultOpen>
         <DrawTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       </Section>
 
@@ -2092,6 +2092,16 @@ function ReshuffleTab() {
 /* ========= ルールのメモ ========= */
 function RulesPanel() {
   const [text, setText] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try { const cur = await dbGet("config/rules"); setText(cur == null ? "" : String(cur)); }
+      catch { setText(""); }
+    })();
+  }, []);
   const update = (v) => {
     setText(v); setSaved(false);
     clearTimeout(timer.current);
