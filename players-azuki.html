@@ -276,6 +276,11 @@ function TimelineTab({ myMatchId, onPick }) {
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
       <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
         <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
+        <span style={{
+          position: "absolute", right: 0, top: -2, fontSize: 13, fontWeight: 800, color: C.sub,
+          background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10,
+          padding: "6px 11px", whiteSpace: "nowrap",
+        }}>8/9あずき杯</span>
         <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
         <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
           <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
@@ -585,7 +590,7 @@ function RulesButton({ style }) {
                 fontFamily: FONT, cursor: "pointer",
               }}>閉じる</button>
             </div>
-            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text}</div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" }}>{text}</div>
           </div>
         </div>
       )}
