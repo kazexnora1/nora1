@@ -1450,7 +1450,6 @@ function ScheduleTab({ onPick }) {
         const names = r.m.names || ["", ""];
         const meIdx = names.indexOf(me);
         const tot = r.m.tot || [0, 0];
-        const rtArr = r.m.raceTo || [0, 0];
         const w = r.st === "done" ? matchWinnerIndex(r.m) : null;
         const iWon = r.role === "play" && w === meIdx;
         const done = r.st === "done";
@@ -1472,7 +1471,6 @@ function ScheduleTab({ onPick }) {
         } else {
           bottomText = stLabel(r.st);
           bottomColor = stColor(r.st);
-          if (r.role === "play" && rtArr[meIdx] > 0) rightText = `目標 ${rtArr[meIdx]}`;
         }
 
         return (
@@ -1496,6 +1494,7 @@ function ScheduleTab({ onPick }) {
       })}
 
       {err && <div style={{ textAlign: "center", fontSize: 12.5, color: C.minus, marginTop: 10 }}>同期エラー: {err}</div>}
+      <BannerLine boxed style={{ marginTop: 18 }} />
     </div>
   );
 }
