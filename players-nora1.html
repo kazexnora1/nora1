@@ -1755,7 +1755,7 @@ function MatchScreen({ setupInfo, onExit }) {
   if (reached[0] && reached[1]) matchWinner = lastResult ? lastResult.w : 0;
   else if (reached[0]) matchWinner = 0;
   else if (reached[1]) matchWinner = 1;
-  else if (phase === "play" && !hillHill) {
+  else if (phase === "play" && !hillHill && !suppressWin) {
     if (liveTot[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
     else if (liveTot[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
   }
@@ -1772,6 +1772,8 @@ function MatchScreen({ setupInfo, onExit }) {
       // 9番を落とす前に目標点へ到達して決着した場合、その時点で台上にある球はまだ tot に入っていない。
       // ここで確定させておかないと、本部（B1）や観戦画面（B3）が「試合中」のままになる
       const midRackWin = matchWinner != null && phase === "play" && !reached[matchWinner];
+      // 9番を落とさずに目標へ届いた決着。あとで訂正できるように直前の状態を控える
+      if (midRackWin) { pushUndo(); saveMatchHistory(matchId, stateRef.current, "9番以外で決着の前"); }
       applyLocal((s) => ({
         ...s,
         ...(midRackWin ? { tot: [liveTot[0], liveTot[1]], balls: mkBalls(), phase: "done", lastResult: null } : {}),
@@ -1786,6 +1788,16 @@ function MatchScreen({ setupInfo, onExit }) {
   }, [matchWinner, bothLose, loaded, state.finishedAt]);
 
   const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
+  // 9番以外（ラック途中で目標に到達）で決着した直後に訂正した時、
+  // 台上の球がそのままだとまたすぐ決着してしまうので、球を直すまで判定を止める
+  const [suppressWin, setSuppressWin] = useState(false);
+
+  // 台上の球を直して目標に届かなくなったら、ふつうの判定に戻す
+  useEffect(() => {
+    if (!suppressWin) return;
+    const over = (rt(0) > 0 && liveTot[0] >= rt(0)) || (rt(1) > 0 && liveTot[1] >= rt(1));
+    if (!over) setSuppressWin(false);
+  }, [suppressWin, liveTot[0], liveTot[1]]);
 
   const finish = (nb, w) => {
     pushUndo();
@@ -1813,7 +1825,15 @@ function MatchScreen({ setupInfo, onExit }) {
     applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
   };
   const correct = () => {
-    if (!lastResult) return;
+    // 9番以外で決まった時はラックの結果が無いので、決着する直前の状態へ戻す。
+    // 戻したあとは台上の球を直せる（直すまで自動の決着はしない）
+    if (!lastResult) {
+      if (!undoStack.length) return;
+      saveMatchHistory(matchId, stateRef.current, "訂正の前（9番以外の決着）");
+      setSuppressWin(true);
+      undoLast();
+      return;
+    }
     saveMatchHistory(matchId, stateRef.current, "訂正の前");
     pushUndo();
     applyLocal((s) => ({ ...s, tot: [s.tot[0] - s.lastResult.add[0], s.tot[1] - s.lastResult.add[1]], hist: s.hist.slice(0, -1), lastResult: null, phase: "play" }));
