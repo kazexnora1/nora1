@@ -1373,6 +1373,9 @@ function MatchScreen({ setupInfo, onExit }) {
   });
   const [pressed, setPressed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
+  // 9番以外（ラック途中で目標に到達）で決着した直後に訂正した時、
+  // 台上の球がそのままだとまたすぐ決着してしまうので、球を直すまで判定を止める
+  const [suppressWin, setSuppressWin] = useState(false);
   const lastTapRef = useRef({});
   const dirtyRef = useRef(false);
   const stateRef = useRef(state);
@@ -1487,7 +1490,6 @@ function MatchScreen({ setupInfo, onExit }) {
   }, [matchWinner, loaded, state.finishedAt]);
 
   const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
-  const [suppressWin, setSuppressWin] = useState(false);
 
   useEffect(() => {
     if (!suppressWin) return;
