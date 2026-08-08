@@ -1041,8 +1041,9 @@ function NextList({ matches, roster }) {
 }
 
 /* ========= 予定表タブ：選手ごとの予定表 =========
-   自分の番号を1度選ぶと端末に覚える。出場する試合とスコアラー担当を時系列に並べて出す */
-const MYNUM_KEY = "azuki_c2_mynum_v1";
+   自分の名前を1度選ぶと端末に覚える。番号は選んだ名前からrosterを見て都度引くので、
+   抽選前に名前だけ選んでおいても、あとで番号が入力された瞬間に自動で反映される */
+const MYNAME_KEY = "azuki_c2_myname_v1";
 function subscribeConfig(onValue) {
   const ref = db.ref("config");
   const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
@@ -1055,7 +1056,7 @@ function scheduleOrder(m) {
 function ScheduleTab({ onPick }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
-  const [me, setMe] = useState(() => { try { const v = parseInt(localStorage.getItem(MYNUM_KEY), 10); return v >= 1 && v <= 14 ? v : null; } catch { return null; } });
+  const [myName, setMyName] = useState(() => { try { return localStorage.getItem(MYNAME_KEY) || ""; } catch { return ""; } });
   const [picking, setPicking] = useState(false);
   const [err, setErr] = useState(null);
   const [config, setConfig] = useState({});
@@ -1072,13 +1073,19 @@ function ScheduleTab({ onPick }) {
     [matches, changeover, config]
   );
 
-  const choose = (num) => {
-    setMe(num);
-    try { localStorage.setItem(MYNUM_KEY, String(num)); } catch {}
+  const choose = (name) => {
+    setMyName(name);
+    try { localStorage.setItem(MYNAME_KEY, name); } catch {}
     setPicking(false);
   };
 
-  const myName = me != null ? nameOfNum(me, roster) : "";
+  // 自分の番号は、選んだ名前から毎回roster参照で引く。抽選前（番号未入力）はnullのまま
+  const me = React.useMemo(() => {
+    if (!myName) return null;
+    const p = roster.find((x) => x.name === myName);
+    return p && p.num != null ? p.num : null;
+  }, [myName, roster]);
+  const namedRoster = React.useMemo(() => roster.filter((p) => p.name), [roster]);
 
   const rows = React.useMemo(() => {
     const all = [];
@@ -1095,28 +1102,44 @@ function ScheduleTab({ onPick }) {
   const remain = playRows.filter((r) => r.st !== "done").length;
   const upNext = rows.find((r) => r.st !== "done") || null;
 
-  if (me == null || picking) {
+  if (!myName || picking) {
     return (
       <div style={{ padding: "22px 16px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
-        <div style={{ fontSize: 19, fontWeight: 800, textAlign: "center", marginBottom: 6 }}>自分の番号を選んでください</div>
+        <div style={{ fontSize: 19, fontWeight: 800, textAlign: "center", marginBottom: 6 }}>自分の名前を選んでください</div>
         <div style={{ fontSize: 13, color: C.sub, textAlign: "center", marginBottom: 18, lineHeight: 1.7 }}>
-          当日引いたカードの番号です。この端末に覚えておきます。あとから変更できます
+          この端末に覚えておきます。あとから変更できます
         </div>
+        {namedRoster.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 14 }}>メンバーがまだ登録されていません</div>}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-          {Array.from({ length: 14 }, (_, i) => i + 1).map((n) => (
-            <button key={n} onClick={() => choose(n)} style={{
-              background: n === me ? C.blue : "#fff", color: n === me ? "#fff" : C.ink,
-              border: `1.5px solid ${n === me ? C.blue : C.line}`, borderRadius: 12,
+          {namedRoster.map((p) => (
+            <button key={p.id} onClick={() => choose(p.name)} style={{
+              background: p.name === myName ? C.blue : "#fff", color: p.name === myName ? "#fff" : C.ink,
+              border: `1.5px solid ${p.name === myName ? C.blue : C.line}`, borderRadius: 12,
               padding: "12px 14px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT, minWidth: 60,
-            }}>{n}番{nameOfNum(n, roster) !== String(n) ? <><br /><span style={{ fontSize: 11, fontWeight: 700 }}>{nameOfNum(n, roster)}</span></> : null}</button>
+            }}>{p.name}{p.num != null ? <><br /><span style={{ fontSize: 11, fontWeight: 700 }}>{p.num}番</span></> : null}</button>
           ))}
         </div>
-        {me != null && (
+        {myName && (
           <button onClick={() => setPicking(false)} style={{
             width: "100%", marginTop: 20, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12,
             padding: "12px 0", fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT,
           }}>キャンセル</button>
         )}
+      </div>
+    );
+  }
+
+  if (me == null) {
+    return (
+      <div style={{ padding: "22px 16px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto", textAlign: "center" }}>
+        <div style={{ fontSize: 19, fontWeight: 800, marginBottom: 8 }}>{myName} さん、抽選待ちです</div>
+        <div style={{ fontSize: 13.5, color: C.sub, lineHeight: 1.8, marginBottom: 20 }}>
+          本部で番号が入力されると、自動でここに予定が出ます
+        </div>
+        <button onClick={() => setPicking(true)} style={{
+          background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 20px",
+          fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT,
+        }}>名前を変更</button>
       </div>
     );
   }
@@ -1173,7 +1196,7 @@ function ScheduleTab({ onPick }) {
     <div style={{ padding: "16px 12px 40px", fontFamily: FONT, color: C.ink, maxWidth: 480, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 900 }}>{me}番　{myName !== String(me) ? myName : "（本名未入力）"} さんの予定</div>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>{myName} さんの予定（{me}番）</div>
           <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>
             残り {remain} 試合 ／ 全 {playRows.length} 試合
           </div>
@@ -1182,7 +1205,7 @@ function ScheduleTab({ onPick }) {
         <button onClick={() => setPicking(true)} style={{
           background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 12px",
           fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT, flexShrink: 0,
-        }}>番号を変更</button>
+        }}>名前を変更</button>
       </div>
 
       {upNext && (
