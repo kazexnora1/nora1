@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>あずき杯 観戦ページ</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
+  @keyframes rackFlash {
+    0%,49%   { background:#FFD23F; box-shadow:0 0 0 2px #E8A400; }
+    50%,100% { background:#FFF6CC; box-shadow:none; }
+  }
+  @keyframes bannerScroll {
+    0%, 10%   { transform: translateX(0); }
+    90%, 100% { transform: translateX(var(--shift, 0px)); }
+  }
+  @keyframes urgentPulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
+</style>
+<script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<script>
+  function showCrash(msg) {
+    const el = document.getElementById("crashlog");
+    el.style.display = "block";
+    el.textContent = "エラーが発生しました:\n\n" + msg;
+  }
+  window.onerror = function (msg, src, line, col, err) {
+    showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
+  };
+  window.addEventListener("unhandledrejection", function (e) {
+    showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+const C = {
+  bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
+};
+
+/* ========= あずき杯ルール ========= */
+const ROUND_TARGET = { prelim: 20, quarterfinal: 25, semifinal: 30, final: 40 };
+
+/* ========= 共有バックエンド：Firebase Realtime Database（読み取り専用で使う） ========= */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCWezKgtuG3MSNGzUNRKr2IIdNJI4WKtnA",
+  authDomain: "azuki-c8669.firebaseapp.com",
+  databaseURL: "https://azuki-c8669-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "azuki-c8669",
+  storageBucket: "azuki-c8669.firebasestorage.app",
+  messagingSenderId: "913363526404",
+  appId: "1:913363526404:web:ac8383f7432461b64c6651",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+
+function normalizeMatch(m) {
+  if (!m) return m;
+  return {
+    ...m,
+    names: Array.isArray(m.names) ? m.names : ["1", "2"],
+    tot: Array.isArray(m.tot) ? m.tot : [0, 0],
+    raceTo: Array.isArray(m.raceTo) ? m.raceTo : [ROUND_TARGET.prelim, ROUND_TARGET.prelim],
+    balls: Array.isArray(m.balls) ? m.balls : [],
+    hist: Array.isArray(m.hist) ? m.hist : [],
+    rack: m.rack || 1,
+    version: m.version || 1,
+    phase: m.phase || "banking",
+    brk: m.brk === 0 || m.brk === 1 ? m.brk : null,
+    lastResult: m.lastResult || null,
+  };
+}
+/* 番号（対戦データに入っている識別子）から、その人の表示名を引く */
+function nameOfNum(num, roster) {
+  const n = parseInt(num, 10);
+  const p = (roster || []).find((x) => x.num === n);
+  return p && p.name ? p.name : String(num);
+}
+function subscribeRoster(onValue) {
+  const ref = db.ref("roster");
+  const handler = ref.on("value", (snap) => onValue(Array.isArray(snap.val()) ? snap.val() : []));
+  return () => ref.off("value", handler);
+}
+
+const LIVE_LABEL = "📺 ライブ配信";
+function subscribeConfig(onValue) {
+  const ref = db.ref("config");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}));
+  return () => ref.off("value", handler);
+}
+
+/* ========= 全卓の対戦を購読する共通ヘルパー ========= */
+function subscribeAllMatches(onValue, onError) {
+  const ref = db.ref("matches");
+  const handler = ref.on("value", (snap) => onValue(snap.val() || {}),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+const STALE_MS = 1000 * 60 * 60 * 6;
+function isMatchFinished(m) {
+  if (m.bothLose) return true;
+  if (m.winner === 0 || m.winner === 1) return true;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
+}
+function matchWinnerIndex(m) {
+  if (m.bothLose) return null;
+  if (m.winner === 0 || m.winner === 1) return m.winner;
+  const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
+  const r0 = rt[0] > 0 && tot[0] >= rt[0], r1 = rt[1] > 0 && tot[1] >= rt[1];
+  if (r0 && r1) { const last = (m.hist || []).slice(-1)[0]; return last ? last.w : 0; }
+  if (r0) return 0;
+  if (r1) return 1;
+  return null;
+}
+function getAllForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+function getQueueForTable(matches, tableNum) {
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || Number(m.table) !== tableNum) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (isMatchFinished(m)) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
+  return list;
+}
+function annotateColumn(list) {
+  let calledYet = false;
+  return list.map((m) => {
+    if (isMatchFinished(m)) return { m, st: "done" };
+    if (m.startedAt) return { m, st: "live" };
+    if (m.pending) return { m, st: "pending" };
+    if (!calledYet) { calledYet = true; return { m, st: "call" }; }
+    return { m, st: "queued" };
+  });
+}
+/* 卓ごとに実際の進行を追って、各試合の開始見込み時刻を出す */
+function buildEta(matches, changeoverMin) {
+  const eta = {};
+  const chg = (changeoverMin || 0) * 60000;
+  [1, 2, 3].forEach((t) => {
+    let cursor = null;
+    getAllForTable(matches, t).forEach((m) => {
+      const mins = m.matchMinutes || 30;
+      if (isMatchFinished(m)) {
+        eta[m.id] = { start: m.startedAt || null, end: m.finishedAt || m.updatedAt || null, done: true };
+        cursor = m.finishedAt || m.updatedAt || cursor;
+        return;
+      }
+      const start = m.startedAt ? m.startedAt : Math.max(cursor != null ? cursor + chg : Date.now(), Date.now());
+      eta[m.id] = { start, end: start + mins * 60000, started: !!m.startedAt };
+      cursor = start + mins * 60000;
+    });
+  });
+  return eta;
+}
+const fmtClock = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+/* 予選／準々決勝／準決勝／決勝 */
+function roundLabelOf(m) {
+  if (!m || !m.bracket) return "予選";
+  const total = Math.round(Math.log2(m.bracketSize || 8));
+  const r = m.bracketRound || 1;
+  if (r === total) return "決勝";
+  if (total - r === 1) return "準決勝";
+  return "準々決勝";
+}
+
+/* ========= 対戦表タブ（見るだけ。タップでは何も起きない） ========= */
+function TimelineTab() {
+  const [cols, setCols] = useState([[], [], []]);
+  const [roster, setRoster] = useState([]);
+  const [eta, setEta] = useState({});
+  const [foldPrelim, setFoldPrelim] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => subscribeAllMatches(
+    (matches) => {
+      setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t))));
+      setEta(buildEta(matches || {}, 5));
+      setErr(null);
+    },
+    (e) => setErr(e)), []);
+  useEffect(() => subscribeRoster(setRoster), []);
+
+  const slots = Math.max(1, ...cols.map((c) => c.length));
+  const total = cols.reduce((a, c) => a + c.length, 0);
+  const doneCount = cols.reduce((a, c) => a + c.filter((e) => e.st === "done").length, 0);
+
+  let bracketStart = null;
+  cols.forEach((col) => col.forEach((e, si) => {
+    if (e && e.m.bracket && (bracketStart === null || si < bracketStart)) bracketStart = si;
+  }));
+  const prelimEntries = cols.flatMap((col) => col.filter((e, si) => bracketStart === null || si < bracketStart));
+  const prelimDone = prelimEntries.length > 0 && prelimEntries.every((e) => e.st === "done");
+  useEffect(() => {
+    if (foldPrelim === null && prelimDone && bracketStart !== null) setFoldPrelim(true);
+  }, [prelimDone, bracketStart, foldPrelim]);
+  const folded = foldPrelim === true && bracketStart !== null;
+  const rowStartAt = (si) => {
+    const ts = [0, 1, 2].map((ti) => {
+      const e = cols[ti][si];
+      if (!e) return null;
+      const info = eta[e.m.id];
+      return (e.m.startedAt || (info && info.start)) || null;
+    }).filter(Boolean);
+    return ts.length ? Math.min(...ts) : null;
+  };
+  const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
+  const firstVisibleRow = folded ? bracketStart : 0;
+
+  return (
+    <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
+        <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
+        <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
+        <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
+          <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "46px repeat(3, minmax(0, 1fr))", columnGap: 5, rowGap: 22 }}>
+        <div />
+        {[1, 2, 3].map((t) => (
+          <div key={t} style={{ textAlign: "center", fontSize: 20, fontWeight: 900, color: C.ink, paddingBottom: 2 }}>T{t}</div>
+        ))}
+
+        {folded && (
+          <div onClick={() => setFoldPrelim(false)} style={{
+            gridColumn: "1 / -1", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+            padding: "11px 0", textAlign: "center", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer",
+          }}>▼ 予選 {prelimEntries.length}試合（終了）を見る</div>
+        )}
+
+        {Array.from({ length: slots }, (_, s) => {
+          const isBracketHead = bracketStart !== null && s === bracketStart;
+          if (folded && bracketStart !== null && s < bracketStart) return null;
+          return (
+            <React.Fragment key={s}>
+              {isBracketHead && (
+                <>
+                  <div style={{
+                    gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8,
+                    fontSize: 14.5, fontWeight: 900, color: C.hill, marginTop: 4,
+                  }}>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                    <span style={{ whiteSpace: "nowrap" }}>🏆 ここから決勝トーナメント</span>
+                    <span style={{ flex: 1, height: 2, background: C.hill, opacity: 0.35 }} />
+                  </div>
+                  {!folded && (
+                    <div onClick={() => setFoldPrelim(true)} style={{
+                      gridColumn: "1 / -1", textAlign: "center", fontSize: 12, fontWeight: 800,
+                      color: C.sub, cursor: "pointer", marginTop: -2,
+                    }}>▲ 予選をたたむ</div>
+                  )}
+                </>
+              )}
+              <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{s + 1}</span>
+                {s === firstVisibleRow && rowStartAt(s) != null && (
+                  <span style={{ position: "absolute", top: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    {fmtClock(rowStartAt(s))}
+                  </span>
+                )}
+                {rowStartAt(s + 1) != null && (
+                  <span style={{ position: "absolute", bottom: -17, left: 0, right: 0, textAlign: "center", fontSize: 12.5, fontWeight: 900, color: rowStarted(s + 1) ? C.ink : C.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    {fmtClock(rowStartAt(s + 1))}
+                  </span>
+                )}
+              </div>
+              {[0, 1, 2].map((ti) => {
+                const e = cols[ti][s];
+                return <div key={ti}>{e
+                  ? <TimelineSlotCard m={e.m} st={e.st} roster={roster} />
+                  : <div style={{ height: 108, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 15 }}>空き</div>}</div>;
+              })}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+    </div>
+  );
+}
+function TimelineSlotCard({ m, st, roster }) {
+  const tot = m.tot || [0, 0];
+  const w = st === "done" ? matchWinnerIndex(m) : null;
+  const names = [nameOfNum(m.names[0], roster), nameOfNum(m.names[1], roster)];
+
+  const style =
+    st === "done"
+      ? (m.bothLose
+          ? { bg: "#fff", border: C.line, badgeBg: C.hillBg, badgeCol: C.hill, badge: "時間切れ" }
+          : { bg: "#fff", border: C.line, badgeBg: C.zone, badgeCol: C.sub, badge: "試合終了" })
+      : st === "live"
+      ? { bg: C.lightBlue, border: C.blue, badgeBg: C.blue, badgeCol: "#fff", badge: "試合中" }
+      : st === "call"
+      ? { bg: "#fff", border: C.blue, badgeBg: "#fff", badgeCol: C.blue, badge: "呼び出し中" }
+      : st === "pending"
+      ? { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "勝者待ち" }
+      : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
+
+  const won = (i) => !m.bothLose && w === i;
+
+  return (
+    <div style={{
+      position: "relative", height: 108, boxSizing: "border-box", background: style.bg,
+      border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`,
+      borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 7,
+      overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
+    }}>
+      <div style={{ textAlign: "center" }}>
+        <span style={{
+          display: "inline-block", background: style.badgeBg, color: style.badgeCol,
+          border: st === "call" ? `1.5px solid ${C.blue}` : "none",
+          borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
+        }}>{style.badge}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "0 5px" }}>
+        {[0, 1].map((i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 16, fontWeight: won(i) ? 900 : 700,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red),
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{names[i]}</span>
+            <span style={{
+              flexShrink: 0, fontVariantNumeric: "tabular-nums", lineHeight: 1.2,
+              fontSize: st === "done" ? 17 : 21, fontWeight: 900,
+              color: st === "done" ? (won(i) ? C.win : C.sub) : C.ink,
+            }}>
+              {st === "done" ? (m.bothLose ? "－" : won(i) ? "勝" : "負") : st === "live" ? tot[i] : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========= 隠しの順位表 =========
+   本来は本部だけが見る情報。画面に散らした🐾を長押し……ではなく、
+   バナーを✕で消した状態で🐾タブを右にスワイプすると開く */
+function buildStandings(matches, roster) {
+  const stats = {};
+  const ensure = (num) => {
+    if (!stats[num]) stats[num] = { num, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
+    return stats[num];
+  };
+  for (let i = 1; i <= 14; i++) ensure(i);
+
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || m.bracket || !isMatchFinished(m)) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    const names = m.names || [];
+    const tot = m.tot || [0, 0];
+    const rt = m.raceTo || [0, 0];
+    const w = matchWinnerIndex(m);
+    [0, 1].forEach((i) => {
+      const num = parseInt(names[i], 10);
+      if (!num) return;
+      const s = ensure(num);
+      s.pf += tot[i] || 0;
+      s.pa += tot[1 - i] || 0;
+      if (i === w) s.win++;
+      else {
+        s.loss++;
+        if (rt[i] > 0) s.rates.push(Math.min(1, (tot[i] || 0) / rt[i]));
+      }
+    });
+  }
+
+  const rows = Object.values(stats).map((s) => ({
+    ...s,
+    name: nameOfNum(s.num, roster),
+    played: s.win + s.loss,
+    avgRate: s.rates.length ? s.rates.reduce((a, b) => a + b, 0) / s.rates.length : null,
+  }));
+  rows.sort((a, b) => {
+    if (b.win !== a.win) return b.win - a.win;
+    const ar = a.avgRate == null ? 2 : a.avgRate;
+    const br = b.avgRate == null ? 2 : b.avgRate;
+    if (br !== ar) return br - ar;
+    return (b.pf - b.pa) - (a.pf - a.pa);
+  });
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      const p = rows[i - 1];
+      const same = p.win === r.win && (p.avgRate == null ? 2 : p.avgRate) === (r.avgRate == null ? 2 : r.avgRate) && (p.pf - p.pa) === (r.pf - r.pa);
+      r.rank = same ? p.rank : i + 1;
+    } else {
+      r.rank = 1;
+    }
+  });
+  return rows;
+}
+const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
+
+function StandingsSheet({ onClose }) {
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {})), []);
+  useEffect(() => subscribeRoster(setRoster), []);
+  const rows = buildStandings(matches, roster);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "#fff", width: "100%", maxHeight: "88vh", overflowY: "auto",
+        borderRadius: "18px 18px 0 0", padding: "16px 14px 26px",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 17, fontWeight: 900, flex: 1 }}>🐾 順位表</span>
+          <button onClick={onClose} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: C.ink, fontFamily: FONT, cursor: "pointer" }}>閉じる</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 54px 62px", gap: 6, fontSize: 12, fontWeight: 800, color: C.sub, padding: "0 4px 6px" }}>
+          <div>順位</div><div>名前</div><div style={{ textAlign: "center" }}>勝-負</div><div style={{ textAlign: "right" }}>達成率</div>
+        </div>
+        {rows.filter((r) => r.played > 0).map((r) => (
+          <div key={r.num} style={{
+            display: "grid", gridTemplateColumns: "34px 1fr 54px 62px", gap: 6, alignItems: "center",
+            padding: "9px 4px", borderTop: `1px solid ${C.line}`,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.ink }}>{r.rank}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{r.win}-{r.loss}</div>
+            <div style={{ fontSize: 15, fontWeight: 900, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtRate(r.avgRate)}</div>
+          </div>
+        ))}
+        {rows.filter((r) => r.played > 0).length === 0 && (
+          <div style={{ textAlign: "center", color: C.sub, fontSize: 14, padding: "26px 0" }}>まだ終わった試合がありません</div>
+        )}
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
+          勝ち数 → 負け試合の達成率の平均 → 得失点差 の順で並べています。上位8人が決勝トーナメントへ進出。
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= ルールのメモ ========= */
+function useRules() {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const ref = db.ref("config/rules");
+    const handler = ref.on("value", (snap) => setText(String(snap.val() || "")));
+    return () => ref.off("value", handler);
+  }, []);
+  return text;
+}
+function RulesButton({ style }) {
+  const text = useRules();
+  const [open, setOpen] = useState(false);
+  if (!text.trim()) return null;
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10,
+        padding: "6px 11px", fontSize: 13, fontWeight: 800, color: C.ink,
+        cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", ...style,
+      }}>📖 ルール</button>
+      {open && (
+        <div onClick={() => setOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000,
+          display: "flex", alignItems: "flex-end",
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: "#fff", width: "100%", maxHeight: "86vh", overflowY: "auto",
+            borderRadius: "18px 18px 0 0", padding: "16px 16px 26px", boxSizing: "border-box",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 17, fontWeight: 900, flex: 1 }}>📖 ルール</span>
+              <button onClick={() => setOpen(false)} style={{
+                background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+                padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: C.ink,
+                fontFamily: FONT, cursor: "pointer",
+              }}>閉じる</button>
+            </div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text}</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const APP_KIND = "viewer";
+function useBannerPostAllowed() {
+  const [ok, setOk] = useState(APP_KIND === "hq");
+  useEffect(() => {
+    if (APP_KIND === "hq") return;
+    const ref = db.ref("config");
+    const handler = ref.on("value", (snap) => {
+      const c = snap.val() || {};
+      const v = APP_KIND === "viewer" ? c.bannerPostViewer : c.bannerPostPlayer;
+      setOk(v !== false && v !== "off");
+    });
+    return () => ref.off("value", handler);
+  }, []);
+  return ok;
+}
+
+const DEFAULT_BANNERS = [
+  "本日のミカおすすめ→レバニラ",
+  "初デートのおすすめ→ガスト",
+  "NO！スポハラ！",
+  "モスセーフティにご注意",
+  "コワーキングスペースNORA",
+  "あれ、髪切りました？",
+  "プレデターのネコ",
+  "中野軽率署",
+  "それはちょっとタランティーノ",
+];
+const stripPaw = (x) => String(x || "").replace(/^[\s🐾]+/, "").trim();
+function parseBanners(raw) {
+  const arr = String(raw == null ? "" : raw).split("\n").map(stripPaw).filter(Boolean);
+  return arr.length ? arr : DEFAULT_BANNERS;
+}
+function useBanner(intervalMs) {
+  const [list, setList] = useState(DEFAULT_BANNERS);
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * DEFAULT_BANNERS.length));
+  useEffect(() => {
+    const ref = db.ref("config/banners");
+    const handler = ref.on("value", (snap) => {
+      const arr = parseBanners(snap.val());
+      setList(arr);
+      setIdx(Math.floor(Math.random() * arr.length));
+    });
+    return () => ref.off("value", handler);
+  }, []);
+  useEffect(() => {
+    if (list.length < 2) return;
+    const iv = setInterval(() => setIdx((n) => {
+      const r = Math.floor(Math.random() * (list.length - 1));
+      return r >= n ? r + 1 : r;
+    }), intervalMs || 15000);
+    return () => clearInterval(iv);
+  }, [list, intervalMs]);
+  return list[idx % list.length] || "";
+}
+let bannersClosed = false;
+const bannerClosers = new Set();
+function closeBanners() {
+  bannersClosed = true;
+  bannerClosers.forEach((fn) => fn(true));
+}
+
+function BannerLine({ style, boxed }) {
+  const text = useBanner();
+  const [ready, setReady] = useState(false);
+  const [shown, setShown] = useState("");
+  const [vis, setVis] = useState(false);
+  const [shift, setShift] = useState(0);
+  const [closed, setClosed] = useState(bannersClosed);
+  const [editing, setEditing] = useState(false);
+  const canPost = useBannerPostAllowed();
+  const boxRef = useRef(null);
+  const textRef = useRef(null);
+
+  useEffect(() => {
+    bannerClosers.add(setClosed);
+    return () => { bannerClosers.delete(setClosed); };
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    setVis(false);
+    const t = setTimeout(() => { setShown(text); setVis(true); }, 260);
+    return () => clearTimeout(t);
+  }, [ready, text]);
+
+  useEffect(() => {
+    const bx = boxRef.current, tx = textRef.current;
+    if (!bx || !tx) return;
+    const over = tx.scrollWidth - bx.clientWidth;
+    setShift(over > 4 ? over + 8 : 0);
+  }, [shown]);
+
+  const h = boxed ? 50 : 26;
+  const box = {
+    height: "100%", boxSizing: "border-box",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    overflow: "hidden",
+    opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
+    ...(boxed ? {
+      background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "0 12px",
+    } : {}),
+  };
+  const inner = {
+    fontSize: "clamp(14px, 4.3vw, 17px)", fontWeight: 800,
+    color: boxed ? "#5A646E" : C.sub, whiteSpace: "nowrap",
+    ...(shift > 0 ? {
+      animation: `bannerScroll ${Math.max(6, Math.round(shift / 18) + 5)}s ease-in-out infinite alternate`,
+      "--shift": `-${shift}px`,
+    } : {}),
+  };
+  if (closed) return null;
+
+  return (
+    <div style={{ height: h, flexShrink: 0, ...style }}>
+      <div ref={boxRef} onClick={() => { if (canPost) setEditing(true); }}
+        style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26, cursor: canPost ? "pointer" : "default" }}>
+        <span ref={textRef} style={inner}>{shown ? "🐾" + shown : ""}</span>
+        <button onClick={(e) => { e.stopPropagation(); closeBanners(); }} aria-label="バナーを閉じる" style={{
+          position: "absolute", right: 2, top: 0, bottom: 0, width: 34,
+          background: "none", border: "none", color: C.sub, fontSize: 15, lineHeight: 1,
+          cursor: "pointer", fontFamily: FONT, opacity: vis ? 0.7 : 0, transition: "opacity 600ms ease",
+        }}>✕</button>
+      </div>
+      {editing && <BannerCompose onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+function BannerCompose({ onClose }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const save = async () => {
+    const line = stripPaw(value);
+    if (!line) { onClose(); return; }
+    setBusy(true);
+    try {
+      const cur = (await db.ref("config/banners").once("value")).val();
+      const list = String(cur == null ? DEFAULT_BANNERS.join("\n") : cur)
+        .split("\n").map(stripPaw).filter(Boolean);
+      const next = [line, ...list.filter((x) => x !== line)];
+      await db.ref("config").update({ banners: next.join("\n") });
+      onClose();
+    } catch (e) {
+      setErr(String(e && e.message ? e.message : e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2100,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 18,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, padding: "18px 16px", width: "100%", maxWidth: 420, boxSizing: "border-box",
+      }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: C.ink, marginBottom: 4 }}>ひとこと追加</div>
+        <div style={{ fontSize: 13, color: "#5A646E", lineHeight: 1.7, marginBottom: 10 }}>
+          みんなの画面に出ます。先頭の🐾は自動で付きます
+        </div>
+        <input value={value} onChange={(e) => setValue(e.target.value.slice(0, 40))} autoFocus
+          placeholder="例：本日のミカおすすめ→レバニラ"
+          onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+          style={{
+            width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`,
+            borderRadius: 10, color: C.ink, fontSize: 16, padding: "12px", outline: "none", fontFamily: FONT,
+          }} />
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6, minHeight: 18 }}>
+          {err ? <span style={{ color: C.minus, fontWeight: 700 }}>{err}</span> : `${value.length}/40　プレビュー：🐾${stripPaw(value)}`}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={onClose} style={{
+            flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+            padding: "12px 0", fontSize: 15, fontWeight: 800, color: C.ink, fontFamily: FONT, cursor: "pointer",
+          }}>やめる</button>
+          <button onClick={save} disabled={busy || !stripPaw(value)} style={{
+            flex: 1, background: busy || !stripPaw(value) ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 10,
+            padding: "12px 0", fontSize: 15, fontWeight: 800, fontFamily: FONT, cursor: busy ? "wait" : "pointer",
+          }}>{busy ? "登録中…" : "登録する"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 対戦データに入っている各選手のファーゴレート（ハンデ無しのためこのアプリでは使わない） */
+
+/* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
+   スコアはラック中も球を入れるたびに更新される（JPAルールは9番を待つ必要がないため） */
+const SHOW_RACKS = 5;
+
+function LiveTablePanel({ tableNum, m, roster }) {
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [openHist, setOpenHist] = useState(false);
+  const [flashing, setFlashing] = useState(false);
+  const lastLiveRef = useRef(null);
+  const flashTimerRef = useRef(null);
+
+  useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
+
+  const balls = (m && m.balls) || [];
+  const live = [
+    balls.filter((b) => b.loc === "p1" && !b.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0),
+    balls.filter((b) => b.loc === "p2" && !b.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0),
+  ];
+  const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
+
+  useEffect(() => {
+    if (!m || m.phase !== "play") { lastLiveRef.current = liveKey; return; }
+    if (lastLiveRef.current !== null && lastLiveRef.current !== liveKey) {
+      setFlashing(true);
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashing(false), 5000);
+    }
+    lastLiveRef.current = liveKey;
+  }, [liveKey]);
+  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
+
+  const panelBox = {
+    background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
+    padding: "10px 12px", marginBottom: 14, boxSizing: "border-box",
+    opacity: m && m.pending ? 0.75 : 1,
+  };
+  const tBadge = {
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
+    padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+  };
+
+  if (!m) {
+    return (
+      <div style={{ ...panelBox, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>予定なし</span>
+      </div>
+    );
+  }
+
+  const names = [nameOfNum(m.names[0], roster), nameOfNum(m.names[1], roster)];
+  const raceTo = m.raceTo || [0, 0];
+  const tot = m.tot || [0, 0];
+  const hist = m.hist || [];
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const bothLose = !!m.bothLose;
+  const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
+  const winner = bothLose ? null
+    : (m.winner === 0 || m.winner === 1) ? m.winner
+    : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
+    : reached[0] ? 0 : reached[1] ? 1 : null;
+  const finished = winner != null || bothLose;
+
+  const badgeOf = (i) => {
+    if (m.phase === "banking") return null;
+    if (bothLose) return { t: "時間切れ", gray: true };
+    if (winner != null) return winner === i ? { t: "勝ち" } : { t: "負け", gray: true };
+    const rem = raceTo[i] - disp[i];
+    if (rem <= 0) return { t: "達成" };
+    return { t: `${rem} more`, tier: rem <= 3 ? "close" : rem <= 5 ? "near" : "far" };
+  };
+
+  const clockJsx = (() => {
+    if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 目安{m.matchMinutes || 30}分</span>;
+    if (m.phase === "banking") {
+      return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 目安 {m.matchMinutes || 30}分</span>;
+    }
+    if (!m.deadline) return null;
+    const left = m.deadline - (m.finishedAt || nowTs);
+    if (left <= 0) return <span style={{ fontSize: 14, fontWeight: 900, color: C.hill, whiteSpace: "nowrap" }}>⏰ 早めに撞いてね</span>;
+    const sec = Math.floor(left / 1000);
+    const txt = `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+    const col = finished ? C.sub : left < 5 * 60 * 1000 ? C.hill : C.ink;
+    return <span style={{ fontSize: 14, fontWeight: 900, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>⏰ {txt}</span>;
+  })();
+
+  const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+
+  const card = (i) => {
+    const pc = i === 0 ? C.blue : C.red;
+    const b = badgeOf(i);
+    const isBrk = m.brk === i;
+    return (
+      <div style={{
+        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px",
+        textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+      }}>
+        <div style={{
+          fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
+          padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{names[i]}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", marginTop: 6 }}>
+          {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
+          {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
+        </div>
+        <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
+          {b && (
+            <span style={{
+              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : b.tier === "close" ? C.minus : b.tier === "near" ? C.hill : pc, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: b.tier === "close" ? 14 : 12.5, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              boxShadow: b.tier === "close" ? `0 0 0 2px ${C.minus}` : b.tier === "near" ? `0 0 0 2px ${C.hill}` : "none",
+              animation: b.tier === "close" ? "urgentPulse 0.9s ease-in-out infinite" : "none",
+            }}>{b.t}</span>
+          )}
+        </div>
+        <div style={{ minHeight: 17, marginTop: 4, fontSize: 11.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+      </div>
+    );
+  };
+
+  const hidden = Math.max(0, hist.length - SHOW_RACKS);
+  const shown = openHist ? hist : hist.slice(hidden);
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
+  const numStyle = (side, strong) => ({ width: 22, textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+
+  const histJsx = (
+    <div style={{ width: 72, flexShrink: 0, background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "5px 4px", display: "flex", flexDirection: "column" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 3, letterSpacing: 1 }}>ラック</div>
+      {m.pending || m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, textAlign: "center" }}>
+          {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
+        </div>
+      ) : (
+        <>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
+            {hidden > 0 && (
+              <div onClick={() => setOpenHist((v) => !v)} style={{
+                fontSize: 10.5, fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
+                border: `1px solid ${C.line}`, borderRadius: 5, marginBottom: 2, cursor: "pointer", background: C.zone,
+              }}>{openHist ? "▲ 畳む" : `▼ 前の${hidden}ラック`}</div>
+            )}
+            {shown.map((h, k) => {
+              const add = h.add || [0, 0];
+              return (
+                <div key={k} style={rowStyle}>
+                  <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
+                  <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                  <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
+                </div>
+              );
+            })}
+            {m.phase === "play" && (
+              <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: 5, animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
+                <span style={numStyle("a")}>{live[0]}</span>
+                <span style={{ color: "#B8BFC6", fontSize: 11 }}>-</span>
+                <span style={numStyle("b")}>{live[1]}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 4, paddingTop: 4, borderTop: `1.5px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 17, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.blue }}>{disp[0]}</span>
+            <span style={{ color: C.sub, fontSize: 13 }}>-</span>
+            <span style={{ color: C.red }}>{disp[1]}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={panelBox}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span style={tBadge}>T{tableNum}</span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 900, color: C.ink }}>
+          {stateTxt}{clockJsx}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 5, alignItems: "stretch" }}>
+        {card(0)}
+        {histJsx}
+        {card(1)}
+      </div>
+      {bothLose ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.hill, borderRadius: 8, padding: "3px 0" }}>時間切れ</div>
+      ) : winner != null ? (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 15, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[winner]} 勝利</div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ========= テーブルの様子タブ（スマホなので縦積み） ========= */
+function TablesTab() {
+  const [queues, setQueues] = useState([[], [], []]);
+  const [roster, setRoster] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => subscribeAllMatches(
+    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (e) => setErr(e)), []);
+  useEffect(() => subscribeRoster(setRoster), []);
+
+  const nextMatches = queues
+    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+    .filter(Boolean);
+
+  return (
+    <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      {[0, 1, 2].map((i) => (
+        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} roster={roster} />
+      ))}
+      <NextList matches={nextMatches} roster={roster} />
+      {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
+      <BannerLine boxed style={{ marginTop: 18 }} />
+    </div>
+  );
+}
+const DC = {
+  ink: "#0E1216", sub: "#3C454E", line: "#0E1216", lineSoft: "#B8BFC6",
+  blue: "#12508F", red: "#A3211A", win: "#1E6B36", hill: "#8A4B0B",
+};
+function TitleBadge({ children }) {
+  return (
+    <span style={{
+      display: "inline-block", background: DC.ink, color: "#fff", borderRadius: 6,
+      padding: "2px 10px", fontSize: 13.5, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+    }}>{children}</span>
+  );
+}
+function NextList({ matches, roster }) {
+  return (
+    <div style={{ background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 14px", boxSizing: "border-box" }}>
+      <div style={{ marginBottom: 8 }}><TitleBadge>次の試合</TitleBadge></div>
+      {matches.length === 0 && <div style={{ color: DC.sub, fontSize: 15, fontWeight: 800, textAlign: "center", padding: "12px 0" }}>予定なし</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {matches.map((m, i) => (
+          <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, border: `2px solid ${DC.line}`, borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: DC.ink, borderRadius: 5, padding: "1px 7px", flexShrink: 0 }}>T{m.tableNum}</span>
+            <span style={{ fontSize: 15.5, fontWeight: 800, color: DC.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {nameOfNum(m.names[0], roster)} <span style={{ color: DC.sub, fontWeight: 700 }}>対</span> {nameOfNum(m.names[1], roster)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🐾 テーブル"]];
+
+/* ========= 外枠：観戦用。対戦表とテーブルの様子を見るだけで、スコアは付けられない ========= */
+function Shell() {
+  const [tab, setTab] = useState("tables");
+  const [config, setConfig] = useState({});
+  const [showStandings, setShowStandings] = useState(false);
+  const startRef = useRef(null);
+  const swipedRef = useRef(false);
+  useEffect(() => subscribeConfig(setConfig), []);
+  const liveUrl = (config.liveUrl || "").trim();
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
+        {TABS.map(([key, label]) => (
+          <button key={key}
+            onClick={() => { if (swipedRef.current) { swipedRef.current = false; return; } setTab(key); }}
+            onTouchStart={(e) => { const t = e.touches[0]; startRef.current = { x: t.clientX, y: t.clientY }; swipedRef.current = false; }}
+            onTouchEnd={(e) => {
+              const st = startRef.current; const t = e.changedTouches[0];
+              if (!st || !t) return;
+              const dx = t.clientX - st.x, dy = Math.abs(t.clientY - st.y);
+              if (key === "tables" && bannersClosed && dx > 60 && dy < 40) { swipedRef.current = true; setShowStandings(true); }
+              startRef.current = null;
+            }}
+            style={{ flexShrink: 0, padding: "12px 18px", background: "none", border: "none", fontSize: "clamp(12px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" }}>
+            {label}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        {liveUrl ? (
+          <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{
+            flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
+            borderRadius: 8, padding: "5px 9px", whiteSpace: "nowrap", textDecoration: "none",
+          }}>{LIVE_LABEL}</a>
+        ) : (
+          <span style={{ flexShrink: 0, marginRight: 10, fontSize: 10.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 7px", whiteSpace: "nowrap" }}>観戦用</span>
+        )}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" }}>
+          <TimelineTab />
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" }}>
+          <TablesTab />
+        </div>
+      </div>
+      {showStandings && <StandingsSheet onClose={() => setShowStandings(false)} />}
+    </div>
+  );
+}
+
+function App() {
+  return <Shell />;
+}
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (e) {
+  showCrash(e.message + "\n" + (e.stack || ""));
+}
+</script>
+</body>
+</html>
