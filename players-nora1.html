@@ -864,6 +864,12 @@ function BannerCompose({ onClose }) {
   );
 }
 
+/* 対戦データに入っている各選手のファーゴレート */
+function rateOfPlayer(m, i) {
+  const v = parseInt(i === 0 ? (m && m.r1) : (m && m.r2), 10);
+  return v > 0 ? v : null;
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -978,6 +984,10 @@ function LiveTablePanel({ tableNum, m }) {
           fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
+        {/* ファーゴレート。運営が暫定で決めた人もいるので、無い時は出さない */}
+        <div style={{ minHeight: 14, fontSize: 11.5, fontWeight: 800, opacity: 0.72, letterSpacing: 0.3, marginBottom: 2 }}>
+          {rateOfPlayer(m, i) ? `FR${rateOfPlayer(m, i)}` : ""}
+        </div>
         <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
           {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
           {!m.pending && <span style={{ fontSize: 19, fontWeight: 700, opacity: 0.75 }}>/{raceTo[i]}</span>}
