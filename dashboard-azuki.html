@@ -22,6 +22,10 @@
     0%, 10%   { transform: translateX(0); }
     90%, 100% { transform: translateX(var(--shift, 0px)); }
   }
+  @keyframes urgentPulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -2339,7 +2343,7 @@ function LiveTablePanel({ tableNum, m, roster }) {
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
-  const disp = tot;
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
@@ -2353,7 +2357,8 @@ function LiveTablePanel({ tableNum, m, roster }) {
     if (bothLose) return { t: `達成率 ${Math.round((raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0) * 100)}％`, gray: true };
     if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round((raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0) * 100)}％`, gray: true };
     const rem = raceTo[i] - disp[i];
-    return rem <= 0 ? { t: "達成" } : { t: `あと${rem}点` };
+    if (rem <= 0) return { t: "達成" };
+    return { t: `${rem} more`, tier: rem <= 3 ? "close" : rem <= 5 ? "near" : "far" };
   };
 
   const clockJsx = (() => {
@@ -2392,9 +2397,11 @@ function LiveTablePanel({ tableNum, m, roster }) {
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
-              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : b.tier === "close" ? C.minus : b.tier === "near" ? C.hill : pc, borderRadius: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              fontSize: b.tier === "close" ? 15 : 13.5, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              boxShadow: b.tier === "close" ? `0 0 0 2px ${C.minus}` : b.tier === "near" ? `0 0 0 2px ${C.hill}` : "none",
+              animation: b.tier === "close" ? "urgentPulse 0.9s ease-in-out infinite" : "none",
             }}>{b.t}</span>
           )}
         </div>
