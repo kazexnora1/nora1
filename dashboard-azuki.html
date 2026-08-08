@@ -651,6 +651,20 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee }) {
     } catch {}
     setSaving(false);
   };
+  // まだ始まっていない試合を、別の空いている卓へ移す（4試合を3卓に組む決勝トーナメントなどで、
+  // どの卓が先に空くか当日の進み具合次第なので、本部の判断で調整できるようにする）
+  const moveTable = async (newTable) => {
+    if (newTable === m.table) { setMenu("menu"); return; }
+    setSaving(true);
+    try {
+      await saveMatchHistory(m.id, m, "卓移動の前");
+      await dbUpdate("matches/" + m.id, {
+        table: newTable, version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
 
   const style =
     st === "done"
@@ -729,9 +743,27 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee }) {
                 <button onClick={openScore} style={menuBtn}>✏️ スコアを修正する</button>
                 {st !== "done" && <button onClick={() => setMenu("finish")} style={menuBtn}>🏁 この試合を終了にする</button>}
                 {st === "done" && <button onClick={reopen} disabled={saving} style={menuBtn}>↩︎ 終了を取り消して試合中に戻す</button>}
+                {(st === "call" || st === "queued" || st === "pending") && <button onClick={() => setMenu("move")} style={menuBtn}>🔀 卓を移動する</button>}
                 <button onClick={openHistory} style={menuBtn}>🕘 前の状態に戻す</button>
                 <button onClick={removeMatch} disabled={saving} style={{ ...menuBtn, color: C.minus, borderColor: C.minus }}>🗑 この試合を無かったことにする</button>
                 <button onClick={() => setMenu(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
+              </div>
+            )}
+
+            {menu === "move" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  移動先の卓を選んでください（現在：T{m.table}）
+                </div>
+                {[1, 2, 3].map((t) => (
+                  <button key={t} onClick={() => moveTable(t)} disabled={saving || t === m.table} style={{
+                    ...menuBtn,
+                    ...(t === m.table
+                      ? { background: C.zone, color: C.sub, cursor: "default" }
+                      : { borderColor: C.blue, color: C.blue }),
+                  }}>{t === m.table ? `T${t}（現在地）` : `T${t} へ移動`}</button>
+                ))}
+                <button onClick={() => setMenu("menu")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
 
