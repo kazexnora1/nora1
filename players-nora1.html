@@ -651,6 +651,26 @@ function RulesButton({ style }) {
   );
 }
 
+/* このアプリの立場。バナーの投稿を止めるかどうかの判定に使う
+   hq=本部(B1)／player=選手・スコアラー(B2)／viewer=観戦(B3) */
+const APP_KIND = "player";
+/* バナーへの書き込みが許されているか。本部は常に可。
+   選手側・観戦側は本部の設定で個別に止められる（悪質な書き込みが続いた時のため） */
+function useBannerPostAllowed() {
+  const [ok, setOk] = useState(APP_KIND === "hq");
+  useEffect(() => {
+    if (APP_KIND === "hq") return;
+    const ref = db.ref("config");
+    const handler = ref.on("value", (snap) => {
+      const c = snap.val() || {};
+      const v = APP_KIND === "viewer" ? c.bannerPostViewer : c.bannerPostPlayer;
+      setOk(v !== false && v !== "off"); // 既定は受け付ける
+    });
+    return () => ref.off("value", handler);
+  }, []);
+  return ok;
+}
+
 /* ========= 1行バナー =========
    本部（B1）の設定タブで編集した文言を、待機中の卓やスコアラー画面の下にランダムで出す。
    config/banners に改行区切りで入っている。空なら下の既定文言を使う */
@@ -717,6 +737,7 @@ function BannerLine({ style, boxed }) {
   const [shift, setShift] = useState(0); // 枠からはみ出した分（横に流す量）
   const [closed, setClosed] = useState(bannersClosed);
   const [editing, setEditing] = useState(false); // タップで開く入力窓
+  const canPost = useBannerPostAllowed();
   const boxRef = useRef(null);
   const textRef = useRef(null);
 
@@ -767,7 +788,8 @@ function BannerLine({ style, boxed }) {
 
   return (
     <div style={{ height: h, flexShrink: 0, ...style }}>
-      <div ref={boxRef} onClick={() => setEditing(true)} style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26, cursor: "pointer" }}>
+      <div ref={boxRef} onClick={() => { if (canPost) setEditing(true); }}
+        style={{ ...box, position: "relative", paddingRight: boxed ? 38 : 26, cursor: canPost ? "pointer" : "default" }}>
         <span ref={textRef} style={inner}>{shown ? "🐾" + shown : ""}</span>
         {/* うるさい時はここで閉じられる。読み込み直せばまた出る */}
         <button onClick={(e) => { e.stopPropagation(); closeBanners(); }} aria-label="バナーを閉じる" style={{
