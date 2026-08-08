@@ -169,19 +169,6 @@ function defaultSchedule() {
   return { startH: p2(st.getHours()), startM: p2(st.getMinutes()), endH: p2(en.getHours()), endM: p2(en.getMinutes()) };
 }
 
-/* ========= 予選の固定組み合わせ（14人・3試合・3卓・7コマ） =========
-   すでに紙で確定している対戦表。ここに書かれた番号は当日の抽選で本名に変わる（roster側で解決） */
-const PRELIM_SCHEDULE = [
-  // [slot(0始まり), table, 番号A, 番号B]
-  [0, 1, 1, 7], [0, 2, 6, 13], [0, 3, 3, 9],
-  [1, 1, 2, 4], [1, 2, 11, 14], [1, 3, 8, 10],
-  [2, 1, 5, 12], [2, 2, 9, 13], [2, 3, 3, 7],
-  [3, 1, 1, 4], [3, 2, 2, 14], [3, 3, 6, 10],
-  [4, 1, 8, 11], [4, 2, 3, 5], [4, 3, 9, 12],
-  [5, 1, 2, 13], [5, 2, 6, 7], [5, 3, 1, 10],
-  [6, 1, 12, 14], [6, 2, 4, 11], [6, 3, 5, 8],
-];
-
 /* ========= 復元のしくみ =========
    ・試合ごとの履歴：値を書き換える前に、その試合のスナップショットを history/<試合ID> に積む。
      間違えて消した・直したときに、その時点へ戻せる（直近HISTORY_KEEP件だけ残す）
@@ -1109,20 +1096,24 @@ function PcStandingsTab() {
 
 /* ========= 決勝トーナメント（予選上位8人。抽選番号順に枠へ入れて組む） ========= */
 function BracketTab({ roster }) {
-  const size = 8;
+  const s0 = useMemo(() => loadSettings(), []);
+  const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0));
   const [drawNo, setDrawNo] = useState(() => Array.from({ length: 8 }, (_, i) => String(i + 1)));
   const totalRounds = bracketTotalRounds(size);
   const d0 = useMemo(() => defaultSchedule(), []);
   const [startH, setStartH] = useState(d0.startH);
   const [startM, setStartM] = useState(d0.startM);
-  const s0 = useMemo(() => loadSettings(), []);
   const changeover = parseInt(s0.changeoverMin, 10) || 5;
   const [registering, setRegistering] = useState(false);
   const [msg, setMsg] = useState(null);
   const [matches, setMatches] = useState({});
 
   useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
+  useEffect(() => { saveSettings({ bracketSize: size }); }, [size]);
+  useEffect(() => {
+    setDrawNo(Array.from({ length: 8 }, (_, i) => String(i + 1)));
+  }, [size]);
 
   const roundPlan = useMemo(() => {
     const st = new Date();
@@ -1170,7 +1161,7 @@ function BracketTab({ roster }) {
     return { num: parseInt(m.names[w], 10) };
   };
 
-  const allowedTables = [1, 2, 3];
+  const allowedTables = size === 4 ? [1, 2] : [1, 2, 3];
   const assignTables = (count) => {
     const pending = {};
     allowedTables.forEach((t) => { pending[t] = 0; });
@@ -1302,14 +1293,20 @@ function BracketTab({ roster }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>決勝トーナメント</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>予選上位8人・抽選で引いた番号順に枠へ入れて組みます</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>予選上位{size}人・抽選で引いた番号順に枠へ入れて組みます</div>
       </div>
 
       {!started && (
         <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[4, 8].map((n) => (
+              <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
+            ))}
+          </div>
+
           <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>出場者と抽選番号</div>
           <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 8, lineHeight: 1.75 }}>
-            予選の上位8人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜8）。
+            予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。
             1番と2番、3番と4番…が1回戦（準々決勝）で当たります
           </div>
           {Array.from({ length: size }, (_, i) => {
@@ -1567,15 +1564,11 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <DrawTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       </Section>
 
-      <Section icon="🎱" title="予選21試合の登録" sub="固定の組み合わせ表をタイムラインに反映">
-        <PrelimRegisterTab />
-      </Section>
-
-      <Section icon="🔁" title="人数が変わった時の組み直し" sub="14人固定が使えない時の保険。人数と試合数から自動で組む">
+      <Section icon="🎱" title="予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
         <ReshuffleTab />
       </Section>
 
-      <Section icon="🏆" title="決勝トーナメント" sub="予選上位8人と抽選番号を入れて登録">
+      <Section icon="🏆" title="決勝トーナメント" sub="予選上位4人／8人と抽選番号を入れて登録">
         <BracketTab roster={roster} />
       </Section>
 
@@ -1666,12 +1659,12 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
     persist();
   };
   const updateNum = (id, v) => {
-    const n = v === "" ? null : Math.max(1, Math.min(14, parseInt(v, 10) || 0));
+    const n = v === "" ? null : Math.max(1, Math.min(30, parseInt(v, 10) || 0));
     setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, num: n } : p)));
     persist();
   };
   const addRow = () => {
-    if (roster.length >= 14) return;
+    if (roster.length >= 20) return;
     setRoster((rs) => [...rs, { id: nid(), num: null, name: "" }]);
     persist();
   };
@@ -1683,7 +1676,7 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const filledCount = roster.filter((p) => p.name).length;
   const numberedCount = roster.filter((p) => p.num != null).length;
   const usedNums = new Set(roster.map((p) => p.num).filter((n) => n != null));
-  const remainingNums = Array.from({ length: 14 }, (_, i) => i + 1).filter((n) => !usedNums.has(n));
+  const remainingNums = Array.from({ length: roster.length }, (_, i) => i + 1).filter((n) => !usedNums.has(n));
   const dupNums = (() => {
     const seen = new Set(), dup = new Set();
     roster.forEach((p) => { if (p.num == null) return; if (seen.has(p.num)) dup.add(p.num); seen.add(p.num); });
@@ -1694,7 +1687,7 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>
-          {saving ? "保存中…" : `名前 ${filledCount}人／番号 ${numberedCount}/14`}
+          {saving ? "保存中…" : `名前 ${filledCount}人／番号 ${numberedCount}/${roster.length}`}
         </div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
@@ -1705,8 +1698,8 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       {saveMsg && <Notice>{saveMsg}</Notice>}
 
       <div style={{ ...HELP, marginBottom: 12 }}>
-        出場する14人の本名が決まっているなら、先に名前だけ登録しておけます。
-        当日、選手にカードを引いてもらったら、その人の行に引いた番号（1〜14）を入力してください。
+        出場者の本名が決まっているなら、先に名前だけ登録しておけます。
+        当日、選手にカードを引いてもらったら、その人の行に引いた番号を入力してください。
         対戦表はすでに番号で組んであるので、番号を入れた瞬間に本人の対戦表・タイムライン・成績が反映されます。
       </div>
 
@@ -1741,13 +1734,13 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         );
       })}
 
-      {roster.length < 14 && (
+      {roster.length < 20 && (
         <button onClick={addRow} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
-          ＋ 選手を追加（{roster.length}/14）
+          ＋ 選手を追加（{roster.length}人）
         </button>
       )}
 
-      {roster.length > 0 && remainingNums.length > 0 && remainingNums.length < 14 && (
+      {roster.length > 0 && remainingNums.length > 0 && (
         <div style={{ ...HELP, marginTop: 12 }}>
           まだ引かれていない番号：{remainingNums.join("・")}
         </div>
@@ -1756,106 +1749,10 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   );
 }
 
-/* ========= 予選21試合の登録 =========
-   固定の組み合わせ表（PRELIM_SCHEDULE）を、そのままタイムラインへ書き込む */
-function PrelimRegisterTab() {
-  const [registering, setRegistering] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [matches, setMatches] = useState({});
-  const d0 = useMemo(() => defaultSchedule(), []);
-  const [startH, setStartH] = useState(d0.startH);
-  const [startM, setStartM] = useState(d0.startM);
-  const [changeoverMin, setChangeoverMin] = useState(String(loadSettings().changeoverMin || 5));
-  const [matchMinutes, setMatchMinutes] = useState(String(loadSettings().matchMinutes || 30));
-
-  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
-
-  const alreadyRegistered = Object.values(matches || {}).some((m) => m && !m.bracket);
-  const slots = Math.max(...PRELIM_SCHEDULE.map((r) => r[0])) + 1;
-
-  const register = async () => {
-    if (registering) return;
-    if (alreadyRegistered) {
-      if (!window.confirm("すでに予選の対戦が登録されています。もう一度登録すると、いまの進行中の試合も含めてすべて置き換わります。よろしいですか？")) return;
-    } else {
-      if (!window.confirm(`固定の組み合わせ表（全${PRELIM_SCHEDULE.length}試合）をタイムラインに登録します。よろしいですか？`)) return;
-    }
-    setRegistering(true);
-    try {
-      saveSettings({ changeoverMin, matchMinutes });
-      const chg = (parseInt(changeoverMin, 10) || 5) * 60000;
-      const mins = parseInt(matchMinutes, 10) || 30;
-      const st = new Date();
-      st.setHours(parseInt(startH, 10) || 0, parseInt(startM, 10) || 0, 0, 0);
-      const slotStart = [];
-      let cursor = st.getTime();
-      for (let s = 0; s < slots; s++) { slotStart.push(cursor); cursor += (mins + chg) * 60000; }
-
-      const now = Date.now();
-      const next = {};
-      PRELIM_SCHEDULE.forEach(([slot, table, a, b], i) => {
-        const id = randomMatchId();
-        next[id] = {
-          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-          lastResult: null, hist: [], raceTo: [ROUND_TARGET.prelim, ROUND_TARGET.prelim],
-          names: [String(a), String(b)], table, slot,
-          matchMinutes: mins, scheduledAt: slotStart[slot],
-          createdAt: now + slot * 1000 + table, updatedAt: now,
-        };
-      });
-      await saveBackup("予選対戦表を登録する前");
-      // 既存の予選（非ブラケット）を消してから登録し直す
-      const clearUpd = {};
-      Object.entries(matches || {}).forEach(([id, m]) => { if (m && !m.bracket) clearUpd[id] = null; });
-      await dbUpdate("matches", clearUpd);
-      await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `${PRELIM_SCHEDULE.length}試合を登録しました` });
-    } catch (e) {
-      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
-    }
-    setRegistering(false);
-  };
-
-  return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 24px", color: C.ink }}>
-      <div style={{ ...HELP, marginBottom: 14 }}>
-        14人・1人3試合・3卓・全{PRELIM_SCHEDULE.length}試合の組み合わせは固定です（すでに紙で確定済み）。
-        ここでは開始予定時刻と持ち時間の目安だけ決めて、タイムラインへ一括登録します。
-        対戦相手はまだ「番号」のままなので、本名は「🎲 抽選」タブで入力してください。
-      </div>
-
-      {alreadyRegistered && <Notice>すでに予選の対戦が登録されています。再登録すると置き換わります。</Notice>}
-
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>1コマ目の開始予定</div>
-        <TimeInput h={startH} m={startM} onH={setStartH} onM={setStartM} />
-        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>持ち時間（目安・分）</div>
-            <input inputMode="numeric" value={matchMinutes} onChange={(e) => setMatchMinutes(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center", width: "100%" }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>入替（分）</div>
-            <input inputMode="numeric" value={changeoverMin} onChange={(e) => setChangeoverMin(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center", width: "100%" }} />
-          </div>
-        </div>
-        <div style={{ ...HELP, marginTop: 8 }}>持ち時間はあくまで目安です。時間が来ても試合は強制終了しません。</div>
-      </div>
-
-      <button onClick={register} disabled={registering}
-        style={{ width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT }}>
-        {registering ? "登録中…" : `予選${PRELIM_SCHEDULE.length}試合をタイムラインに登録する`}
-      </button>
-      {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 10 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
-    </div>
-  );
-}
-
-/* ========= 人数が変わった時の組み直し =========
-   固定の21試合（14人）が使えなくなった時のための保険。人数と1人あたりの試合数を指定して、
-   その場で総当たり風の組み合わせを自動生成する（3卓・同卓2連投はOKだが3連投は避ける）。
-   ハンデが無いので目標点は常に予選の固定値。識別は番号方式のまま（登録後、メンバーの番号は
+/* ========= 予選を組む =========
+   人数と1人あたりの試合数を指定して、その場で総当たり風の組み合わせを自動生成する
+   （3卓・同卓2連投はOKだが3連投は避ける）。総当たりモードON時は全員と1回ずつ対戦する。
+   ハンデが無いので目標点は常に予選の固定値。識別は番号方式（登録後、メンバーの番号は
    いったんリセットされるので「🎲 抽選」で振り直す） */
 const BULK_TABLES = 3;
 
@@ -2012,6 +1909,7 @@ function ReshuffleTab() {
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.reshufflePlayers || 13);
   const [games, setGames] = useState(s0.reshuffleGames || 3);
+  const [roundRobin, setRoundRobin] = useState(!!s0.reshuffleRoundRobin);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -2023,12 +1921,14 @@ function ReshuffleTab() {
   const [changeoverMin, setChangeoverMin] = useState(String(loadSettings().changeoverMin || 5));
 
   useEffect(() => {
-    saveSettings({ reshufflePlayers: players, reshuffleGames: games });
-  }, [players, games]);
+    saveSettings({ reshufflePlayers: players, reshuffleGames: games, reshuffleRoundRobin: roundRobin });
+  }, [players, games, roundRobin]);
+
+  const effectiveGames = roundRobin ? players - 1 : games;
 
   const run = () => {
     setBusy(true); setMsg(null);
-    setTimeout(() => { setResult(bulkGenerateAuto(players, games)); setBusy(false); }, 20);
+    setTimeout(() => { setResult(bulkGenerateAuto(players, effectiveGames)); setBusy(false); }, 20);
   };
 
   const rows = useMemo(() => {
@@ -2052,7 +1952,7 @@ function ReshuffleTab() {
 
   const register = async () => {
     if (!rows || registering) return;
-    if (!window.confirm(`${players}人・1人${games}試合・全${rows.length}試合で組み直します。\n現在の予選対戦（決勝トーナメント以外）はすべて置き換わり、メンバーの番号（抽選結果）もいったんリセットされます。\n\nよろしいですか？`)) return;
+    if (!window.confirm(`${players}人・1人${effectiveGames}試合・全${rows.length}試合で予選を組みます。\n現在の予選対戦（決勝トーナメント以外）はすべて置き換わり、メンバーの番号（抽選結果）もいったんリセットされます。\n\nよろしいですか？`)) return;
     setRegistering(true);
     try {
       const chg = (parseInt(changeoverMin, 10) || 5) * 60000;
@@ -2076,7 +1976,7 @@ function ReshuffleTab() {
           createdAt: m.createdAt, updatedAt: now,
         };
       });
-      await saveBackup("組み直し（人数変更）の前");
+      await saveBackup("予選を組む前");
       const cur = (await dbGet("matches")) || {};
       const clearUpd = {};
       Object.entries(cur).forEach(([id, mm]) => { if (mm && !mm.bracket) clearUpd[id] = null; });
@@ -2098,12 +1998,33 @@ function ReshuffleTab() {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 24px", color: C.ink }}>
       <div style={{ ...HELP, marginBottom: 14 }}>
-        当日の人数が14人から変わった場合の保険です。人数と1人あたりの試合数を指定して、その場で組み合わせを自動生成します（3卓・同卓2連投まではOK、3連投は避けます）。目標点は変わらず予選固定値です。
+        人数と1人あたりの試合数を指定して、その場で組み合わせを自動生成します（3卓・同卓2連投まではOK、3連投は避けます）。目標点は予選固定値（{ROUND_TARGET.prelim}点）です。
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
-        <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+        {roundRobin ? (
+          <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, textAlign: "center" }}>総当たり戦（{players - 1}）</div>
+          </div>
+        ) : (
+          <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+        )}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: roundRobin ? C.lightBlue : C.zone, border: `1.5px solid ${roundRobin ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>総当たりモード</div>
+          <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>ONの間は全員と1回ずつ対戦する総当たり戦で組みます</div>
+        </div>
+        <button onClick={() => setRoundRobin((v) => !v)} style={{
+          background: roundRobin ? C.blue : C.line, color: roundRobin ? "#fff" : C.sub,
+          border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+          cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+        }}>
+          {roundRobin ? "ON" : "OFF"}
+        </button>
       </div>
 
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
@@ -2422,12 +2343,12 @@ function ScheduleTab({ roster }) {
 
       <Field label="番号A">
         <select value={n1} onChange={(e) => setN1(+e.target.value)} style={selectStyle}>
-          {Array.from({ length: 14 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}番　{nameOfNum(n, roster)}</option>)}
+          {Array.from({ length: Math.max(20, roster.length) }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}番　{nameOfNum(n, roster)}</option>)}
         </select>
       </Field>
       <Field label="番号B">
         <select value={n2} onChange={(e) => setN2(+e.target.value)} style={selectStyle}>
-          {Array.from({ length: 14 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}番　{nameOfNum(n, roster)}</option>)}
+          {Array.from({ length: Math.max(20, roster.length) }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}番　{nameOfNum(n, roster)}</option>)}
         </select>
       </Field>
       <Field label="回戦（目標点）">
