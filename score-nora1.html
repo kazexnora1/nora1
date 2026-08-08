@@ -980,9 +980,17 @@ function LiveTablePanel({ tableNum, m }) {
           fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
-        {/* ファーゴレート。運営が暫定で決めた人もいるので、無い時は出さない */}
-        <div style={{ minHeight: 14, fontSize: 11.5, fontWeight: 800, opacity: 0.72, letterSpacing: 0.3, marginBottom: 2 }}>
-          {rateOfPlayer(m, i) ? `FR${rateOfPlayer(m, i)}` : ""}
+        {/* ファーゴレート。数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。
+            運営が暫定で決めた人もいるので、無い時は出さない */}
+        <div style={{ minHeight: 17, marginBottom: 2, display: "flex", alignItems: "baseline", justifyContent: "center", gap: 2 }}>
+          {rateOfPlayer(m, i) && (
+            <>
+              <span style={{ fontSize: 10, fontWeight: 800, opacity: 0.6 }}>FR</span>
+              <span style={{ fontSize: 15, fontWeight: 900, letterSpacing: 0.4, fontVariantNumeric: "tabular-nums", opacity: 0.95 }}>
+                {rateOfPlayer(m, i)}
+              </span>
+            </>
+          )}
         </div>
         <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
           {m.pending ? "–" : m.phase === "banking" ? "–" : disp[i]}
