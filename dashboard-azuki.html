@@ -122,11 +122,9 @@ function backupRoster(roster) {
 function loadRosterBackup() {
   try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
 }
-/* あずき杯は「1〜14番」が対戦表の中に固定の識別子として組み込まれている（当日の抽選で本名を割り当てる）。
-   roster が空の時は、この14枠を自動で用意しておく */
-function seedRoster() {
-  return Array.from({ length: 14 }, (_, i) => ({ id: i + 1, num: i + 1, name: "" }));
-}
+/* あずき杯は「1〜14番」が対戦表の中に固定の識別子として組み込まれている。
+   出場者14人の本名は事前に分かっているので、先に名前だけ登録しておき、
+   当日の抽選結果（番号）はDrawTabで名前ごとに後から割り当てる */
 async function saveRoster(roster, allowEmpty) {
   if (!allowEmpty && (!roster || roster.length === 0)) {
     const cur = await dbGet("roster");
@@ -489,12 +487,8 @@ function App() {
 
   const refreshRoster = async () => {
     const r = await readAll();
-    let ros = r.roster;
-    if (!ros.length) {
-      ros = seedRoster();
-      try { await saveRoster(ros, true); } catch {}
-    }
-    _id = Math.max(100, ...ros.map((p) => p.id || 0)) + 1;
+    const ros = r.roster;
+    _id = Math.max(100, ...ros.map((p) => p.id || 0), 0) + 1;
     backupRoster(ros);
     setRoster(ros);
     setRosterLoaded(true);
@@ -1300,7 +1294,7 @@ function BracketTab({ roster }) {
                   {roster.map((p, ri) => {
                     const s2 = standings.find((x) => x.num === p.num);
                     const rank = s2 && s2.played > 0 ? `${s2.rank}位 ` : "";
-                    return <option key={p.id} value={ri}>{rank}{p.num}番　{p.name || "（未確定）"}</option>;
+                    return <option key={p.id} value={ri}>{rank}{p.num != null ? `${p.num}番　` : ""}{p.name || "（未確定）"}</option>;
                   })}
                 </select>
                 <input inputMode="numeric" value={drawNo[i] ?? ""}
@@ -1616,13 +1610,13 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const rosterRef = useRef(roster);
   rosterRef.current = roster;
 
-  const persist = () => {
+  const persist = (allowEmpty) => {
     if (!loaded) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       setSaving(true);
       try {
-        await saveRoster(rosterRef.current, true);
+        await saveRoster(rosterRef.current, allowEmpty !== false);
         setSaveMsg(null);
       } catch (e) {
         setSaveMsg(String(e && e.message ? e.message : e));
@@ -1631,18 +1625,41 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
     }, 500);
   };
 
-  const updateName = (num, v) => {
-    setRoster((rs) => rs.map((p) => (p.num === num ? { ...p, name: v } : p)));
+  const updateName = (id, v) => {
+    setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, name: v } : p)));
     persist();
   };
+  const updateNum = (id, v) => {
+    const n = v === "" ? null : Math.max(1, Math.min(14, parseInt(v, 10) || 0));
+    setRoster((rs) => rs.map((p) => (p.id === id ? { ...p, num: n } : p)));
+    persist();
+  };
+  const addRow = () => {
+    if (roster.length >= 14) return;
+    setRoster((rs) => [...rs, { id: nid(), num: null, name: "" }]);
+    persist();
+  };
+  const removeRow = (id) => {
+    setRoster((rs) => rs.filter((p) => p.id !== id));
+    persist(true);
+  };
 
-  const sorted = [...roster].sort((a, b) => a.num - b.num);
-  const filledCount = sorted.filter((p) => p.name).length;
+  const filledCount = roster.filter((p) => p.name).length;
+  const numberedCount = roster.filter((p) => p.num != null).length;
+  const usedNums = new Set(roster.map((p) => p.num).filter((n) => n != null));
+  const remainingNums = Array.from({ length: 14 }, (_, i) => i + 1).filter((n) => !usedNums.has(n));
+  const dupNums = (() => {
+    const seen = new Set(), dup = new Set();
+    roster.forEach((p) => { if (p.num == null) return; if (seen.has(p.num)) dup.add(p.num); seen.add(p.num); });
+    return dup;
+  })();
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 16px 24px", color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : `本名の入力：${filledCount}/14人`}</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>
+          {saving ? "保存中…" : `名前 ${filledCount}人／番号 ${numberedCount}/14`}
+        </div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, fontWeight: 700, padding: "7px 12px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
 
@@ -1652,21 +1669,53 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       {saveMsg && <Notice>{saveMsg}</Notice>}
 
       <div style={{ ...HELP, marginBottom: 12 }}>
-        対戦表はすでに1〜14番で組んであります。当日、選手にカードを引いてもらい、その番号の行に本名を入力してください。入力すると対戦表・タイムライン・成績のすべてに即座に反映されます。
+        出場する14人の本名が決まっているなら、先に名前だけ登録しておけます。
+        当日、選手にカードを引いてもらったら、その人の行に引いた番号（1〜14）を入力してください。
+        対戦表はすでに番号で組んであるので、番号を入れた瞬間に本人の対戦表・タイムライン・成績が反映されます。
       </div>
 
-      {sorted.map((p) => (
-        <div key={p.num} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: 10, background: p.name ? C.lightBlue : C.zone,
-            border: `1.5px solid ${p.name ? C.blue : C.line}`, display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16, fontWeight: 900, color: p.name ? C.blue : C.sub, flexShrink: 0,
-          }}>{p.num}</div>
-          <input value={p.name} onChange={(e) => updateName(p.num, e.target.value.slice(0, 12))}
-            placeholder="本名を入力"
-            style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 16, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+      {dupNums.size > 0 && (
+        <Notice>番号が重複しています（{[...dupNums].join("・")}番）。同じ番号が2人にならないよう直してください。</Notice>
+      )}
+
+      {roster.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 6, padding: "0 2px" }}>
+          <div style={{ flex: 1, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
+          <div style={{ width: 64, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>番号</div>
+          <div style={{ width: 40 }} />
         </div>
-      ))}
+      )}
+
+      {roster.map((p) => {
+        const bad = p.num != null && dupNums.has(p.num);
+        return (
+          <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+            <input value={p.name} onChange={(e) => updateName(p.id, e.target.value.slice(0, 12))}
+              placeholder="本名を入力"
+              style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 16, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+            <input inputMode="numeric" value={p.num == null ? "" : String(p.num)} onChange={(e) => updateNum(p.id, e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+              placeholder="―"
+              style={{
+                width: 64, background: p.num != null ? C.lightBlue : "#fff", border: `1.5px solid ${bad ? C.minus : p.num != null ? C.blue : C.line}`,
+                borderRadius: 10, color: bad ? C.minus : p.num != null ? C.blue : C.ink, fontSize: 17, fontWeight: 800, padding: "10px 0",
+                textAlign: "center", outline: "none", fontFamily: FONT,
+              }} />
+            <button onClick={() => removeRow(p.id)} style={{ width: 40, height: 40, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
+          </div>
+        );
+      })}
+
+      {roster.length < 14 && (
+        <button onClick={addRow} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>
+          ＋ 選手を追加（{roster.length}/14）
+        </button>
+      )}
+
+      {roster.length > 0 && remainingNums.length > 0 && remainingNums.length < 14 && (
+        <div style={{ ...HELP, marginTop: 12 }}>
+          まだ引かれていない番号：{remainingNums.join("・")}
+        </div>
+      )}
     </div>
   );
 }
@@ -2565,7 +2614,7 @@ function HomeTab() {
     });
 
     return roster
-      .filter((p) => p.name && !playingNow.has(String(p.num)) && !refereeingNow.has(String(p.num)))
+      .filter((p) => p.num != null && p.name && !playingNow.has(String(p.num)) && !refereeingNow.has(String(p.num)))
       .map((p) => {
         const numStr = String(p.num);
         const sameTableLive = sameTableLiveNames.has(numStr);
