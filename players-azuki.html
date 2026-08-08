@@ -15,6 +15,10 @@
     0%, 10%   { transform: translateX(0); }
     90%, 100% { transform: translateX(var(--shift, 0px)); }
   }
+  @keyframes urgentPulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -847,7 +851,8 @@ function LiveTablePanel({ tableNum, m, roster }) {
     if (bothLose) return { t: "時間切れ", gray: true };
     if (winner != null) return winner === i ? { t: "勝ち" } : { t: "負け", gray: true };
     const rem = raceTo[i] - disp[i];
-    return rem <= 0 ? { t: "達成" } : { t: `あと${rem}点` };
+    if (rem <= 0) return { t: "達成" };
+    return { t: `${rem} more`, tier: rem <= 3 ? "close" : rem <= 5 ? "near" : "far" };
   };
 
   const clockJsx = (() => {
@@ -886,9 +891,11 @@ function LiveTablePanel({ tableNum, m, roster }) {
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
-              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : b.tier === "close" ? C.minus : b.tier === "near" ? C.hill : pc, borderRadius: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              fontSize: b.tier === "close" ? 14 : 12.5, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
+              boxShadow: b.tier === "close" ? `0 0 0 2px ${C.minus}` : b.tier === "near" ? `0 0 0 2px ${C.hill}` : "none",
+              animation: b.tier === "close" ? "urgentPulse 0.9s ease-in-out infinite" : "none",
             }}>{b.t}</span>
           )}
         </div>
@@ -1444,8 +1451,10 @@ function MatchScreen({ setupInfo, onExit }) {
   ];
   // 得点・目標点は「ラックが終わって確定した分」だけを出す（ラック中は動かない）。
   // 勝敗の判定だけは台上を足した値で見る（目標に届いた時点で決着させるため）
-  const disp = [tot[0], tot[1]];
   const liveTot = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
+  // ラック中でも入力のたびにスコアを更新する（JPAルールは球ごとの点が確定しており、
+  // 9番を待つ必要がないため）
+  const disp = liveTot;
 
   // ===== 持ち時間タイマー（あくまで目安。時間が来ても試合は終わらない） =====
   const deadline = state.deadline || null;
@@ -1580,9 +1589,12 @@ function MatchScreen({ setupInfo, onExit }) {
   const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
 
   const hintOf = (i) => {
-    if (rt(i) <= 0) return { txt: "", on: false };
+    if (rt(i) <= 0) return { txt: "", tier: "far" };
     const rem = rt(i) - disp[i];
-    return rem <= 0 ? { txt: "達成", on: true } : { txt: `あと${rem}点`, on: false };
+    if (rem <= 0) return { txt: "達成", tier: "done" };
+    if (rem <= 3) return { txt: `${rem} more`, tier: "close" };
+    if (rem <= 5) return { txt: `${rem} more`, tier: "near" };
+    return { txt: `${rem} more`, tier: "far" };
   };
   const col = (loc) => balls.filter((b) => b.loc === loc);
   const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
@@ -1667,7 +1679,14 @@ function MatchScreen({ setupInfo, onExit }) {
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
                 {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{rt(i)}</span>
               </div>
-              {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
+              {hi.txt && <div style={{
+                display: "inline-block", borderRadius: 8, padding: "2px 9px", marginTop: 4, whiteSpace: "nowrap",
+                fontSize: hi.tier === "close" ? 15 : 13, fontWeight: 900,
+                background: hi.tier === "close" ? "#fff" : hi.tier === "near" ? "#fff" : "#fff",
+                color: hi.tier === "close" ? C.minus : hi.tier === "near" ? C.hill : hi.tier === "done" ? C.win : pc,
+                boxShadow: hi.tier === "close" ? "0 0 0 2px " + C.minus : hi.tier === "near" ? "0 0 0 2px " + C.hill : "none",
+                animation: hi.tier === "close" ? "urgentPulse 0.9s ease-in-out infinite" : "none",
+              }}>{hi.txt}</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
                 {matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (
                   (1 - brk) === i && (
