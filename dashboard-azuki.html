@@ -363,7 +363,7 @@ function buildStandings(matches, roster) {
     if (!stats[num]) stats[num] = { num, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
     return stats[num];
   };
-  for (let i = 1; i <= 14; i++) ensure(i);
+  for (let i = 1; i <= (roster || []).length; i++) ensure(i);
 
   for (const id in matches) {
     const m = matches[id];
@@ -1211,9 +1211,9 @@ function BracketTab({ roster }) {
   const rankedNums = useMemo(() => {
     const played = standings.filter((r) => r.played > 0);
     const nums = played.map((r) => r.num);
-    for (let i = 1; i <= 14; i++) if (!nums.includes(i)) nums.push(i);
+    for (let i = 1; i <= roster.length; i++) if (!nums.includes(i)) nums.push(i);
     return nums;
-  }, [standings]);
+  }, [standings, roster]);
   const filledRef = useRef("");
   const rosterIndexOfNum = (num) => roster.findIndex((p) => p.num === num);
 
@@ -1224,13 +1224,20 @@ function BracketTab({ roster }) {
     filledRef.current = key;
     setSlotIdx((arr) => {
       const next = [...arr];
-      for (let i = 0; i < 8; i++) {
-        const idx = rosterIndexOfNum(rankedNums[i]);
-        next[i] = idx >= 0 ? idx : 0;
+      // 同じ枠に同じ選手を二重に入れないよう、割り当て済みのロスター行を記録しておく
+      const usedIdx = new Set();
+      for (let i = 0; i < size; i++) {
+        let idx = rosterIndexOfNum(rankedNums[i]);
+        if (idx < 0 || usedIdx.has(idx)) {
+          idx = roster.findIndex((_, ri) => !usedIdx.has(ri));
+        }
+        if (idx < 0) idx = 0;
+        next[i] = idx;
+        usedIdx.add(idx);
       }
       return next;
     });
-  }, [rankedNums, started]);
+  }, [rankedNums, started, size]);
 
   const winnerInfo = (m) => {
     const w = matchWinnerIndex(m);
@@ -1270,7 +1277,15 @@ function BracketTab({ roster }) {
     const entries = slotIdx.slice(0, size).map((idx, i) => ({ p: roster[idx], no: parseInt(drawNo[i], 10) }));
     if (entries.some((e) => !e.p)) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
     const nums = entries.map((e) => e.p.num);
-    if (new Set(nums).size !== nums.length) { setMsg({ ok: false, text: "同じ選手が2回入っています" }); return; }
+    if (new Set(nums).size !== nums.length) {
+      const seen = new Set(), dupNames = new Set();
+      entries.forEach((e) => {
+        if (seen.has(e.p.num)) dupNames.add(e.p.name || `${e.p.num}番`);
+        seen.add(e.p.num);
+      });
+      setMsg({ ok: false, text: `同じ選手が2回入っています：${[...dupNames].join("・")}。「🎲 メンバー」で番号の重複が無いか確認してください` });
+      return;
+    }
     const nos = entries.map((e) => e.no);
     if (nos.some((n) => !(n >= 1 && n <= size))) { setMsg({ ok: false, text: `抽選番号は1〜${size}で入れてください` }); return; }
     if (new Set(nos).size !== nos.length) { setMsg({ ok: false, text: "抽選番号が重複しています" }); return; }
