@@ -849,7 +849,7 @@ function LiveTablePanel({ tableNum, m, roster }) {
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
-  const disp = tot;
+  const disp = m.phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : tot;
   const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
