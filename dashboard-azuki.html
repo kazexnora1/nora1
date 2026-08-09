@@ -1130,6 +1130,22 @@ function BracketTab({ roster }) {
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const started = bracketMatches.length > 0;
 
+  const resetBracket = async () => {
+    if (!window.confirm(`決勝トーナメントの対戦（${bracketMatches.length}試合）をすべて削除します。\n進行中・終了した試合も含めて消えます（バックアップからは戻せます）。\n\nよろしいですか？`)) return;
+    if (!window.confirm("本当に削除しますか？")) return;
+    setRegistering(true);
+    try {
+      await saveBackup("決勝トーナメントをリセットする前");
+      const clearUpd = {};
+      Object.entries(matches || {}).forEach(([id, m]) => { if (m && m.bracket) clearUpd[id] = null; });
+      await dbUpdate("matches", clearUpd);
+      setMsg({ ok: true, text: "決勝トーナメントを削除しました" });
+    } catch (e) {
+      setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
   const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
   const rankedNums = useMemo(() => {
     const played = standings.filter((r) => r.played > 0);
@@ -1295,6 +1311,14 @@ function BracketTab({ roster }) {
         <div style={{ fontSize: 22, fontWeight: 800 }}>決勝トーナメント</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>予選上位{size}人・抽選で引いた番号順に枠へ入れて組みます</div>
       </div>
+
+      {bracketMatches.length > 0 && (
+        <button onClick={resetBracket} disabled={registering} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, borderRadius: 12,
+          color: C.minus, fontSize: 14.5, fontWeight: 800, padding: "13px 0", cursor: "pointer",
+          fontFamily: FONT, marginBottom: 16,
+        }}>🗑 決勝トーナメントをリセット（{bracketMatches.length}試合を削除）</button>
+      )}
 
       {!started && (
         <>
@@ -1914,17 +1938,40 @@ function ReshuffleTab() {
   const [busy, setBusy] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [existing, setExisting] = useState({});
   const d0 = useMemo(() => defaultSchedule(), []);
   const [startH, setStartH] = useState(d0.startH);
   const [startM, setStartM] = useState(d0.startM);
   const [matchMinutes, setMatchMinutes] = useState(String(loadSettings().matchMinutes || 30));
   const [changeoverMin, setChangeoverMin] = useState(String(loadSettings().changeoverMin || 5));
 
+  useEffect(() => dbSubscribe("matches", (m) => setExisting(m || {}), () => {}), []);
+  const existingPrelimCount = useMemo(
+    () => Object.values(existing || {}).filter((m) => m && !m.bracket).length,
+    [existing]
+  );
+
   useEffect(() => {
     saveSettings({ reshufflePlayers: players, reshuffleGames: games, reshuffleRoundRobin: roundRobin });
   }, [players, games, roundRobin]);
 
   const effectiveGames = roundRobin ? players - 1 : games;
+
+  const resetPrelim = async () => {
+    if (!window.confirm(`予選の対戦（${existingPrelimCount}試合）をすべて削除します。\n進行中・終了した試合も含めて消えます（バックアップからは戻せます）。\n\nよろしいですか？`)) return;
+    if (!window.confirm("本当に削除しますか？")) return;
+    setRegistering(true);
+    try {
+      await saveBackup("予選をリセットする前");
+      const clearUpd = {};
+      Object.entries(existing || {}).forEach(([id, m]) => { if (m && !m.bracket) clearUpd[id] = null; });
+      await dbUpdate("matches", clearUpd);
+      setMsg({ ok: true, text: "予選の対戦を削除しました" });
+    } catch (e) {
+      setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
 
   const run = () => {
     setBusy(true); setMsg(null);
@@ -2000,6 +2047,14 @@ function ReshuffleTab() {
       <div style={{ ...HELP, marginBottom: 14 }}>
         人数と1人あたりの試合数を指定して、その場で組み合わせを自動生成します（3卓・同卓2連投まではOK、3連投は避けます）。目標点は予選固定値（{ROUND_TARGET.prelim}点）です。
       </div>
+
+      {existingPrelimCount > 0 && (
+        <button onClick={resetPrelim} disabled={registering} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, borderRadius: 12,
+          color: C.minus, fontSize: 14.5, fontWeight: 800, padding: "13px 0", cursor: "pointer",
+          fontFamily: FONT, marginBottom: 16,
+        }}>🗑 今の予選をリセット（{existingPrelimCount}試合を削除）</button>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
