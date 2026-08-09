@@ -1086,11 +1086,19 @@ function ScheduleTab({ onPick }) {
     setPicking(false);
   };
 
-  // 自分の番号は、選んだ名前から毎回roster参照で引く。抽選前（番号未入力）はnullのまま
+  // 自分の番号は、選んだ名前から毎回roster参照で引く。
+  // 実際に引いた番号（roster側の.num）があればそれを優先。
+  // まだ誰も引いていなければ、メンバーリストの並び順（自分が上から何番目か）を
+  // 仮のプレビュー番号として使う（他の誰かが既にその番号を引いていれば使わない）
   const me = React.useMemo(() => {
     if (!myName) return null;
-    const p = roster.find((x) => x.name === myName);
-    return p && p.num != null ? p.num : null;
+    const idx = roster.findIndex((x) => x.name === myName);
+    if (idx < 0) return null;
+    const p = roster[idx];
+    if (p.num != null) return p.num;
+    const posNum = idx + 1;
+    const claimedByOther = roster.some((x) => x.num === posNum);
+    return claimedByOther ? null : posNum;
   }, [myName, roster]);
   const namedRoster = React.useMemo(() => roster.filter((p) => p.name), [roster]);
 
