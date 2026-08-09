@@ -1417,6 +1417,7 @@ function BracketTab({ roster }) {
             <Notice>
               抽選がまだ完了していません。上位{size}人のうち、以下の番号を引いた人がまだ分かりません：{unresolvedRanked.join("・")}番。
               「🎲 メンバー」で全員の番号を入力してから決勝トーナメントを組んでください（それまでは下の一覧に仮の名前が出ることがあります）。
+              カード抽選をしない場合は、「🎲 メンバー」の「並び順どおりに番号を確定する」で一括確定できます。
             </Notice>
           )}
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -1793,6 +1794,17 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
     setRoster((rs) => rs.filter((p) => p.id !== id));
     persist(true);
   };
+  // 物理抽選をせず、メンバーリストの並び順どおりに番号を一括で確定する。
+  // 「グループを避けて組む」はこの並び順そのものがグループ分けの根拠なので、
+  // このモードで組んだ時はカード抽選をせずここで一括確定するのに使える
+  const confirmByOrder = () => {
+    const named = roster.filter((p) => p.name);
+    if (named.length === 0) return;
+    if (!window.confirm(`メンバーリストの並び順どおりに番号（1〜${named.length}）を確定します。\n名前が入っていない行は番号を付けません。既存の番号は上書きされます。\n\nよろしいですか？`)) return;
+    let n = 0;
+    setRoster((rs) => rs.map((p) => (p.name ? { ...p, num: ++n } : { ...p, num: null })));
+    persist(true);
+  };
 
   const filledCount = roster.filter((p) => p.name).length;
   const numberedCount = roster.filter((p) => p.num != null).length;
@@ -1822,6 +1834,18 @@ function DrawTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         出場者の本名が決まっているなら、先に名前だけ登録しておけます。
         当日、選手にカードを引いてもらったら、その人の行に引いた番号を入力してください。
         対戦表はすでに番号で組んであるので、番号を入れた瞬間に本人の対戦表・タイムライン・成績が反映されます。
+      </div>
+
+      {roster.filter((p) => p.name).length > 0 && (
+        <button onClick={confirmByOrder} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 12,
+          color: C.blue, fontSize: 14, fontWeight: 800, padding: "12px 0", cursor: "pointer",
+          fontFamily: FONT, marginBottom: 14,
+        }}>🎯 カード抽選をせず、並び順どおりに番号を確定する</button>
+      )}
+      <div style={{ ...HELP, marginBottom: 12 }}>
+        「グループを避けて組む」を使った時は、この並び順自体がグループ分けの根拠なので、
+        カードを引かせる代わりに上のボタンで一括確定できます（1番目の人が1番、2番目の人が2番…）。
       </div>
 
       {dupNums.size > 0 && (
