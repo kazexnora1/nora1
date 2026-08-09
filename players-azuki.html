@@ -1716,11 +1716,7 @@ function MatchScreen({ setupInfo, onExit }) {
                 animation: hi.tier === "close" ? "urgentPulse 0.9s ease-in-out infinite" : "none",
               }}>{hi.txt}</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
-                {matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (
-                  (1 - brk) === i && (
-                    <span style={{ color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 }}>● 次ブレイク</span>
-                  )
-                ) : brk === i && (
+                {matchWinner == null && !bothLose && phase === "play" && brk === i && (
                   <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
                 )}
               </div>
