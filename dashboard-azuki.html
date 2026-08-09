@@ -1216,6 +1216,11 @@ function BracketTab({ roster }) {
   }, [standings, roster]);
   const filledRef = useRef("");
   const rosterIndexOfNum = (num) => roster.findIndex((p) => p.num === num);
+  // 抽選がまだの番号（上位size人の中に、まだ誰も引いていない番号がある場合）
+  const unresolvedRanked = useMemo(
+    () => rankedNums.slice(0, size).filter((num) => rosterIndexOfNum(num) < 0),
+    [rankedNums, size, roster]
+  );
 
   useEffect(() => {
     if (started || rankedNums.length === 0) return;
@@ -1276,6 +1281,11 @@ function BracketTab({ roster }) {
     if (registering) return;
     const entries = slotIdx.slice(0, size).map((idx, i) => ({ p: roster[idx], no: parseInt(drawNo[i], 10) }));
     if (entries.some((e) => !e.p)) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
+    const undrawn = entries.filter((e) => e.p.num == null).map((e) => e.p.name || "（名前未設定）");
+    if (undrawn.length > 0) {
+      setMsg({ ok: false, text: `抽選番号がまだ確定していない選手がいます：${undrawn.join("・")}。「🎲 メンバー」で番号を入力してから登録してください` });
+      return;
+    }
     const nums = entries.map((e) => e.p.num);
     if (new Set(nums).size !== nums.length) {
       const seen = new Set(), dupNames = new Set();
@@ -1398,6 +1408,12 @@ function BracketTab({ roster }) {
 
       {!started && (
         <>
+          {unresolvedRanked.length > 0 && (
+            <Notice>
+              抽選がまだ完了していません。上位{size}人のうち、以下の番号を引いた人がまだ分かりません：{unresolvedRanked.join("・")}番。
+              「🎲 メンバー」で全員の番号を入力してから決勝トーナメントを組んでください（それまでは下の一覧に仮の名前が出ることがあります）。
+            </Notice>
+          )}
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             {[4, 8].map((n) => (
               <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
