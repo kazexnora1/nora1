@@ -134,11 +134,17 @@ async function saveRoster(roster, allowEmpty) {
   backupRoster(roster);
 }
 /* 番号（対戦データに入っている識別子）から、その人の表示名を引く。
-   名前がまだ入力されていなければ番号のまま表示する */
+   まず抽選で実際に割り当てられた番号（roster[i].num）を優先する。
+   まだ誰もその番号を引いていない間は、メンバーリストの並び順（上からn番目＝番号n）を
+   仮のプレビューとして使う。名前も無ければ番号のまま表示する */
 function nameOfNum(num, roster) {
   const n = parseInt(num, 10);
-  const p = (roster || []).find((x) => x.num === n);
-  return p && p.name ? p.name : String(num);
+  const list = roster || [];
+  const assigned = list.find((x) => x.num === n);
+  if (assigned && assigned.name) return assigned.name;
+  const preview = list[n - 1];
+  if (preview && preview.name && preview.num == null) return preview.name;
+  return String(num);
 }
 function randomMatchId() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
@@ -1589,7 +1595,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🎱" title="予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
-        <ReshuffleTab />
+        <ReshuffleTab roster={roster} />
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub="予選上位4人／8人と抽選番号を入れて登録">
@@ -1930,19 +1936,21 @@ function BulkStepper({ label, value, min, max, onChange }) {
     </div>
   );
 }
-function ReshuffleCard({ m }) {
+function ReshuffleCard({ m, roster }) {
   return (
-    <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "10px 5px", position: "relative", textAlign: "center" }}>
+    <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "8px 5px", position: "relative", textAlign: "center" }}>
       {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
       {m.sameGroup && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.hill }}>同G</div>}
-      <span style={{ fontSize: 18, fontWeight: 900, color: C.blue }}>{m.a}</span>
-      <span style={{ fontSize: 13, color: C.sub, margin: "0 4px" }}>対</span>
-      <span style={{ fontSize: 18, fontWeight: 900, color: C.red }}>{m.b}</span>
+      <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontSize: 14, fontWeight: 900, color: C.blue, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nameOfNum(m.a, roster)}</span>
+        <span style={{ fontSize: 11, color: C.sub }}>対</span>
+        <span style={{ fontSize: 14, fontWeight: 900, color: C.red, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nameOfNum(m.b, roster)}</span>
+      </div>
     </div>
   );
 }
 
-function ReshuffleTab() {
+function ReshuffleTab({ roster }) {
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.reshufflePlayers || 13);
   const [games, setGames] = useState(s0.reshuffleGames || 3);
@@ -2172,7 +2180,7 @@ function ReshuffleTab() {
           {grid.map(([slot, cells]) => (
             <div key={slot} style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6, alignItems: "stretch" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: C.sub }}>{slot + 1}</div>
-              {cells.map((m, i) => m ? <ReshuffleCard key={i} m={m} /> : (
+              {cells.map((m, i) => m ? <ReshuffleCard key={i} m={m} roster={roster} /> : (
                 <div key={i} style={{ background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 11, padding: "14px 4px" }}>空き</div>
               ))}
             </div>
