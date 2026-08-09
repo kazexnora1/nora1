@@ -388,7 +388,7 @@ function buildStandings(matches, roster) {
     if (!stats[num]) stats[num] = { num, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
     return stats[num];
   };
-  for (let i = 1; i <= 14; i++) ensure(i);
+  for (let i = 1; i <= (roster || []).length; i++) ensure(i);
 
   for (const id in matches) {
     const m = matches[id];
