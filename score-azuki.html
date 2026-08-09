@@ -84,11 +84,18 @@ function normalizeMatch(m) {
     lastResult: m.lastResult || null,
   };
 }
-/* 番号（対戦データに入っている識別子）から、その人の表示名を引く */
+/* 番号（対戦データに入っている識別子）から、その人の表示名を引く。
+   まず抽選で実際に割り当てられた番号（roster[i].num）を優先する。
+   まだ誰もその番号を引いていない間は、メンバーリストの並び順（上からn番目＝番号n）を
+   仮のプレビューとして使う。名前も無ければ番号のまま表示する */
 function nameOfNum(num, roster) {
   const n = parseInt(num, 10);
-  const p = (roster || []).find((x) => x.num === n);
-  return p && p.name ? p.name : String(num);
+  const list = roster || [];
+  const assigned = list.find((x) => x.num === n);
+  if (assigned && assigned.name) return assigned.name;
+  const preview = list[n - 1];
+  if (preview && preview.name && preview.num == null) return preview.name;
+  return String(num);
 }
 function subscribeRoster(onValue) {
   const ref = db.ref("roster");
