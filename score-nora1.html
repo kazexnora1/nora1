@@ -639,7 +639,7 @@ function RulesButton({ style }) {
                 fontFamily: FONT, cursor: "pointer",
               }}>閉じる</button>
             </div>
-            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text}</div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" }}>{text}</div>
           </div>
         </div>
       )}
@@ -924,8 +924,6 @@ function LiveTablePanel({ tableNum, m }) {
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
-  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
-  const disp = tot;
   const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
@@ -933,9 +931,11 @@ function LiveTablePanel({ tableNum, m }) {
     : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
     : reached[0] ? 0 : reached[1] ? 1 : null;
   const finished = winner != null || bothLose;
-  // ヒルヒル＝両者とも残り14点以下。このラックの9番で決まるので、残り点数は出さない
+  // ヒルヒル＝両者とも残り14点以下（確定分で判定）。このラックの9番で決まるので、残り点数は出さない
   const hillHill = !finished && m.phase === "play" &&
     raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+  // 得点は台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
+  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
 
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
