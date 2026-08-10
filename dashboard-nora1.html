@@ -2544,6 +2544,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
           <div style={{ flex: 1, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
           <div style={{ width: 80, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>レート</div>
           <div style={{ width: 64, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>抽選番号</div>
+          <div style={{ width: 38, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>遅刻</div>
           <div style={{ width: 40 }} />
         </div>
       )}
@@ -2556,6 +2557,11 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
           <input inputMode="numeric" value={p.draw || ""} onChange={(e) => update(p.id, "draw", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
             placeholder="―"
             style={{ width: 64, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 15, fontWeight: 800, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+          <button onClick={() => update(p.id, "late", !p.late)} title="遅刻予定（試合割りで後の試合になるよう優先的に調整）" style={{
+            width: 38, height: 40, flexShrink: 0, background: p.late ? C.hill : "#fff",
+            border: `1.5px solid ${p.late ? C.hill : C.line}`, borderRadius: 10,
+            color: p.late ? "#fff" : C.sub, fontSize: 16, cursor: "pointer",
+          }}>⏰</button>
           <button onClick={() => remove(p.id)} style={{ width: 40, height: 40, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
         </div>
       ))}
@@ -2569,6 +2575,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       )}
       <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 8, lineHeight: 1.75 }}>
         当日カードを引く抽選をする場合は、各選手の「抽選番号」欄に引いた数字を入力してから並び替えてください。並び替え後のリストの順番のまま、下の「試合割り」で組まれます。
+        「⏰遅刻」を付けた選手は、下の「試合割り」で自動的に後の方の試合になるよう最優先で調整されます（総当たりモードでは全員が毎ラウンド対戦するため反映されません）。
       </div>
 
       <RateApplyPanel roster={roster} />
@@ -2615,7 +2622,12 @@ function groupOf(x, groupSizes) {
   if (x <= g1 + g2) return 1;
   return 2;
 }
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes) {
+/* 遅刻オプション：このオプションが付いた人の対戦は、できるだけ後のコマに来るよう最優先で寄せる。
+   costには大きく効かせて「どの組み合わせを採用するか」を強く左右する一方、探索順序（score）への影響は
+   小さく抑える（そのまま乗せると終盤のコマ数不足で手詰まりを起こし、組めなくなることがあるため） */
+const LATE_WEIGHT = 4000;
+const LATE_SCORE_CAP = 8;
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, lateSet) {
   const { total, slots, sizes } = plan;
   const pos = [];
   for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
@@ -2688,9 +2700,19 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes) {
           matchCost = carry;
           carryFlag = carry > 0;
         }
-        if (cost + matchCost >= ceiling) continue;
+        // 遅刻オプション：残りコマ数が多いほど（＝早いコマほど）ペナルティを大きくして、後のコマに寄せる（最優先）。
+        // ただし探索の当たり付け（score）にそのまま乗せると、後半のコマ数が足りずに手詰まりを起こしやすいので、
+        // 「どの組み合わせを採用するか」を決めるcostだけに強く効かせ、探索順序（score）への影響は小さく抑える
+        let lateCost = 0;
+        if (lateSet && lateSet.size) {
+          const lateCount = (lateSet.has(a) ? 1 : 0) + (lateSet.has(b) ? 1 : 0);
+          if (lateCount) lateCost = lateCount * (slots - 1 - s) * LATE_WEIGHT;
+        }
+        const totalCost = matchCost + lateCost;
+        if (cost + totalCost >= ceiling) continue;
         const scoreCost = groupSizes ? matchCost * 100 : matchCost * 1000;
-        cands.push({ a, b, cost: matchCost, carryFlag, score: scoreCost - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 });
+        const lateScoreNudge = Math.min(lateCost, LATE_SCORE_CAP);
+        cands.push({ a, b, cost: totalCost, carryFlag, score: scoreCost - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 + lateScoreNudge });
       }
     }
     cands.sort((x, y) => x.score - y.score);
@@ -2716,24 +2738,24 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes) {
   try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
   return best;
 }
-function bulkGenerate(N, G, relaxed, groupSizes) {
+function bulkGenerate(N, G, relaxed, groupSizes, lateSet) {
   const plan = bulkMakePlan(N, G, relaxed);
   if (plan.error) return { error: plan.error };
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes);
-    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && best.cost <= plan.lower) break; }
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet);
+    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !(lateSet && lateSet.size) && best.cost <= plan.lower) break; }
   }
   if (!best) return { error: relaxed ? "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。" };
-  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && best.cost <= plan.lower };
+  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && !(lateSet && lateSet.size) && best.cost <= plan.lower };
 }
 // 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する
-function bulkGenerateAuto(N, G, groupSizes) {
-  const strict = bulkGenerate(N, G, false, groupSizes);
+function bulkGenerateAuto(N, G, groupSizes, lateSet) {
+  const strict = bulkGenerate(N, G, false, groupSizes, lateSet);
   if (!strict.error) return { ...strict, usedRelaxed: false };
-  const relaxed = bulkGenerate(N, G, true, groupSizes);
+  const relaxed = bulkGenerate(N, G, true, groupSizes, lateSet);
   if (!relaxed.error) return { ...relaxed, usedRelaxed: true };
   return { error: relaxed.error || strict.error };
 }
@@ -2833,6 +2855,13 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
 
   const groupSizes = avoidGroups ? [group1, group2] : null;
   const group3Count = Math.max(0, players - group1 - group2);
+  // 遅刻オプション：現在の参加人数（players）の範囲で、メンバーリスト上の位置＝選手番号として遅刻フラグを拾う
+  const lateSet = useMemo(() => {
+    const s = new Set();
+    for (let i = 0; i < players && i < roster.length; i++) if (roster[i] && roster[i].late) s.add(i + 1);
+    return s;
+  }, [roster, players]);
+  const lateCountInPlay = lateSet.size;
 
   useEffect(() => dbSubscribe("matches", (m) => setExistingMatches(m || {}), () => {}), []);
   const existingPrelimCount = useMemo(
@@ -2904,7 +2933,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes));
+      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet));
       setBusy(false);
     }, 20);
   };
@@ -3105,6 +3134,16 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
           <input inputMode="numeric" value={changeoverMin} onChange={(e) => setChangeoverMin(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} style={{ ...numBoxStyle, textAlign: "center", width: "100%" }} />
         </div>
       </div>
+
+      {lateCountInPlay > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, background: "#FFF3E0", border: `1px solid ${C.hill}`,
+          borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#7A4B0B",
+        }}>
+          ⏰ 遅刻設定の{lateCountInPlay}人を、できるだけ後の試合になるよう最優先で調整します
+          {usePerTableRR && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（総当たりモードでは全員が毎ラウンド対戦するため、実際には反映されません）</span>}
+        </div>
+      )}
 
       <button onClick={run} disabled={busy}
         style={{ width: "100%", background: busy ? C.line : C.ink, color: busy ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
