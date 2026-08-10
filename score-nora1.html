@@ -1198,7 +1198,7 @@ function ProjectorCard({ tableNum, m }) {
 
   if (!m) {
     return (
-      <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: C.zone, border: `0.25vw dashed ${C.line}`, borderRadius: "1vw", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1vw" }}>
+      <div style={{ flex: 1, minHeight: 0, boxSizing: "border-box", background: C.zone, border: `0.25vw dashed ${C.line}`, borderRadius: "1vw", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1vw" }}>
         <span style={{ ...tBadge, background: C.sub }}>T{tableNum}</span>
         <div style={{ fontSize: "2.2vw", fontWeight: 900, color: C.sub }}>予定なし</div>
       </div>
@@ -1238,12 +1238,12 @@ function ProjectorCard({ tableNum, m }) {
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative",
         boxShadow: isBrk ? "inset 0 0 0 0.25vw rgba(255,255,255,0.7)" : "none",
       }}>
-        <div style={{ position: "absolute", top: "0.3vw", fontSize: "0.9vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+        <div style={{ position: "absolute", top: "0.3vw", fontSize: "1.15vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
         <div style={{
-          fontSize: "2.4vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
-          maxWidth: "94%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.3vw",
+          fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
+          maxWidth: "94%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.5vw",
         }}>{names[i]}</div>
-        <div style={{ fontSize: "6.8vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ fontSize: "5.8vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
           {m.pending || m.phase === "banking" ? "–" : disp[i]}
           {!m.pending && <span style={{ fontSize: "0.34em", opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
@@ -1263,11 +1263,11 @@ function ProjectorCard({ tableNum, m }) {
   // 中央：ラック履歴＋進行中ラック（LiveTablePanelと同じ考え方）
   const hidden = Math.max(0, hist.length - PROJ_SHOW_RACKS);
   const shown = openHist ? hist : hist.slice(hidden);
-  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15vw", fontSize: "1.05vw", fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
-  const numStyle = (side, strong) => ({ width: "1.6vw", textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15vw", fontSize: "1.3vw", fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
+  const numStyle = (side, strong) => ({ width: "2vw", textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
 
   const histJsx = (
-    <div style={{ width: "8vw", flexShrink: 0, background: "#fff", border: `0.15vw solid ${C.line}`, borderRadius: "0.9vw", padding: "0.4vw 0.3vw", display: "flex", flexDirection: "column" }}>
+    <div style={{ width: "6.5vw", flexShrink: 0, background: "#fff", border: `0.15vw solid ${C.line}`, borderRadius: "0.9vw", padding: "0.4vw 0.2vw", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: "0.85vw", fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: "0.3vw", letterSpacing: 1 }}>ラック</div>
       {m.pending || m.phase === "banking" ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: "0.9vw", textAlign: "center" }}>
@@ -1287,7 +1287,7 @@ function ProjectorCard({ tableNum, m }) {
               return (
                 <div key={k} style={rowStyle}>
                   <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
-                  <span style={{ color: "#B8BFC6", fontSize: "0.85vw" }}>-</span>
+                  <span style={{ color: "#B8BFC6", fontSize: "1vw" }}>-</span>
                   <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
                 </div>
               );
@@ -1295,7 +1295,7 @@ function ProjectorCard({ tableNum, m }) {
             {m.phase === "play" && (
               <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: "0.4vw", animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
                 <span style={numStyle("a")}>{live[0]}</span>
-                <span style={{ color: "#B8BFC6", fontSize: "0.85vw" }}>-</span>
+                <span style={{ color: "#B8BFC6", fontSize: "1vw" }}>-</span>
                 <span style={numStyle("b")}>{live[1]}</span>
               </div>
             )}
@@ -1311,7 +1311,7 @@ function ProjectorCard({ tableNum, m }) {
   );
 
   return (
-    <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#fff", border: `0.2vw solid ${C.ink}`, borderRadius: "1vw", padding: "0.8vw", display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div style={{ flex: 1, minHeight: 0, boxSizing: "border-box", background: "#fff", border: `0.2vw solid ${C.ink}`, borderRadius: "1vw", padding: "0.8vw", display: "flex", flexDirection: "column", minWidth: 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4vw" }}>
         <span style={tBadge}>T{tableNum}</span>
         <span style={{ fontSize: "1.2vw", fontWeight: 900, color: C.ink, textAlign: "right" }}>
@@ -1334,6 +1334,31 @@ function ProjectorCard({ tableNum, m }) {
   );
 }
 
+function ProjectorNextCard({ tableNum, m }) {
+  const tBadge = {
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: "0.5vw",
+    padding: "0.2vw 0.8vw", fontSize: "1.1vw", fontWeight: 900, letterSpacing: 1.5,
+  };
+  return (
+    <div style={{
+      flexShrink: 0, boxSizing: "border-box", background: "#fff", border: `0.15vw solid ${C.line}`,
+      borderRadius: "0.9vw", padding: "0.6vw 1vw", display: "flex", alignItems: "center", gap: "0.8vw",
+    }}>
+      <span style={{ ...tBadge, flexShrink: 0 }}>次 T{tableNum}</span>
+      {m ? (
+        <span style={{
+          fontSize: "1.7vw", fontWeight: 800, color: C.ink, overflow: "hidden",
+          textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {(m.names || ["", ""])[0]} <span style={{ color: C.sub, fontWeight: 700 }}>対</span> {(m.names || ["", ""])[1]}
+        </span>
+      ) : (
+        <span style={{ fontSize: "1.4vw", fontWeight: 800, color: C.sub }}>次の予定なし</span>
+      )}
+    </div>
+  );
+}
+
 function ProjectorMode({ onExit }) {
   const [matches, setMatches] = useState({});
   const [portrait, setPortrait] = useState(() => window.innerWidth < window.innerHeight);
@@ -1348,6 +1373,7 @@ function ProjectorMode({ onExit }) {
     };
   }, []);
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
+  const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 3000, fontFamily: FONT }}>
@@ -1363,7 +1389,13 @@ function ProjectorMode({ onExit }) {
         </div>
       ) : (
         <div style={{ height: "100%", boxSizing: "border-box", padding: "1.2vw", display: "flex", gap: "1vw" }}>
-          {[0, 1, 2].map((i) => <ProjectorCard key={i} tableNum={i + 1} m={display[i]} />)}
+          {[0, 1, 2].map((i) => (
+            <div key={i} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", gap: "0.7vw", minWidth: 0 }}>
+              <ProjectorCard tableNum={i + 1} m={display[i]} />
+              {/* 次の対戦：現在表示中の試合の次にその卓へ入るカード。横向きは縦に余裕があるので常設表示 */}
+              <ProjectorNextCard tableNum={i + 1} m={queues[i][1] || null} />
+            </div>
+          ))}
         </div>
       )}
     </div>
