@@ -776,7 +776,7 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapMode, 
       </div>
 
       {menu && (
-        <div onClick={(e) => { e.stopPropagation(); setMenu(null); setEditSide(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
+        <div onClick={(e) => { e.stopPropagation(); setMenu(null); setEditSide(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5000, padding: 22 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{m.table}・{style.badge}</div>
             <div onClick={() => setMenu("players")} style={{
@@ -2196,7 +2196,7 @@ function ReshuffleTab({ roster }) {
 
   const register = async () => {
     if (!rows || registeringRef.current) return;
-    if (!window.confirm(`${players}人・1人${effectiveGames}試合・全${rows.length}試合で予選を組みます。\n現在の予選対戦（決勝トーナメント以外）はすべて置き換わり、メンバーの番号（抽選結果）もいったんリセットされます。\n\nよろしいですか？`)) return;
+    if (!window.confirm(`${players}人・1人${effectiveGames}試合・全${rows.length}試合で予選を組みます。\n現在の予選対戦（決勝トーナメント以外）はすべて置き換わります。\nメンバーの番号は${avoidGroups ? "並び順どおり（上から1,2,3…）に自動で確定" : "いったんリセット"}されます。\n\nよろしいですか？`)) return;
     registeringRef.current = true;
     setRegistering(true);
     try {
@@ -2227,13 +2227,25 @@ function ReshuffleTab({ roster }) {
       Object.entries(cur).forEach(([id, mm]) => { if (mm && !mm.bracket) clearUpd[id] = null; });
       if (Object.keys(clearUpd).length) await dbUpdate("matches", clearUpd);
       await dbUpdate("matches", next);
-      // 番号の組み合わせが変わるので、rosterの番号（抽選結果）はいったんリセットする。
-      // 名前は残るので「🎲 抽選」でそのまま振り直せる
+      // グループを避けて組んだ場合は、メンバーリストの並び順そのものがグループ分けの根拠なので、
+      // カード抽選をせず並び順どおり（上から1,2,3...）に番号を自動確定する。
+      // それ以外は番号をいったんリセットし、当日カードを引いてから「🎲 メンバー」で入力してもらう
       const curRoster = (await dbGet("roster")) || [];
-      const resetRoster = curRoster.map((p) => ({ ...p, num: null }));
-      await dbSet("roster", resetRoster);
+      let nextRoster;
+      if (avoidGroups) {
+        let n = 0;
+        nextRoster = curRoster.map((p) => (p.name ? { ...p, num: ++n } : { ...p, num: null }));
+      } else {
+        nextRoster = curRoster.map((p) => ({ ...p, num: null }));
+      }
+      await dbSet("roster", nextRoster);
       saveSettings({ matchMinutes, changeoverMin });
-      setMsg({ ok: true, text: `${players}人・${rows.length}試合で登録しました。「🎲 抽選」タブで番号を振り直してください` });
+      setMsg({
+        ok: true,
+        text: avoidGroups
+          ? `${players}人・${rows.length}試合で登録し、番号も並び順どおりに確定しました`
+          : `${players}人・${rows.length}試合で登録しました。「🎲 メンバー」タブで番号を振り直してください`,
+      });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
@@ -2286,7 +2298,8 @@ function ReshuffleTab({ roster }) {
           <div>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループを避けて組む</div>
             <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
-              メンバーリストの並び順で上から3グループに分け、同じグループ内の対戦をできるだけ避けます
+              メンバーリストの並び順で上から3グループに分け、同じグループ内の対戦をできるだけ避けます。
+              登録時に番号も並び順どおり（上から1,2,3…）に自動で確定します
             </div>
           </div>
           <button onClick={() => setAvoidGroups((v) => !v)} style={{
