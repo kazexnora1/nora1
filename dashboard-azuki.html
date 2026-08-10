@@ -540,7 +540,7 @@ const menuBtn = {
 
 const TL_CARD_H = 140;
 
-function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandidates }) {
+function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapMode, isSwapSource, swapEligible, onStartSwap, onSwapTarget, winnerChoices }) {
   const st = m.__st;
   const names = m.names || ["", ""];
   const tot = m.tot || [0, 0];
@@ -571,6 +571,41 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
   const [draft, setDraft] = useState(["", ""]);
   const [saving, setSaving] = useState(false);
   const [hist, setHist] = useState(null);
+  const [editSide, setEditSide] = useState(null); // 対戦者を差し替える側（0 or 1）
+
+  // 対戦者を差し替える。番号方式なので names[side] に相手の番号（文字列）を入れるだけ。
+  // 「勝者」は決勝トーナメントの仮枠（◯回戦①の勝者）のような文字列もそのまま入れられる
+  const replacePlayer = async (side, newValue) => {
+    setSaving(true);
+    try {
+      await saveMatchHistory(m.id, m, "対戦者を変える前");
+      const nextNames = [...(m.names || ["", ""])];
+      nextNames[side] = String(newValue);
+      await dbUpdate("matches/" + m.id, {
+        names: nextNames, version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+      setEditSide(null);
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
+  const swapSides = async () => {
+    setSaving(true);
+    try {
+      await saveMatchHistory(m.id, m, "左右を入れ替える前");
+      const nm = m.names || ["", ""];
+      const tt = m.tot || [0, 0];
+      const rr = m.raceTo || [0, 0];
+      await dbUpdate("matches/" + m.id, {
+        names: [nm[1], nm[0]], tot: [tt[1], tt[0]], raceTo: [rr[1], rr[0]],
+        winner: (m.winner === 0 || m.winner === 1) ? 1 - m.winner : m.winner,
+        brk: (m.brk === 0 || m.brk === 1) ? 1 - m.brk : m.brk,
+        version: (m.version || 1) + 1, updatedAt: Date.now(),
+      });
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
 
   const openHistory = async () => {
     setMenu("history"); setHist(null);
@@ -658,39 +693,8 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
     } catch {}
     setSaving(false);
   };
-  // 別の試合とスケジュール上の位置（卓・コマ順・作成順）を入れ替える。
-  // 対戦の中身（選手・スコア・進行状況）はそのまま、置かれる場所だけが入れ替わる
-  const swapWith = async (other) => {
-    if (!other) return;
-    const on0 = nameOfNum(other.names[0], roster), on1 = nameOfNum(other.names[1], roster);
-    if (!window.confirm(`T${m.table}　${n0} 対 ${n1}\nと\nT${other.table}　${on0} 対 ${on1}\nの順番・卓を入れ替えます。よろしいですか？`)) return;
-    setSaving(true);
-    try {
-      await saveMatchHistory(m.id, m, "入れ替えの前");
-      await saveMatchHistory(other.id, other, "入れ替えの前");
-      const now = Date.now();
-      const upd = {};
-      upd[m.id + "/table"] = other.table;
-      upd[m.id + "/createdAt"] = other.createdAt;
-      upd[m.id + "/version"] = (m.version || 1) + 1;
-      upd[m.id + "/updatedAt"] = now;
-      upd[other.id + "/table"] = m.table;
-      upd[other.id + "/createdAt"] = m.createdAt;
-      upd[other.id + "/version"] = (other.version || 1) + 1;
-      upd[other.id + "/updatedAt"] = now;
-      if (m.slot != null || other.slot != null) {
-        upd[m.id + "/slot"] = other.slot != null ? other.slot : null;
-        upd[other.id + "/slot"] = m.slot != null ? m.slot : null;
-      }
-      if (m.scheduledAt != null || other.scheduledAt != null) {
-        upd[m.id + "/scheduledAt"] = other.scheduledAt != null ? other.scheduledAt : null;
-        upd[other.id + "/scheduledAt"] = m.scheduledAt != null ? m.scheduledAt : null;
-      }
-      await dbUpdate("matches", upd);
-      setMenu(null);
-    } catch {}
-    setSaving(false);
-  };
+  // 別の試合とスケジュール上の位置（卓・コマ順・作成順）を入れ替える処理はHomeTab側で行う
+  // （画面上で2枚のカードをタップして選ぶ方式のため、選択状態をHomeTabがまとめて管理する）
 
   const style =
     st === "done"
@@ -706,15 +710,32 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
       : { bg: C.zone, border: C.line, badgeBg: "transparent", badgeCol: C.sub, badge: "待機中" };
 
   const won = (i) => !m.bothLose && w === i;
-  const handleClick = () => setMenu("menu");
+  const handleClick = () => {
+    if (swapMode) {
+      if (isSwapSource) { onStartSwap && onStartSwap(null); return; }
+      if (swapEligible) { onSwapTarget && onSwapTarget(m); return; }
+      return;
+    }
+    setMenu("menu");
+  };
 
   return (
     <div onClick={handleClick} style={{
-      position: "relative", height: TL_CARD_H, boxSizing: "border-box", background: style.bg,
-      border: `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`, borderRadius: 12,
+      position: "relative", height: TL_CARD_H, boxSizing: "border-box",
+      background: isSwapSource ? C.lightBlue : style.bg,
+      border: isSwapSource ? `3px solid ${C.blue}` : swapMode && swapEligible ? `2px dashed ${C.blue}` : `${st === "live" || st === "call" ? 2 : 1}px solid ${style.border}`,
+      borderRadius: 12,
       padding: "8px 5px", display: "flex", flexDirection: "column", justifyContent: "space-between",
-      overflow: "hidden", opacity: (st === "queued" || st === "pending") && !menu ? 0.7 : 1, cursor: "pointer",
+      overflow: "hidden",
+      opacity: swapMode ? (isSwapSource || swapEligible ? 1 : 0.35) : ((st === "queued" || st === "pending") && !menu ? 0.7 : 1),
+      cursor: swapMode ? (isSwapSource || swapEligible ? "pointer" : "default") : "pointer",
     }}>
+      {swapMode && (isSwapSource || swapEligible) && (
+        <div style={{
+          position: "absolute", top: 3, left: 3, zIndex: 2, background: C.blue, color: "#fff",
+          borderRadius: 8, padding: "2px 7px", fontSize: 10.5, fontWeight: 800,
+        }}>{isSwapSource ? "選択中" : "ここへ"}</div>
+      )}
       {refereeEnabled && (st === "call" || st === "live") && (
         <button onClick={(e) => { e.stopPropagation(); onEditReferee && onEditReferee(m); }} style={{
           position: "absolute", top: 3, right: 3, zIndex: 2, background: "rgba(255,255,255,0.9)",
@@ -755,13 +776,18 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
       </div>
 
       {menu && (
-        <div onClick={(e) => { e.stopPropagation(); setMenu(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
+        <div onClick={(e) => { e.stopPropagation(); setMenu(null); setEditSide(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 22 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 18px", maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{m.table}・{style.badge}</div>
-            <div style={{ fontSize: 18, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.4 }}>
-              <span style={{ color: C.blue }}>{n0}</span>
-              <span style={{ color: C.sub, fontSize: 13, margin: "0 6px" }}>対</span>
-              <span style={{ color: C.red }}>{n1}</span>
+            <div onClick={() => setMenu("players")} style={{
+              fontSize: 18, fontWeight: 900, textAlign: "center", margin: "4px 0 16px", lineHeight: 1.5,
+              display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "center", columnGap: 6,
+              cursor: "pointer", padding: "6px 4px", borderRadius: 10, border: `1px dashed ${C.line}`,
+            }}>
+              <span style={{ color: C.blue, wordBreak: "break-word" }}>{n0}</span>
+              <span style={{ color: C.sub, fontSize: 13 }}>対</span>
+              <span style={{ color: C.red, wordBreak: "break-word" }}>{n1}</span>
+              <span style={{ width: "100%", fontSize: 11, fontWeight: 700, color: C.sub, marginTop: 2 }}>タップで対戦者を変更</span>
             </div>
 
             {menu === "menu" && (
@@ -770,7 +796,8 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
                 {st !== "done" && <button onClick={() => setMenu("finish")} style={menuBtn}>🏁 この試合を終了にする</button>}
                 {st === "done" && <button onClick={reopen} disabled={saving} style={menuBtn}>↩︎ 終了を取り消して試合中に戻す</button>}
                 {(st === "call" || st === "queued" || st === "pending") && <button onClick={() => setMenu("move")} style={menuBtn}>🔀 卓を移動する</button>}
-                {(st === "call" || st === "queued" || st === "pending") && (swapCandidates || []).some((o) => o.id !== m.id) && <button onClick={() => setMenu("swap")} style={menuBtn}>🔁 別の試合と入れ替える</button>}
+                {(st === "call" || st === "queued" || st === "pending") && <button onClick={() => { setMenu(null); onStartSwap && onStartSwap(m); }} style={menuBtn}>🔁 別の場所と入れ替える</button>}
+                <button onClick={() => setMenu("players")} style={menuBtn}>👥 対戦者を変える</button>
                 <button onClick={openHistory} style={menuBtn}>🕘 前の状態に戻す</button>
                 <button onClick={removeMatch} disabled={saving} style={{ ...menuBtn, color: C.minus, borderColor: C.minus }}>🗑 この試合を無かったことにする</button>
                 <button onClick={() => setMenu(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
@@ -794,24 +821,49 @@ function TimelineSlotCard({ m, roster, refereeEnabled, onEditReferee, swapCandid
               </div>
             )}
 
-            {menu === "swap" && (
+            {menu === "players" && editSide == null && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
-                  どの試合と入れ替えますか？（卓・順番が入れ替わります）
+                  変更したい側を選んでください
                 </div>
-                {(swapCandidates || []).filter((o) => o.id !== m.id).map((o) => {
-                  const on0 = nameOfNum(o.names[0], roster), on1 = nameOfNum(o.names[1], roster);
-                  return (
-                    <button key={o.id} onClick={() => swapWith(o)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
-                      <span style={{ fontWeight: 900 }}>T{o.table}</span>
-                      <span style={{ marginLeft: 8 }}>{on0} 対 {on1}</span>
-                    </button>
-                  );
-                })}
-                {(swapCandidates || []).filter((o) => o.id !== m.id).length === 0 && (
-                  <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: "10px 0" }}>入れ替えられる試合がありません</div>
+                <button onClick={() => setEditSide(0)} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>
+                  青（左）：{n0}
+                </button>
+                <button onClick={() => setEditSide(1)} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>
+                  赤（右）：{n1}
+                </button>
+                <button onClick={swapSides} disabled={saving} style={menuBtn}>⇄ 左右を入れ替える</button>
+                <button onClick={() => { setMenu("menu"); setEditSide(null); }} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+              </div>
+            )}
+
+            {menu === "players" && editSide != null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  {editSide === 0 ? "青（左）" : "赤（右）"}を誰に変えますか？
+                </div>
+                {(winnerChoices || []).length > 0 && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: C.sub, marginTop: 4 }}>勝者から選ぶ</div>
+                    {(winnerChoices || []).map((wc) => (
+                      <button key={wc.value} onClick={() => replacePlayer(editSide, wc.value)} disabled={saving} style={{ ...menuBtn, textAlign: "left", borderColor: C.win, color: C.win }}>
+                        🏆 {wc.label}
+                      </button>
+                    ))}
+                  </>
                 )}
-                <button onClick={() => setMenu("menu")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.sub, marginTop: 4 }}>メンバーから選ぶ</div>
+                {(roster || []).filter((p) => p.name && p.num != null).map((p) => (
+                  <button key={p.id} onClick={() => replacePlayer(editSide, p.num)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
+                    <span style={{ fontWeight: 900, color: C.sub, marginRight: 8 }}>{p.num}</span>{p.name}
+                  </button>
+                ))}
+                {(roster || []).filter((p) => p.name && p.num != null).length === 0 && (
+                  <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: "10px 0" }}>
+                    番号が確定したメンバーがいません。「🎲 メンバー」で番号を入力してください
+                  </div>
+                )}
+                <button onClick={() => setEditSide(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
 
@@ -3076,6 +3128,53 @@ function HomeTab() {
   const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
   const [globalBusy, setGlobalBusy] = useState(false);
   const [tMinutes, setTMinutes] = useState(30);
+  const [swapSource, setSwapSource] = useState(null);
+
+  const performSwap = async (source, target) => {
+    if (!source || !target || source.id === target.id) { setSwapSource(null); return; }
+    const sn0 = nameOfNum(source.names[0], roster), sn1 = nameOfNum(source.names[1], roster);
+    const tn0 = nameOfNum(target.names[0], roster), tn1 = nameOfNum(target.names[1], roster);
+    if (!window.confirm(`T${source.table}　${sn0} 対 ${sn1}\nと\nT${target.table}　${tn0} 対 ${tn1}\nの卓・順番を入れ替えます。よろしいですか？`)) { setSwapSource(null); return; }
+    try {
+      await saveMatchHistory(source.id, source, "入れ替えの前");
+      await saveMatchHistory(target.id, target, "入れ替えの前");
+      const now = Date.now();
+      const upd = {};
+      upd[source.id + "/table"] = target.table;
+      upd[source.id + "/createdAt"] = target.createdAt;
+      upd[source.id + "/version"] = (source.version || 1) + 1;
+      upd[source.id + "/updatedAt"] = now;
+      upd[target.id + "/table"] = source.table;
+      upd[target.id + "/createdAt"] = source.createdAt;
+      upd[target.id + "/version"] = (target.version || 1) + 1;
+      upd[target.id + "/updatedAt"] = now;
+      if (source.slot != null || target.slot != null) {
+        upd[source.id + "/slot"] = target.slot != null ? target.slot : null;
+        upd[target.id + "/slot"] = source.slot != null ? source.slot : null;
+      }
+      if (source.scheduledAt != null || target.scheduledAt != null) {
+        upd[source.id + "/scheduledAt"] = target.scheduledAt != null ? target.scheduledAt : null;
+        upd[target.id + "/scheduledAt"] = source.scheduledAt != null ? source.scheduledAt : null;
+      }
+      await dbUpdate("matches", upd);
+    } catch {}
+    setSwapSource(null);
+  };
+  // 空いているマス（その卓の待機列の末尾）へ移す。組んだ枠に収まらない移動なので、
+  // slot/scheduledAtは意味を持たなくなるためクリアし、作成順の末尾に付ける
+  const performMoveToEmpty = async (source, table) => {
+    if (!source) { setSwapSource(null); return; }
+    const sn0 = nameOfNum(source.names[0], roster), sn1 = nameOfNum(source.names[1], roster);
+    if (!window.confirm(`T${source.table}　${sn0} 対 ${sn1}\nをT${table}の空きへ移動します。よろしいですか？`)) { setSwapSource(null); return; }
+    try {
+      await saveMatchHistory(source.id, source, "移動の前");
+      await dbUpdate("matches/" + source.id, {
+        table, slot: null, scheduledAt: null, createdAt: Date.now(),
+        version: (source.version || 1) + 1, updatedAt: Date.now(),
+      });
+    } catch {}
+    setSwapSource(null);
+  };
 
   const [loadErr, setLoadErr] = useState(null);
   const [cols, setCols] = useState([[], [], []]);
@@ -3284,10 +3383,18 @@ function HomeTab() {
   const slots = Math.max(0, ...cols.map((c) => c.length));
   const totalMatches = cols.reduce((s, c) => s + c.length, 0);
   const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
-  // 入れ替え候補：まだ始まっていない試合（呼び出し中・待機中・勝者待ち）
-  const swapCandidates = [];
+  // 終了した試合の勝者一覧。決勝トーナメントの「◯回戦①の勝者」枠を手で埋め直したい時などに使う
+  const winnerChoices = [];
   cols.forEach((col) => col.forEach((e) => {
-    if (e.st === "call" || e.st === "queued" || e.st === "pending") swapCandidates.push(e.m);
+    if (e.st !== "done") return;
+    const wi = matchWinnerIndex(e.m);
+    if (wi == null) return;
+    const num = (e.m.names || [])[wi];
+    if (num == null || winnerChoices.some((x) => x.value === String(num))) return;
+    winnerChoices.push({
+      value: String(num),
+      label: `${nameOfNum(num, roster)}（T${e.m.table} ${roundLabelOf(e.m)}の勝者）`,
+    });
   }));
   const bracketStartRow = Math.min(
     ...cols.map((c) => { const idx = c.findIndex((e) => e.m && e.m.bracket); return idx === -1 ? Infinity : idx; })
@@ -3393,6 +3500,22 @@ function HomeTab() {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 8px 24px" }}>
+        {swapSource && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            background: C.lightBlue, border: `2px solid ${C.blue}`, borderRadius: 12,
+            padding: "10px 14px", marginBottom: 14,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.blue, lineHeight: 1.5 }}>
+              T{swapSource.table}　{nameOfNum(swapSource.names[0], roster)} 対 {nameOfNum(swapSource.names[1], roster)}
+              <br />と入れ替える相手か、空きマスをタップしてください
+            </div>
+            <button onClick={() => setSwapSource(null)} style={{
+              background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "7px 14px",
+              fontSize: 12.5, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+            }}>キャンセル</button>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "44px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 22 }}>
           {foldedPrelim && (
             <div onClick={() => setFoldPrelim(false)} style={{
@@ -3429,9 +3552,24 @@ function HomeTab() {
                 return (
                   <div key={ti}>
                     {e ? (
-                      <TimelineSlotCard m={{ ...e.m, __st: e.st }} roster={roster} refereeEnabled={refereeEnabled} onEditReferee={(m) => setRefModalMatch(m)} swapCandidates={swapCandidates} />
+                      <TimelineSlotCard
+                        m={{ ...e.m, __st: e.st }} roster={roster} refereeEnabled={refereeEnabled}
+                        onEditReferee={(m) => setRefModalMatch(m)}
+                        swapMode={!!swapSource} isSwapSource={!!swapSource && swapSource.id === e.m.id}
+                        swapEligible={e.st === "call" || e.st === "queued" || e.st === "pending"}
+                        onStartSwap={(mm) => setSwapSource(mm)}
+                        onSwapTarget={(mm) => performSwap(swapSource, mm)}
+                        winnerChoices={winnerChoices}
+                      />
                     ) : (
-                      <div style={{ height: TL_CARD_H, boxSizing: "border-box", background: C.zone, border: `1px dashed ${C.line}`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: 16 }}>空き</div>
+                      <div onClick={swapSource ? () => performMoveToEmpty(swapSource, ti + 1) : undefined} style={{
+                        height: TL_CARD_H, boxSizing: "border-box",
+                        background: swapSource ? C.lightBlue : C.zone,
+                        border: `${swapSource ? 2 : 1}px dashed ${swapSource ? C.blue : C.line}`,
+                        borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+                        color: swapSource ? C.blue : C.sub, fontSize: swapSource ? 14 : 16, fontWeight: swapSource ? 800 : 400,
+                        cursor: swapSource ? "pointer" : "default",
+                      }}>{swapSource ? "ここに移動" : "空き"}</div>
                     )}
                   </div>
                 );
