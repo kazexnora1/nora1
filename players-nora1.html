@@ -945,8 +945,15 @@ function LiveTablePanel({ tableNum, m }) {
   const badgeOf = (i) => {
     if (m.phase === "banking") return null;
     // 達成率は本部（B1）だけが見る情報。ここでは出さない
-    if (bothLose) return { t: "時間切れ", gray: true };
-    if (winner != null) return winner === i ? { t: "勝ち" } : { t: "負け", gray: true };
+    if (bothLose) {
+      const rem = Math.max(0, raceTo[i] - disp[i]);
+      return { t: `あと${rem}`, gray: true };
+    }
+    if (winner != null) {
+      if (winner === i) return { t: "勝ち" };
+      const rem = Math.max(0, raceTo[i] - disp[i]);
+      return { t: `あと${rem}`, gray: true };
+    }
     if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
@@ -1915,6 +1922,11 @@ function MatchScreen({ setupInfo, onExit }) {
   const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
 
   const hillInfoLocal = (i) => {
+    if (matchWinner != null || bothLose) {
+      if (matchWinner === i) return { txt: "勝ち", on: true };
+      const rem = Math.max(0, rt(i) - disp[i]);
+      return { txt: `あと${rem}`, on: false };
+    }
     if (rt(i) <= 0) return { txt: "", on: false };
     const rem = rt(i) - disp[i];
     if (rem <= 0) return { txt: "達成", on: true };
