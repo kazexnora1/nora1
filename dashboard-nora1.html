@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.180";
-const BUILD_TIME = "2026-08-11 移植1（ライブ更新・リセットボタン）";
+const APP_VERSION = "1.181";
+const BUILD_TIME = "2026-08-11 移植2（グループを避けて組む）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2347,7 +2347,15 @@ function bulkMulberry(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
+/* グループ分け（先頭group1人＝A、次のgroup2人＝B、残り＝C）。groupSizesがnullなら常に0（グループ無視） */
+function groupOf(x, groupSizes) {
+  if (!groupSizes) return 0;
+  const [g1, g2] = groupSizes;
+  if (x <= g1) return 0;
+  if (x <= g1 + g2) return 1;
+  return 2;
+}
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes) {
   const { total, slots, sizes } = plan;
   const pos = [];
   for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
@@ -2391,16 +2399,38 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
       if (deg[a] >= G || here.has(a)) continue;
       for (let b = a + 1; b <= N; b++) {
         if (deg[b] >= G || here.has(b) || used.has(a * 32 + b)) continue;
-        let carry = 0, ok = true;
-        for (const x of [a, b]) {
-          if (prev && prev.has(x)) {
-            if (!relaxed && prev.get(x) !== t) { ok = false; break; }
-            if (!relaxed && back && back.has(x)) { ok = false; break; }
-            carry++;
+        let matchCost = 0, carryFlag = false, ok = true;
+        if (groupSizes) {
+          // グループを避けて組む場合：3連戦（3コマ連続で同一人物）は常に禁止。
+          // 連戦そのもの（2連続）は許容し、同卓なら軽いペナルティ・別卓なら重いペナルティにする
+          let carryPenalty = 0;
+          for (const x of [a, b]) {
+            if (prev && prev.has(x)) {
+              if (back && back.has(x)) { ok = false; break; }
+              carryPenalty += prev.get(x) === t ? 1 : 3;
+            }
           }
+          if (!ok) continue;
+          const sameGroup = groupOf(a, groupSizes) === groupOf(b, groupSizes);
+          matchCost = (sameGroup ? 20 : 0) + carryPenalty;
+          carryFlag = carryPenalty > 0;
+        } else {
+          // 従来どおり：連投は同卓のみ許容（別卓への持ち越しは禁止）
+          let carry = 0;
+          for (const x of [a, b]) {
+            if (prev && prev.has(x)) {
+              if (!relaxed && prev.get(x) !== t) { ok = false; break; }
+              if (!relaxed && back && back.has(x)) { ok = false; break; }
+              carry++;
+            }
+          }
+          if (!ok) continue;
+          matchCost = carry;
+          carryFlag = carry > 0;
         }
-        if (!ok || cost + carry >= ceiling) continue;
-        cands.push({ a, b, carry, score: carry * 1000 - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 });
+        if (cost + matchCost >= ceiling) continue;
+        const scoreCost = groupSizes ? matchCost * 100 : matchCost * 1000;
+        cands.push({ a, b, cost: matchCost, carryFlag, score: scoreCost - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 });
       }
     }
     cands.sort((x, y) => x.score - y.score);
@@ -2409,10 +2439,13 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
       deg[c.a]++; deg[c.b]++;
       used.add(c.a * 32 + c.b);
       here.set(c.a, t); here.set(c.b, t);
-      cost += c.carry;
-      board.push({ slot: s, table: t, a: c.a, b: c.b, carry: c.carry });
+      cost += c.cost;
+      board.push({
+        slot: s, table: t, a: c.a, b: c.b, carry: c.carryFlag ? 1 : 0,
+        sameGroup: !!(groupSizes && groupOf(c.a, groupSizes) === groupOf(c.b, groupSizes)),
+      });
       if (t !== sizes[s] - 1 || viable(s)) { if (walk(p + 1)) return true; }
-      board.pop(); cost -= c.carry;
+      board.pop(); cost -= c.cost;
       here.delete(c.a); here.delete(c.b);
       used.delete(c.a * 32 + c.b);
       deg[c.a]--; deg[c.b]--;
@@ -2423,27 +2456,28 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed) {
   try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
   return best;
 }
-function bulkGenerate(N, G, relaxed) {
+function bulkGenerate(N, G, relaxed, groupSizes) {
   const plan = bulkMakePlan(N, G, relaxed);
   if (plan.error) return { error: plan.error };
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed);
-    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (best.cost <= plan.lower) break; }
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes);
+    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && best.cost <= plan.lower) break; }
   }
   if (!best) return { error: relaxed ? "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。" };
-  return { plan, board: best.board, cost: best.cost, optimal: best.cost <= plan.lower };
+  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && best.cost <= plan.lower };
 }
 // 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する
-function bulkGenerateAuto(N, G) {
-  const strict = bulkGenerate(N, G, false);
+function bulkGenerateAuto(N, G, groupSizes) {
+  const strict = bulkGenerate(N, G, false, groupSizes);
   if (!strict.error) return { ...strict, usedRelaxed: false };
-  const relaxed = bulkGenerate(N, G, true);
+  const relaxed = bulkGenerate(N, G, true, groupSizes);
   if (!relaxed.error) return { ...relaxed, usedRelaxed: true };
   return { error: relaxed.error || strict.error };
 }
+
 
 function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const s0 = useMemo(() => loadSettings(), []);
@@ -2461,12 +2495,18 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const [endM, setEndM] = useState(d0.endM);
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
+  const [avoidGroups, setAvoidGroups] = useState(!!s0.avoidGroups);
+  const [group1, setGroup1] = useState(s0.group1 || 5);
+  const [group2, setGroup2] = useState(s0.group2 || 5);
   const [existingMatches, setExistingMatches] = useState({});
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2 });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2]);
+
+  const groupSizes = avoidGroups ? [group1, group2] : null;
+  const group3Count = Math.max(0, players - group1 - group2);
 
   useEffect(() => dbSubscribe("matches", (m) => setExistingMatches(m || {}), () => {}), []);
   const existingPrelimCount = useMemo(
@@ -2535,7 +2575,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
 
   const run = () => {
     setBusy(true); setMsg(null);
-    setTimeout(() => { setResult(bulkGenerateAuto(players, effectiveGames)); setBusy(false); }, 20);
+    setTimeout(() => { setResult(bulkGenerateAuto(players, effectiveGames, groupSizes)); setBusy(false); }, 20);
   };
 
   const rows = useMemo(() => {
@@ -2642,6 +2682,35 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
         </button>
       </div>
 
+      <div style={{ background: avoidGroups ? C.lightBlue : C.zone, border: `1.5px solid ${avoidGroups ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループを避けて組む</div>
+            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
+              メンバーリストの並び順で上から3グループに分け、同じグループ内の対戦をできるだけ避けます
+            </div>
+          </div>
+          <button onClick={() => setAvoidGroups((v) => !v)} style={{
+            background: avoidGroups ? C.blue : C.line, color: avoidGroups ? "#fff" : C.sub,
+            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+            cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
+          }}>
+            {avoidGroups ? "ON" : "OFF"}
+          </button>
+        </div>
+        {avoidGroups && (
+          <>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <BulkStepper label="Aグループ（上位）" value={group1} min={2} max={players} onChange={setGroup1} />
+              <BulkStepper label="Bグループ（次点）" value={group2} min={2} max={players} onChange={setGroup2} />
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
+              C グループ（残り）：{group3Count}人。優先順位は「別グループ・連戦なし」→「別グループ・同卓連戦」→「別グループ・別卓連戦」→「同グループ・連戦なし」→「同グループ・同卓連戦」→「同グループ・別卓連戦」の順です。3連戦は常に避けます。
+            </div>
+          </>
+        )}
+      </div>
+
       {result && !result.error && result.usedRelaxed && (
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
       )}
@@ -2693,7 +2762,8 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12.5, color: C.sub, marginBottom: 14, justifyContent: "center" }}>
             <span>総試合 <b style={{ color: C.ink }}>{result.plan.total}</b></span>
             <span>コマ <b style={{ color: C.ink }}>{result.plan.slots}</b></span>
-            <span>同卓2連 <b style={{ color: C.ink }}>{result.cost}</b> / 下限 {result.plan.lower}</span>
+            <span>連戦 <b style={{ color: C.ink }}>{rows.filter((m) => m.carry).length}</b>件{!avoidGroups && <> / 下限 {result.plan.lower}</>}</span>
+            {avoidGroups && <span>同グループ対戦 <b style={{ color: rows.filter((m) => m.sameGroup).length ? C.hill : C.win }}>{rows.filter((m) => m.sameGroup).length}</b>件</span>}
             {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
           </div>
 
@@ -2749,6 +2819,7 @@ function BulkCard({ m }) {
   return (
     <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "8px 5px", position: "relative" }}>
       {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
+      {m.sameGroup && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.hill }}>同G</div>}
       <div style={{ display: "flex", gap: 3 }}>
         {[[m.n1, m.rt1, C.blue], [m.n2, m.rt2, C.red]].map(([name, rt, col], i) => (
           <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
