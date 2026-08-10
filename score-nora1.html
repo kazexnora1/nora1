@@ -1160,24 +1160,24 @@ function NextList({ matches }) {
     </div>
   );
 }
-function hillInfo(rt, disp) {
-  if (rt <= 0) return null;
-  const rem = rt - disp;
-  if (rem <= 0) return { label: "達成", value: null };
-  const toHill = rem - 14;
-  return toHill > 0 ? { label: `あと${toHill}でヒル`, value: null } : { label: `あと${rem}で勝ち`, value: null };
-}
-function TablePanel({ tableNum, m }) {
+/* ========= プロジェクター投影モード =========
+   横向き専用。名前とスコアだけを画面いっぱいの大きな文字で出す（ラック履歴やレートは省く）。
+   縦向きのままだと文字が小さいままなので、縦向きを検知したら回転を促す案内に切り替える */
+function ProjectorCard({ tableNum, m }) {
+  const tBadge = {
+    display: "inline-block", background: "#fff", color: "#111", borderRadius: "0.6vw",
+    padding: "0.3vw 1vw", fontSize: "1.6vw", fontWeight: 900, letterSpacing: 2,
+  };
   if (!m) {
     return (
-      <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "16px 18px", color: DC.ink, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 12 }}>
-        <TitleBadge>T{tableNum}</TitleBadge>
-        <div style={{ fontSize: 22, fontWeight: 900, color: DC.sub }}>待機中</div>
+      <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#0E1216", border: "0.3vw solid #fff", borderRadius: "1vw", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1vw" }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <div style={{ fontSize: "2.2vw", fontWeight: 900, color: "#8A97A6" }}>予定なし</div>
       </div>
     );
   }
 
-  const names = m.names || ["プレイヤー1", "プレイヤー2"];
+  const names = m.names || ["", ""];
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const balls = m.balls || [];
@@ -1185,86 +1185,108 @@ function TablePanel({ tableNum, m }) {
     balls.filter((b) => b.loc === "p1" && !b.dead).length,
     balls.filter((b) => b.loc === "p2" && !b.dead).length,
   ];
-  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
-  const disp = tot;
-  const hillHill = raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
   const bothLose = !!m.bothLose;
+  const hist = m.hist || [];
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
-  const matchWinner = bothLose || m.phase === "banking" ? null :
-    (m.winner === 0 || m.winner === 1) ? m.winner :
-    (reached[0] && reached[1]) ? ((m.hist || []).slice(-1)[0] || { w: 0 }).w :
-    reached[0] ? 0 :
-    reached[1] ? 1 :
-    (!hillHill && disp[0] >= raceTo[0] && raceTo[0] > 0) ? 0 :
-    (!hillHill && disp[1] >= raceTo[1] && raceTo[1] > 0) ? 1 : null;
-  const rate = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
+  const winner = bothLose ? null
+    : (m.winner === 0 || m.winner === 1) ? m.winner
+    : (reached[0] && reached[1]) ? (hist.slice(-1)[0] || { w: 0 }).w
+    : reached[0] ? 0 : reached[1] ? 1 : null;
+  const finished = winner != null || bothLose;
+  const hillHill = !finished && m.phase === "play" &&
+    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
+
+  const card = (i) => {
+    const pc = i === 0 ? "#3E7BD6" : "#D6544A";
+    const isBrk = m.brk === i;
+    let badge = null;
+    if (m.pending) badge = null;
+    else if (finished) badge = winner === i ? "勝ち" : `あと${Math.max(0, raceTo[i] - disp[i])}`;
+    else if (hillHill) badge = i === 0 ? "ヒルヒル！" : "9番勝負！";
+    else if (m.phase === "play") {
+      const rem = raceTo[i] - disp[i];
+      badge = rem <= 0 ? "達成" : `あと${rem}`;
+    }
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0.5vw", position: "relative", minWidth: 0 }}>
+        <div style={{ position: "absolute", top: "0.2vw", fontSize: "1vw", fontWeight: 900, color: pc, letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+        <div style={{
+          fontSize: "3.4vw", fontWeight: 900, color: pc, textAlign: "center", lineHeight: 1.15,
+          maxWidth: "96%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.4vw",
+        }}>{names[i]}</div>
+        <div style={{ fontSize: "9.5vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+          {m.pending || m.phase === "banking" ? "–" : disp[i]}
+          {!m.pending && <span style={{ fontSize: "0.34em", color: "#8A97A6" }}>/{raceTo[i]}</span>}
+        </div>
+        <div style={{ minHeight: "2.2vw", marginTop: "0.5vw" }}>
+          {badge && (
+            <div style={{
+              background: finished && winner === i ? "#2E9B48" : "#fff",
+              color: finished && winner === i ? "#fff" : pc,
+              borderRadius: "0.6vw", padding: "0.3vw 1.2vw", fontSize: "1.8vw", fontWeight: 900, whiteSpace: "nowrap",
+            }}>{badge}</div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div style={{ height: "100%", boxSizing: "border-box", background: "#fff", border: `3px solid ${DC.line}`, borderRadius: 14, padding: "10px 12px", color: DC.ink, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <TitleBadge>T{tableNum}</TitleBadge>
-        <span style={{ fontSize: 13, color: DC.ink, fontWeight: 900 }}>
-          {m.phase === "banking" ? "バンキング中" : (matchWinner != null || bothLose) ? "試合終了" : ""}
+    <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#0E1216", border: "0.3vw solid #fff", borderRadius: "1vw", padding: "1vw", display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4vw" }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ fontSize: "1.3vw", fontWeight: 900, color: "#fff", textAlign: "right" }}>
+          {stateTxt}{m.bracket ? `・${roundLabelOf(m)}` : ""}
         </span>
       </div>
-
-      {hillHill && matchWinner == null && !bothLose && m.phase === "play" && (
-        <div style={{ background: DC.hill, color: "#fff", borderRadius: 8, padding: "3px 10px", textAlign: "center", fontSize: 14, fontWeight: 900, marginBottom: 6, letterSpacing: 2 }}>
-          ヒルヒル
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0 }}>
-        {[0, 1].map((i) => {
-          const pc = i === 0 ? DC.blue : DC.red;
-          const hi = m.phase !== "banking" ? hillInfo(raceTo[i], disp[i]) : null;
-          const isBreaker = m.brk === i;
-          return (
-            <div key={i} style={{
-              flex: 1, textAlign: "center", borderRadius: 10, padding: "6px 4px",
-              border: `3px solid ${isBreaker ? pc : DC.lineSoft}`,
-              display: "flex", flexDirection: "column", justifyContent: "flex-start", overflow: "hidden",
-            }}>
-              <div style={{
-                fontSize: 15, fontWeight: 900, color: "#fff", background: pc, borderRadius: 6,
-                padding: "2px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-              }}>{names[i]}</div>
-
-              <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", color: DC.ink }}>
-                  {m.phase === "banking" ? "–" : disp[i]}
-                  <span style={{ fontSize: "0.42em", color: DC.sub }}>/{raceTo[i]}</span>
-                </div>
-              </div>
-
-              {/* バッジ行とブレイク行は中身の有無に関わらず高さを確保し、名前とスコアの位置が動かないようにする */}
-              <div style={{ minHeight: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {bothLose ? (
-                  <span style={{ background: DC.hill, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
-                    時間切れ
-                  </span>
-                ) : hi ? (
-                  <span style={{ background: pc, color: "#fff", borderRadius: 7, padding: "1px 10px", fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
-                    {hi.value != null ? `${hi.label} ${hi.value}` : hi.label}
-                  </span>
-                ) : null}
-              </div>
-              <div style={{
-                minHeight: 16, marginTop: 2, fontSize: 12, fontWeight: 900, color: pc, letterSpacing: 1,
-                visibility: isBreaker ? "visible" : "hidden",
-              }}>● ブレイク</div>
-            </div>
-          );
-        })}
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {card(0)}
+        <div style={{ width: "0.15vw", background: "#3C454E", margin: "1.5vw 0" }} />
+        {card(1)}
       </div>
+      <div style={{ minHeight: "2.4vw", marginTop: "0.4vw" }}>
+        {bothLose ? (
+          <div style={{ textAlign: "center", fontSize: "1.8vw", fontWeight: 900, color: "#fff", background: "#8A4B0B", borderRadius: "0.6vw", padding: "0.4vw 0" }}>時間切れ</div>
+        ) : winner != null ? (
+          <div style={{ textAlign: "center", fontSize: "1.8vw", fontWeight: 900, color: "#fff", background: "#2E9B48", borderRadius: "0.6vw", padding: "0.4vw 0" }}>🏆 {names[winner]} 勝利</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
-      {bothLose ? (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.hill, borderRadius: 8, padding: "2px 0" }}>
-          時間切れ
+function ProjectorMode({ onExit }) {
+  const [matches, setMatches] = useState({});
+  const [portrait, setPortrait] = useState(() => window.innerWidth < window.innerHeight);
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {}), () => {}), []);
+  useEffect(() => {
+    const onResize = () => setPortrait(window.innerWidth < window.innerHeight);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+  const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 3000, fontFamily: FONT }}>
+      <button onClick={onExit} style={{
+        position: "absolute", top: 10, right: 10, zIndex: 10, background: "rgba(255,255,255,0.15)",
+        color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 8, padding: "6px 12px",
+        fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+      }}>✕ 投影モードを終了</button>
+      {portrait ? (
+        <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#fff", textAlign: "center", padding: 24 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📱⟳</div>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>端末を横向きにしてください</div>
         </div>
-      ) : matchWinner != null && (
-        <div style={{ marginTop: 6, textAlign: "center", fontSize: 16, fontWeight: 900, color: "#fff", background: DC.win, borderRadius: 8, padding: "2px 0" }}>
-          🏆 {names[matchWinner]} 勝利
+      ) : (
+        <div style={{ height: "100%", boxSizing: "border-box", padding: "1.2vw", display: "flex", gap: "1vw" }}>
+          {[0, 1, 2].map((i) => <ProjectorCard key={i} tableNum={i + 1} m={display[i]} />)}
         </div>
       )}
     </div>
@@ -1278,10 +1300,16 @@ function Shell() {
   const [tab, setTab] = useState("tables");
   const [config, setConfig] = useState({});
   const [showStandings, setShowStandings] = useState(false);
+  const [projectorMode, setProjectorMode] = useState(false);
   const startRef = useRef(null);   // タブをなぞり始めた位置
   const swipedRef = useRef(false); // なぞった直後のタップでタブが切り替わらないようにする
   useEffect(() => subscribeConfig(setConfig), []);
   const liveUrl = (config.liveUrl || "").trim();
+
+  if (projectorMode) {
+    return <ProjectorMode onExit={() => setProjectorMode(false)} />;
+  }
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
       <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
@@ -1303,6 +1331,11 @@ function Shell() {
           </button>
         ))}
         <span style={{ flex: 1 }} />
+        <button onClick={() => setProjectorMode(true)} style={{
+          flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: C.ink,
+          background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px",
+          whiteSpace: "nowrap", cursor: "pointer", fontFamily: FONT,
+        }}>🖥 投影モード</button>
         {liveUrl ? (
           <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{
             flexShrink: 0, marginRight: 10, fontSize: 11, fontWeight: 800, color: "#fff", background: "#C6392E",
