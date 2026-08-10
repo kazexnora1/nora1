@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.179";
-const BUILD_TIME = "2026-08-08 10:30";
+const APP_VERSION = "1.180";
+const BUILD_TIME = "2026-08-11 移植1（ライブ更新・リセットボタン）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1325,6 +1325,22 @@ function BracketTab({ roster }) {
   const totalRounds = bracketTotalRounds(size);
   const started = bracketMatches.length > 0;
 
+  const resetBracket = async () => {
+    if (!window.confirm(`決勝トーナメントの対戦（${bracketMatches.length}試合）をすべて削除します。\n進行中・終了した試合も含めて消えます（バックアップからは戻せます）。\n\nよろしいですか？`)) return;
+    if (!window.confirm("本当に削除しますか？")) return;
+    setRegistering(true);
+    try {
+      await saveBackup("決勝トーナメントをリセットする前");
+      const clearUpd = {};
+      Object.entries(matches || {}).forEach(([id, m]) => { if (m && m.bracket) clearUpd[id] = null; });
+      await dbUpdate("matches", clearUpd);
+      setMsg({ ok: true, text: "決勝トーナメントを削除しました" });
+    } catch (e) {
+      setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
   // 予選の成績順（1位から）で枠を埋めておく。抽選番号はこのあと手で入れ替えられる
   const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
   const rankedIdx = useMemo(() => {
@@ -1506,6 +1522,14 @@ function BracketTab({ roster }) {
         <div style={{ fontSize: 22, fontWeight: 800 }}>決勝トーナメント</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>抽選で引いた番号順に枠へ入れて組みます</div>
       </div>
+
+      {bracketMatches.length > 0 && (
+        <button onClick={resetBracket} disabled={registering} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, borderRadius: 12,
+          color: C.minus, fontSize: 14.5, fontWeight: 800, padding: "13px 0", cursor: "pointer",
+          fontFamily: FONT, marginBottom: 16,
+        }}>🗑 決勝トーナメントをリセット（{bracketMatches.length}試合を削除）</button>
+      )}
 
       {!started && (
         <>
@@ -2437,11 +2461,33 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
   const [endM, setEndM] = useState(d0.endM);
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
+  const [existingMatches, setExistingMatches] = useState({});
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
     saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min });
   }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min]);
+
+  useEffect(() => dbSubscribe("matches", (m) => setExistingMatches(m || {}), () => {}), []);
+  const existingPrelimCount = useMemo(
+    () => Object.values(existingMatches || {}).filter((m) => m && !m.bracket).length,
+    [existingMatches]
+  );
+  const resetPrelim = async () => {
+    if (!window.confirm(`予選の対戦（${existingPrelimCount}試合）をすべて削除します。\n進行中・終了した試合も含めて消えます（バックアップからは戻せます）。\n\nよろしいですか？`)) return;
+    if (!window.confirm("本当に削除しますか？")) return;
+    setRegistering(true);
+    try {
+      await saveBackup("予選をリセットする前");
+      const clearUpd = {};
+      Object.entries(existingMatches || {}).forEach(([id, m]) => { if (m && !m.bracket) clearUpd[id] = null; });
+      await dbUpdate("matches", clearUpd);
+      setMsg({ ok: true, text: "予選の対戦を削除しました" });
+    } catch (e) {
+      setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
 
   const timeEstimate = useMemo(() => {
     if (!result || result.error) return null;
@@ -2557,6 +2603,14 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
         <div style={{ fontSize: 22, fontWeight: 800 }}>試合割り</div>
         <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>空き卓は最終コマのみ／3連続なし／連投は同卓のみ</div>
       </div>
+
+      {existingPrelimCount > 0 && (
+        <button onClick={resetPrelim} disabled={registering} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, borderRadius: 12,
+          color: C.minus, fontSize: 14.5, fontWeight: 800, padding: "13px 0", cursor: "pointer",
+          fontFamily: FONT, marginBottom: 16,
+        }}>🗑 今の予選をリセット（{existingPrelimCount}試合を削除）</button>
+      )}
 
       {roster.length < players && (
         <Notice>メンバーが{roster.length}人しかいません。先頭から{players}人分を使うので、メンバータブで人数を確認してください。</Notice>
@@ -3148,8 +3202,6 @@ function LiveTablePanel({ tableNum, m }) {
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
-  // 得点・目標点・ヒントはラックが終わって確定した分だけ。ラック中の球はラック列にだけ出す
-  const disp = tot;
   const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
@@ -3157,9 +3209,12 @@ function LiveTablePanel({ tableNum, m }) {
     : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
     : reached[0] ? 0 : reached[1] ? 1 : null;
   const finished = winner != null || bothLose;
-  // ヒルヒル＝両者とも残り14点以下。このラックの9番で決まるので、残り点数は出さない
+  // ヒルヒル＝両者とも残り14点以下（確定分で判定）。このラックの9番で決まるので、残り点数は出さない
   const hillHill = !finished && m.phase === "play" &&
     raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+  // 得点は台上の球を含めて常にライブ更新する。ただしヒルヒルに入ったら、その9番で決着が付くまで
+  // 表示を確定分（tot）で止める（ヒルヒル中は「あと◯」を出さない仕様と揃える）
+  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
 
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
