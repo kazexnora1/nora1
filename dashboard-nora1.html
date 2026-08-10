@@ -984,7 +984,7 @@ function TimelineSlotCard({
         <div onClick={(e) => { e.stopPropagation(); setMenu(null); setEditSide(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 5000 }}>
           <div onClick={(e) => e.stopPropagation()} style={{
             background: "#fff", borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
-            maxWidth: 420, width: "100%", maxHeight: "82vh", overflowY: "auto", boxSizing: "border-box",
+            maxWidth: 420, width: "100%", maxHeight: "82vh", overflowY: "auto", boxSizing: "border-box", fontFamily: FONT,
           }}>
             <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 12px" }} />
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.sub, textAlign: "center" }}>T{table}・{style.badge}</div>
@@ -4616,7 +4616,7 @@ function AddCardMini({ roster, table }) {
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 5000 }}>
           <div onClick={(e) => e.stopPropagation()} style={{
             background: "#fff", borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
-            maxWidth: 420, width: "100%", maxHeight: "82vh", overflowY: "auto", boxSizing: "border-box",
+            maxWidth: 420, width: "100%", maxHeight: "82vh", overflowY: "auto", boxSizing: "border-box", fontFamily: FONT,
           }}>
             <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 12px" }} />
             <div style={{ fontSize: 15, fontWeight: 900, textAlign: "center", marginBottom: 12 }}>T{table} の最後に試合を追加</div>
