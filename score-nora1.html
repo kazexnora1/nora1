@@ -1161,18 +1161,46 @@ function NextList({ matches }) {
   );
 }
 /* ========= プロジェクター投影モード =========
-   横向き専用。名前とスコアだけを画面いっぱいの大きな文字で出す（ラック履歴やレートは省く）。
+   横向き専用。店内が明るい想定なので白地に濃い色文字。名前・スコアに加えてラック履歴と
+   進行中ラックもリアルタイムで出す（LiveTablePanelの中央カラムと同じ考え方をvw単位に拡大）。
    縦向きのままだと文字が小さいままなので、縦向きを検知したら回転を促す案内に切り替える */
+const PROJ_SHOW_RACKS = 6;
+
 function ProjectorCard({ tableNum, m }) {
+  const [openHist, setOpenHist] = useState(false);
+  const [flashing, setFlashing] = useState(false);
+  const lastLiveRef = useRef(null);
+  const flashTimerRef = useRef(null);
+
   const tBadge = {
-    display: "inline-block", background: "#fff", color: "#111", borderRadius: "0.6vw",
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: "0.6vw",
     padding: "0.3vw 1vw", fontSize: "1.6vw", fontWeight: 900, letterSpacing: 2,
   };
+
+  const balls = (m && m.balls) || [];
+  const live = [
+    balls.filter((b) => b.loc === "p1" && !b.dead).length,
+    balls.filter((b) => b.loc === "p2" && !b.dead).length,
+  ];
+  const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
+
+  // 進行中ラックの点数が変わったら点滅（他卓を横目で見ても気づけるように）
+  useEffect(() => {
+    if (!m || m.phase !== "play") { lastLiveRef.current = liveKey; return; }
+    if (lastLiveRef.current !== null && lastLiveRef.current !== liveKey) {
+      setFlashing(true);
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashing(false), 5000);
+    }
+    lastLiveRef.current = liveKey;
+  }, [liveKey]);
+  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
+
   if (!m) {
     return (
-      <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#0E1216", border: "0.3vw solid #fff", borderRadius: "1vw", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1vw" }}>
-        <span style={tBadge}>T{tableNum}</span>
-        <div style={{ fontSize: "2.2vw", fontWeight: 900, color: "#8A97A6" }}>予定なし</div>
+      <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: C.zone, border: `0.25vw dashed ${C.line}`, borderRadius: "1vw", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1vw" }}>
+        <span style={{ ...tBadge, background: C.sub }}>T{tableNum}</span>
+        <div style={{ fontSize: "2.2vw", fontWeight: 900, color: C.sub }}>予定なし</div>
       </div>
     );
   }
@@ -1180,13 +1208,8 @@ function ProjectorCard({ tableNum, m }) {
   const names = m.names || ["", ""];
   const raceTo = m.raceTo || [0, 0];
   const tot = m.tot || [0, 0];
-  const balls = m.balls || [];
-  const live = [
-    balls.filter((b) => b.loc === "p1" && !b.dead).length,
-    balls.filter((b) => b.loc === "p2" && !b.dead).length,
-  ];
-  const bothLose = !!m.bothLose;
   const hist = m.hist || [];
+  const bothLose = !!m.bothLose;
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
@@ -1199,7 +1222,7 @@ function ProjectorCard({ tableNum, m }) {
   const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
 
   const card = (i) => {
-    const pc = i === 0 ? "#3E7BD6" : "#D6544A";
+    const pc = i === 0 ? C.blue : C.red;
     const isBrk = m.brk === i;
     let badge = null;
     if (m.pending) badge = null;
@@ -1210,22 +1233,26 @@ function ProjectorCard({ tableNum, m }) {
       badge = rem <= 0 ? "達成" : `あと${rem}`;
     }
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0.5vw", position: "relative", minWidth: 0 }}>
-        <div style={{ position: "absolute", top: "0.2vw", fontSize: "1vw", fontWeight: 900, color: pc, letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+      <div style={{
+        flex: 1, minWidth: 0, background: pc, borderRadius: "0.9vw", padding: "0.6vw 0.4vw",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative",
+        boxShadow: isBrk ? "inset 0 0 0 0.25vw rgba(255,255,255,0.7)" : "none",
+      }}>
+        <div style={{ position: "absolute", top: "0.3vw", fontSize: "0.9vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
         <div style={{
-          fontSize: "3.4vw", fontWeight: 900, color: pc, textAlign: "center", lineHeight: 1.15,
-          maxWidth: "96%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.4vw",
+          fontSize: "2.4vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
+          maxWidth: "94%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.3vw",
         }}>{names[i]}</div>
-        <div style={{ fontSize: "9.5vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ fontSize: "6.8vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
           {m.pending || m.phase === "banking" ? "–" : disp[i]}
-          {!m.pending && <span style={{ fontSize: "0.34em", color: "#8A97A6" }}>/{raceTo[i]}</span>}
+          {!m.pending && <span style={{ fontSize: "0.34em", opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
-        <div style={{ minHeight: "2.2vw", marginTop: "0.5vw" }}>
+        <div style={{ minHeight: "2vw", marginTop: "0.5vw" }}>
           {badge && (
             <div style={{
-              background: finished && winner === i ? "#2E9B48" : "#fff",
+              background: finished && winner === i ? C.win : "#fff",
               color: finished && winner === i ? "#fff" : pc,
-              borderRadius: "0.6vw", padding: "0.3vw 1.2vw", fontSize: "1.8vw", fontWeight: 900, whiteSpace: "nowrap",
+              borderRadius: "0.6vw", padding: "0.25vw 1vw", fontSize: "1.5vw", fontWeight: 900, whiteSpace: "nowrap",
             }}>{badge}</div>
           )}
         </div>
@@ -1233,24 +1260,74 @@ function ProjectorCard({ tableNum, m }) {
     );
   };
 
+  // 中央：ラック履歴＋進行中ラック（LiveTablePanelと同じ考え方）
+  const hidden = Math.max(0, hist.length - PROJ_SHOW_RACKS);
+  const shown = openHist ? hist : hist.slice(hidden);
+  const rowStyle = { display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15vw", fontSize: "1.05vw", fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1.35 };
+  const numStyle = (side, strong) => ({ width: "1.6vw", textAlign: side === "a" ? "right" : "left", color: side === "a" ? C.blue : C.red, fontWeight: strong ? 900 : 700 });
+
+  const histJsx = (
+    <div style={{ width: "8vw", flexShrink: 0, background: "#fff", border: `0.15vw solid ${C.line}`, borderRadius: "0.9vw", padding: "0.4vw 0.3vw", display: "flex", flexDirection: "column" }}>
+      <div style={{ fontSize: "0.85vw", fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: "0.3vw", letterSpacing: 1 }}>ラック</div>
+      {m.pending || m.phase === "banking" ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub, fontSize: "0.9vw", textAlign: "center" }}>
+          {m.pending ? <>前の試合<br />待ち</> : <>まだ<br />ありません</>}
+        </div>
+      ) : (
+        <>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.1vw", overflow: "hidden" }}>
+            {hidden > 0 && (
+              <div onClick={() => setOpenHist((v) => !v)} style={{
+                fontSize: "0.8vw", fontWeight: 800, color: C.sub, textAlign: "center", lineHeight: 1.6,
+                border: `0.1vw solid ${C.line}`, borderRadius: "0.4vw", marginBottom: "0.2vw", cursor: "pointer", background: C.zone,
+              }}>{openHist ? "▲ 畳む" : `▼ 前${hidden}`}</div>
+            )}
+            {shown.map((h, k) => {
+              const add = h.add || [0, 0];
+              return (
+                <div key={k} style={rowStyle}>
+                  <span style={numStyle("a", h.w === 0)}>{add[0]}</span>
+                  <span style={{ color: "#B8BFC6", fontSize: "0.85vw" }}>-</span>
+                  <span style={numStyle("b", h.w === 1)}>{add[1]}</span>
+                </div>
+              );
+            })}
+            {m.phase === "play" && (
+              <div style={{ ...rowStyle, background: flashing ? undefined : "#FFF6CC", borderRadius: "0.4vw", animation: flashing ? "rackFlash 0.45s steps(1) 0s 11" : "none" }}>
+                <span style={numStyle("a")}>{live[0]}</span>
+                <span style={{ color: "#B8BFC6", fontSize: "0.85vw" }}>-</span>
+                <span style={numStyle("b")}>{live[1]}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: "0.3vw", paddingTop: "0.3vw", borderTop: `0.15vw solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3vw", fontSize: "1.3vw", fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: C.blue }}>{disp[0]}</span>
+            <span style={{ color: C.sub, fontSize: "1vw" }}>-</span>
+            <span style={{ color: C.red }}>{disp[1]}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
-    <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#0E1216", border: "0.3vw solid #fff", borderRadius: "1vw", padding: "1vw", display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div style={{ flex: 1, height: "100%", boxSizing: "border-box", background: "#fff", border: `0.2vw solid ${C.ink}`, borderRadius: "1vw", padding: "0.8vw", display: "flex", flexDirection: "column", minWidth: 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4vw" }}>
         <span style={tBadge}>T{tableNum}</span>
-        <span style={{ fontSize: "1.3vw", fontWeight: 900, color: "#fff", textAlign: "right" }}>
+        <span style={{ fontSize: "1.2vw", fontWeight: 900, color: C.ink, textAlign: "right" }}>
           {stateTxt}{m.bracket ? `・${roundLabelOf(m)}` : ""}
         </span>
       </div>
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+      <div style={{ flex: 1, display: "flex", gap: "0.5vw", minHeight: 0 }}>
         {card(0)}
-        <div style={{ width: "0.15vw", background: "#3C454E", margin: "1.5vw 0" }} />
+        {histJsx}
         {card(1)}
       </div>
-      <div style={{ minHeight: "2.4vw", marginTop: "0.4vw" }}>
+      <div style={{ minHeight: "2.2vw", marginTop: "0.4vw" }}>
         {bothLose ? (
-          <div style={{ textAlign: "center", fontSize: "1.8vw", fontWeight: 900, color: "#fff", background: "#8A4B0B", borderRadius: "0.6vw", padding: "0.4vw 0" }}>時間切れ</div>
+          <div style={{ textAlign: "center", fontSize: "1.6vw", fontWeight: 900, color: "#fff", background: C.hill, borderRadius: "0.6vw", padding: "0.35vw 0" }}>時間切れ</div>
         ) : winner != null ? (
-          <div style={{ textAlign: "center", fontSize: "1.8vw", fontWeight: 900, color: "#fff", background: "#2E9B48", borderRadius: "0.6vw", padding: "0.4vw 0" }}>🏆 {names[winner]} 勝利</div>
+          <div style={{ textAlign: "center", fontSize: "1.6vw", fontWeight: 900, color: "#fff", background: C.win, borderRadius: "0.6vw", padding: "0.35vw 0" }}>🏆 {names[winner]} 勝利</div>
         ) : null}
       </div>
     </div>
@@ -1273,14 +1350,14 @@ function ProjectorMode({ onExit }) {
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 3000, fontFamily: FONT }}>
+    <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 3000, fontFamily: FONT }}>
       <button onClick={onExit} style={{
-        position: "absolute", top: 10, right: 10, zIndex: 10, background: "rgba(255,255,255,0.15)",
-        color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 8, padding: "6px 12px",
+        position: "absolute", top: 10, right: 10, zIndex: 10, background: C.ink,
+        color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px",
         fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
       }}>✕ 投影モードを終了</button>
       {portrait ? (
-        <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#fff", textAlign: "center", padding: 24 }}>
+        <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.ink, textAlign: "center", padding: 24 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📱⟳</div>
           <div style={{ fontSize: 20, fontWeight: 800 }}>端末を横向きにしてください</div>
         </div>
