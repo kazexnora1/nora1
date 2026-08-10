@@ -643,7 +643,7 @@ function RulesButton({ style }) {
                 fontFamily: FONT, cursor: "pointer",
               }}>閉じる</button>
             </div>
-            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text}</div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" }}>{text}</div>
           </div>
         </div>
       )}
@@ -1090,14 +1090,31 @@ function LiveTablePanel({ tableNum, m }) {
 }
 
 /* ========= テーブルの様子タブ（B3の観戦ディスプレイと同じ見た目。スマホなので縦積み） ========= */
+// 卓に今どの試合を出すか決める。次の試合がまだバンキング中（先攻未決定）の間は、
+// その卓で直近に終わった試合のスコアを出し続ける（次のバンキング結果が出た瞬間に切り替わる）
+function pickDisplayMatch(matches, tableNum) {
+  const queue = getQueueForTable(matches, tableNum);
+  const next = queue[0] || null;
+  if (!next) return null;
+  if (next.phase === "banking" && !next.pending) {
+    const finished = getAllForTable(matches, tableNum).filter(isMatchFinished);
+    if (finished.length) {
+      finished.sort((a, b) => (b.finishedAt || b.updatedAt || 0) - (a.finishedAt || a.updatedAt || 0));
+      return finished[0];
+    }
+  }
+  return next;
+}
 function TablesTab() {
-  const [queues, setQueues] = useState([[], [], []]);
+  const [matches, setMatches] = useState({});
   const [err, setErr] = useState(null);
 
   useEffect(() => subscribeAllMatches(
-    (matches) => { setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t))); setErr(null); },
+    (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
 
+  const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
+  const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
   const nextMatches = queues
     .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
     .filter(Boolean);
@@ -1105,7 +1122,7 @@ function TablesTab() {
   return (
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
       {[0, 1, 2].map((i) => (
-        <LiveTablePanel key={i} tableNum={i + 1} m={queues[i][0]} />
+        <LiveTablePanel key={i} tableNum={i + 1} m={display[i]} />
       ))}
       <NextList matches={nextMatches} />
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
