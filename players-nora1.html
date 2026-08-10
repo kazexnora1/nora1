@@ -1755,6 +1755,10 @@ function MatchScreen({ setupInfo, onExit }) {
   // 目標達成率（確定分のみ）。100%を超えることがあるが、成績では100%を上限とする
   const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
 
+  // 9番以外（ラック途中で目標に到達）で決着した直後に訂正した時、
+  // 台上の球がそのままだとまたすぐ決着してしまうので、球を直すまで判定を止める
+  const [suppressWin, setSuppressWin] = useState(false);
+
   // ===== 勝敗判定 =====
   // ・通常どおり、目標点に到達した方が勝ち
   // ・ヒルヒルで両者が到達した場合は、そのラックで9番を落とした方（最終ラックの勝者）が勝ち
@@ -1796,9 +1800,6 @@ function MatchScreen({ setupInfo, onExit }) {
   }, [matchWinner, bothLose, loaded, state.finishedAt]);
 
   const pushUndo = () => setUndoStack((s) => [...s.slice(-19), state]);
-  // 9番以外（ラック途中で目標に到達）で決着した直後に訂正した時、
-  // 台上の球がそのままだとまたすぐ決着してしまうので、球を直すまで判定を止める
-  const [suppressWin, setSuppressWin] = useState(false);
 
   // 台上の球を直して目標に届かなくなったら、ふつうの判定に戻す
   useEffect(() => {
