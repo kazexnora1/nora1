@@ -390,7 +390,8 @@ function recomputeWinner(raceTo, tot, hist) {
 // ・勝ちがつかなかった試合は、目標点に対する取得点の割合（達成率、上限100%）を記録
 // ・時間切れでどちらも目標に届かなかった試合は両者負け扱いで、双方に達成率を記録
 // ・並び順は 勝ち数 → 達成率の平均 → 得失点差
-function buildStandings(matches, roster) {
+function buildStandings(matches, roster, scope) {
+  // scope: undefined（全部）| "prelim"（予選のみ）| "bracket"（決勝トーナメントのみ）
   const stats = {};
   const ensure = (name) => {
     if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
@@ -402,6 +403,8 @@ function buildStandings(matches, roster) {
     const m = matches[id];
     if (!m || !isMatchFinished(m)) continue;
     if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (scope === "prelim" && m.bracket) continue;
+    if (scope === "bracket" && !m.bracket) continue;
     const names = m.names || [];
     const tot = m.tot || [0, 0];
     const rt = m.raceTo || [0, 0];
@@ -448,10 +451,11 @@ const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
 
 // 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら達成率）を並べる。
 // 「戦績（対戦相手つき）」PC表示用
-function buildDetailedStandings(matches, roster) {
-  const base = buildStandings(matches, roster);
+function buildDetailedStandings(matches, roster, scope) {
+  const base = buildStandings(matches, roster, scope);
   const list = Object.values(matches || {})
     .filter((m) => m && Array.isArray(m.names))
+    .filter((m) => !(scope === "prelim" && m.bracket) && !(scope === "bracket" && !m.bracket))
     .map((m) => ({ ...m }));
   list.sort((a, b) => (a.slot != null && b.slot != null ? a.slot - b.slot : (a.createdAt || 0) - (b.createdAt || 0)));
 
@@ -1170,17 +1174,95 @@ function TimelineSlotCard({
   );
 }
 
+/* ========= 決勝トーナメントの結果だけを見る（プレイヤータブ用、操作ボタンなし） ========= */
+function BracketReadOnlyView({ matches, wide }) {
+  const bracketMatches = getBracketMatches(matches);
+  const hasBracket = bracketMatches.length > 0;
+  if (!hasBracket) {
+    return <div style={{ textAlign: "center", color: C.sub, fontSize: 15, padding: "28px 0" }}>決勝トーナメントはまだ登録されていません</div>;
+  }
+  const bracketSize = bracketMatches[0].bracketSize || 8;
+  const totalRounds = bracketTotalRounds(bracketSize);
+  const roundLabel = (r) => (r === totalRounds ? "決勝" : totalRounds - r === 1 ? "準決勝" : `${r}回戦`);
+  return (
+    <div style={{ maxWidth: wide ? 640 : 480, margin: "0 auto" }}>
+      {Array.from({ length: totalRounds }, (_, ri) => ri + 1).map((r) => {
+        const ms = bracketMatchesForRound(matches, r);
+        if (ms.length === 0) return null;
+        const allDone = ms.every((m) => isMatchFinished(m));
+        return (
+          <div key={r} style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
+            {ms.map((m) => {
+              const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
+              return (
+                <div key={m.id} style={{
+                  display: "flex", gap: 8, alignItems: "center", background: m.pending ? C.zone : "#fff",
+                  border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 12px", marginBottom: 6,
+                }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: m.pending ? C.sub : C.ink, borderRadius: 5, padding: "1px 6px", flexShrink: 0 }}>T{m.table}</span>
+                  {[0, 1].map((i) => (
+                    <div key={i} style={{
+                      flex: 1, textAlign: "center", fontSize: 15,
+                      fontWeight: w === i ? 900 : 600,
+                      color: m.pending ? C.sub : w === i ? C.win : w == null ? C.ink : C.sub,
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}>
+                      {m.names[i]}{isMatchFinished(m) && ` (${(m.tot || [0, 0])[i]})`}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {allDone && r === totalRounds && (
+              <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win, marginTop: 6 }}>
+                🏆 優勝：{ms[0].names[matchWinnerIndex(ms[0])]}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+/* 予選／決勝トーナメントの切替ボタン。プレイヤータブの2画面で共通利用 */
+function ScopeToggle({ view, onChange, hasBracket }) {
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <button onClick={() => onChange("prelim")} style={{
+        flex: 1, background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
+        border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+      }}>予選</button>
+      <button onClick={() => onChange("bracket")} disabled={!hasBracket} style={{
+        flex: 1, background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
+        border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 800,
+        cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
+      }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
+    </div>
+  );
+}
+
 /* ========= 成績タブ：勝ち数→負け試合の達成率平均の順に並べる ========= */
 function StandingsTab() {
-  const [rows, setRows] = useState([]);
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
+  const [view, setView] = useState("prelim");
 
   useEffect(() => dbSubscribe("/",
-    (rec) => { const r = normalizeRecord(rec); setRows(buildStandings(r.matches, r.roster)); setErr(null); },
+    (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
     (e) => setErr(e)), []);
+
+  const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
+  const rows = buildStandings(matches, roster, "prelim");
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
+      <ScopeToggle view={view} onChange={setView} hasBracket={hasBracket} />
+      {view === "bracket" ? (
+        <BracketReadOnlyView matches={matches} />
+      ) : (
+        <>
       <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 12px 8px", fontSize: 14.5, color: C.sub, fontWeight: 800 }}>
         <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
       </div>
@@ -1216,6 +1298,8 @@ function StandingsTab() {
       <div style={{ fontSize: 13.5, color: C.sub, marginTop: 16, lineHeight: 1.7 }}>
         並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。全勝の選手は達成率「–」で最上位に並びます。
       </div>
+        </>
+      )}
       {err && <div style={{ textAlign: "center", fontSize: 12, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
     </div>
   );
@@ -1472,12 +1556,14 @@ function PcStandingsTab() {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
+  const [view, setView] = useState("prelim");
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
     (e) => setErr(e)), []);
 
-  const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster), [matches, roster]);
+  const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
+  const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster, "prelim"), [matches, roster]);
   const rowCount = Math.max(1, stRows.length);
   const gCell = { border: `1px solid ${C.line}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 4px" };
   const tournamentName = loadSettings().tournamentName || "";
@@ -1491,6 +1577,23 @@ function PcStandingsTab() {
         <button className="no-print" onClick={() => window.print()} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>🖨 印刷する</button>
       </div>
 
+      <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
+        <button onClick={() => setView("prelim")} style={{
+          background: view === "prelim" ? C.blue : "#fff", color: view === "prelim" ? "#fff" : C.ink,
+          border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>予選</button>
+        <button onClick={() => setView("bracket")} disabled={!hasBracket} style={{
+          background: view === "bracket" ? C.blue : "#fff", color: !hasBracket ? C.line : view === "bracket" ? "#fff" : C.ink,
+          border: `1.5px solid ${!hasBracket ? C.line : C.blue}`, borderRadius: 10, padding: "8px 16px", fontSize: 14, fontWeight: 800,
+          cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
+        }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
+      </div>
+
+      {view === "bracket" ? (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <BracketReadOnlyView matches={matches} wide />
+        </div>
+      ) : (
       <div className="print-fit" style={{
         flex: 1, minHeight: 0, display: "grid",
         gridTemplateColumns: `52px minmax(100px, 1.1fr) repeat(${maxGames}, minmax(0, 1fr)) 76px 64px`,
@@ -1533,6 +1636,7 @@ function PcStandingsTab() {
           <div style={{ gridColumn: `1 / span ${maxGames + 4}`, ...gCell, color: C.sub, fontSize: 16 }}>まだ結果がありません</div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -1602,7 +1706,7 @@ function BracketTab({ roster }) {
   };
 
   // 予選の成績順（1位から）で枠を埋めておく。抽選番号はこのあと手で入れ替えられる
-  const standings = useMemo(() => buildStandings(matches, roster), [matches, roster]);
+  const standings = useMemo(() => buildStandings(matches, roster, "prelim"), [matches, roster]);
   const rankedIdx = useMemo(() => {
     const played = standings.filter((r) => r.played > 0);
     const idx = [];
