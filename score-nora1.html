@@ -971,15 +971,21 @@ function LiveTablePanel({ tableNum, m }) {
     const pc = i === 0 ? C.blue : C.red;
     const b = badgeOf(i);
     const isBrk = m.brk === i;
+    const isWinner = finished && !bothLose && winner === i;
+    const isLoser = finished && !bothLose && winner != null && winner !== i;
     return (
       <div style={{
         flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px",
-        textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+        textAlign: "center", color: "#fff",
+        boxShadow: isWinner
+          ? "0 0 0 3px #FFD54A, inset 0 0 0 3px rgba(255,255,255,0.65)"
+          : isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+        opacity: isLoser ? 0.55 : 1,
       }}>
         <div style={{
           fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-        }}>{names[i]}</div>
+        }}>{isWinner ? "🏆 " : ""}{names[i]}</div>
         {/* ファーゴレート。数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。
             運営が暫定で決めた人もいるので、無い時は出さない */}
         <div style={{ minHeight: 17, marginBottom: 2, display: "flex", alignItems: "baseline", justifyContent: "center", gap: 2 }}>
@@ -999,7 +1005,7 @@ function LiveTablePanel({ tableNum, m }) {
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
-              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              flex: 1, minWidth: 0, background: isWinner ? "#FFD54A" : "#fff", color: isWinner ? "#5A4400" : b.gray ? C.sub : pc, borderRadius: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
             }}>{b.t}</span>
@@ -1224,6 +1230,8 @@ function ProjectorCard({ tableNum, m }) {
   const card = (i) => {
     const pc = i === 0 ? C.blue : C.red;
     const isBrk = m.brk === i;
+    const isWinner = finished && !bothLose && winner === i;
+    const isLoser = finished && !bothLose && winner != null && winner !== i;
     let badge = null;
     if (m.pending) badge = null;
     else if (finished) badge = winner === i ? "勝ち" : `あと${Math.max(0, raceTo[i] - disp[i])}`;
@@ -1236,14 +1244,17 @@ function ProjectorCard({ tableNum, m }) {
       <div style={{
         flex: 1, minWidth: 0, background: pc, borderRadius: "0.9vw", padding: "0.6vw 0.4vw",
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative",
-        boxShadow: isBrk ? "inset 0 0 0 0.25vw rgba(255,255,255,0.7)" : "none",
+        boxShadow: isWinner
+          ? "0 0 0 0.3vw #FFD54A, inset 0 0 0 0.25vw rgba(255,255,255,0.7)"
+          : isBrk ? "inset 0 0 0 0.25vw rgba(255,255,255,0.7)" : "none",
+        opacity: isLoser ? 0.55 : 1,
       }}>
         <div style={{ position: "absolute", top: "0.3vw", fontSize: "1.15vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
         <div style={{ width: "94%", marginTop: "1.2vw" }}>
           <div style={{
             fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>{names[i]}</div>
+          }}>{isWinner ? "🏆 " : ""}{names[i]}</div>
           {rateOfPlayer(m, i) && (
             <div style={{ textAlign: "center", marginTop: "0.1vw" }}>
               <span style={{ fontSize: "1vw", fontWeight: 800, color: "#fff", opacity: 0.65 }}>FR</span>
@@ -1260,8 +1271,8 @@ function ProjectorCard({ tableNum, m }) {
         <div style={{ minHeight: "2vw", marginTop: "0.5vw" }}>
           {badge && (
             <div style={{
-              background: finished && winner === i ? C.win : "#fff",
-              color: finished && winner === i ? "#fff" : pc,
+              background: isWinner ? "#FFD54A" : "#fff",
+              color: isWinner ? "#5A4400" : pc,
               borderRadius: "0.6vw", padding: "0.25vw 1vw", fontSize: "1.5vw", fontWeight: 900, whiteSpace: "nowrap",
             }}>{badge}</div>
           )}
