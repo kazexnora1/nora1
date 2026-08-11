@@ -1115,8 +1115,14 @@ function TablesTab() {
 
   const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
+  // 表示中の試合がまだ待機列の先頭（バンキング前）のままなら、次の試合欄もその先頭を出す。
+  // バンキングが終わって表示が切り替わって初めて、次の試合欄もその次（[1]）へ繰り上げる
   const nextMatches = queues
-    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+    .map((q, i) => {
+      const shown = display[i];
+      const upcoming = shown && q[0] && shown.id === q[0].id ? q[1] : q[0];
+      return upcoming ? { ...upcoming, tableNum: i + 1 } : null;
+    })
     .filter(Boolean);
 
   return (
@@ -1418,13 +1424,20 @@ function ProjectorMode({ onExit }) {
         </div>
       ) : (
         <div style={{ height: "100%", boxSizing: "border-box", padding: "1.2vw", display: "flex", gap: "1vw" }}>
-          {[0, 1, 2].map((i) => (
-            <div key={i} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", gap: "0.7vw", minWidth: 0 }}>
-              <ProjectorCard tableNum={i + 1} m={display[i]} />
-              {/* 次の対戦：現在表示中の試合の次にその卓へ入るカード。横向きは縦に余裕があるので常設表示 */}
-              <ProjectorNextCard tableNum={i + 1} m={queues[i][1] || null} />
-            </div>
-          ))}
+          {[0, 1, 2].map((i) => {
+            // 表示中の試合が待機列の先頭のままなら、次の対戦カードもその先頭を出す
+            // （バンキング前の試合を飛び越して繰り上げない）
+            const shownM = display[i];
+            const q = queues[i];
+            const upcoming = shownM && q[0] && shownM.id === q[0].id ? q[1] : q[0];
+            return (
+              <div key={i} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", gap: "0.7vw", minWidth: 0 }}>
+                <ProjectorCard tableNum={i + 1} m={display[i]} />
+                {/* 次の対戦：現在表示中の試合の次にその卓へ入るカード。横向きは縦に余裕があるので常設表示 */}
+                <ProjectorNextCard tableNum={i + 1} m={upcoming || null} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
