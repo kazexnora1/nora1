@@ -1727,7 +1727,16 @@ function BracketTab({ roster }) {
     const prev = bracketMatchesForRound(matches, fromRound);
     if (prev.length === 0 || prev.some((m) => !isMatchFinished(m))) { setMsg({ ok: false, text: "前のラウンドがまだ終わっていません" }); return; }
     const winners = prev.map(winnerInfo);
-    if (winners.some((w) => !w)) { setMsg({ ok: false, text: "勝者が確定していない試合があります" }); return; }
+    if (winners.some((w) => !w)) {
+      const bad = prev.filter((m) => !winnerInfo(m));
+      const names = bad.map((m) => `T${m.table}　${(m.names || [])[0]} 対 ${(m.names || [])[1]}`).join("\n");
+      setMsg({
+        ok: false,
+        text: `勝者が確定していない試合があります（おそらく「時間切れ・両者とも届かず」で終了しているため）。\n` +
+          `${names}\n該当のカードを開き、「終了を取り消す」→改めて「この試合を終了にする」から、どちらかの勝ちを選び直してください。`,
+      });
+      return;
+    }
     const nextRound = fromRound + 1;
     const placeholders = bracketMatchesForRound(matches, nextRound).filter((m) => m.pending);
     const label = nextRound === totalRounds ? "決勝" : totalRounds - nextRound === 1 ? "準決勝" : `${nextRound}回戦`;
@@ -1885,7 +1894,7 @@ function BracketTab({ roster }) {
         </>
       )}
 
-      {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 12 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+      {msg && <div style={{ textAlign: "left", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 12, whiteSpace: "pre-wrap", lineHeight: 1.6, background: msg.ok ? undefined : C.hillBg, border: msg.ok ? undefined : `1px solid ${C.minus}`, borderRadius: msg.ok ? undefined : 10, padding: msg.ok ? undefined : "10px 12px" }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
 
       {started && (
         <div style={{ marginTop: started ? 0 : 16 }}>
