@@ -983,10 +983,14 @@ function LiveTablePanel({ tableNum, m }) {
     const pc = i === 0 ? C.blue : C.red;
     const b = badgeOf(i);
     const isBrk = m.brk === i;
+    const isWinner = finished && !bothLose && winner === i;
     return (
       <div style={{
         flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px",
-        textAlign: "center", color: "#fff", boxShadow: isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+        textAlign: "center", color: "#fff",
+        boxShadow: isWinner
+          ? "0 0 0 3px #FFD54A, inset 0 0 0 3px rgba(255,255,255,0.65)"
+          : isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
       }}>
         <div style={{
           fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
@@ -1011,7 +1015,7 @@ function LiveTablePanel({ tableNum, m }) {
         <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
           {b && (
             <span style={{
-              flex: 1, minWidth: 0, background: "#fff", color: b.gray ? C.sub : pc, borderRadius: 8,
+              flex: 1, minWidth: 0, background: isWinner ? "#FFD54A" : "#fff", color: isWinner ? "#5A4400" : b.gray ? C.sub : pc, borderRadius: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 12.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", padding: "0 2px",
             }}>{b.t}</span>
@@ -1761,11 +1765,10 @@ function MatchScreen({ setupInfo, onExit }) {
   const rt = (i) => state.raceTo[i] || 0;
   const { tot, rack, brk, balls, phase, lastResult, hist } = state;
   const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
-  // 得点・目標点・ヒントは「ラックが終わって確定した分」だけを出す（ラック中は動かない）。
-  // 勝敗の判定だけは台上の球を足した値で見る（目標に届いた時点で決着させるため）
-  const disp = [tot[0], tot[1]];
   const liveTot = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
   const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
+  // 得点・目標点・ヒントは台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
+  const disp = (phase === "play" && !hillHill) ? liveTot : [tot[0], tot[1]];
 
   // ===== 持ち時間タイマー =====
   // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
