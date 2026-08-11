@@ -1241,12 +1241,11 @@ function ProjectorCard({ tableNum, m }) {
         <div style={{ position: "absolute", top: "0.3vw", fontSize: "1.15vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
         <div style={{ width: "94%", marginTop: "1.2vw" }}>
           <div style={{
-            fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "right", lineHeight: 1.15,
+            fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>{names[i]}</div>
-          {/* ファーゴレート。名前の右端と数字の右端が揃うよう、どちらも右寄せの同じ幅の箱に入れる */}
           {rateOfPlayer(m, i) && (
-            <div style={{ textAlign: "right", marginTop: "0.1vw" }}>
+            <div style={{ textAlign: "center", marginTop: "0.1vw" }}>
               <span style={{ fontSize: "1vw", fontWeight: 800, color: "#fff", opacity: 0.65 }}>FR</span>
               <span style={{ fontSize: "1.5vw", fontWeight: 900, color: "#fff", opacity: 0.95, fontVariantNumeric: "tabular-nums", marginLeft: "0.15vw" }}>
                 {rateOfPlayer(m, i)}
@@ -1373,6 +1372,7 @@ function ProjectorNextCard({ tableNum, m }) {
 function ProjectorMode({ onExit }) {
   const [matches, setMatches] = useState({});
   const [portrait, setPortrait] = useState(() => window.innerWidth < window.innerHeight);
+  const [faded, setFaded] = useState(false);
   useEffect(() => subscribeAllMatches((m) => setMatches(m || {}), () => {}), []);
   useEffect(() => {
     const onResize = () => setPortrait(window.innerWidth < window.innerHeight);
@@ -1383,16 +1383,27 @@ function ProjectorMode({ onExit }) {
       window.removeEventListener("orientationchange", onResize);
     };
   }, []);
+  // 終了ボタンは投影の邪魔にならないよう、数秒したら小さく薄くする（触れた時だけ元に戻す）
+  useEffect(() => {
+    const t = setTimeout(() => setFaded(true), 2500);
+    return () => clearTimeout(t);
+  }, []);
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
   const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 3000, fontFamily: FONT }}>
-      <button onClick={onExit} style={{
-        position: "absolute", top: 10, right: 10, zIndex: 10, background: C.ink,
-        color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px",
-        fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-      }}>✕ 投影モードを終了</button>
+      <button
+        onClick={onExit}
+        onTouchStart={() => setFaded(false)}
+        onMouseEnter={() => setFaded(false)}
+        style={{
+          position: "absolute", top: 10, right: 10, zIndex: 10, background: C.ink,
+          color: "#fff", border: "none", borderRadius: faded ? 16 : 8,
+          padding: faded ? "6px 8px" : "6px 12px",
+          fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+          opacity: faded ? 0.12 : 1, transition: "opacity 0.8s ease, padding 0.3s ease, border-radius 0.3s ease",
+        }}>{faded ? "✕" : "✕ 投影モードを終了"}</button>
       {portrait ? (
         <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.ink, textAlign: "center", padding: 24 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📱⟳</div>
