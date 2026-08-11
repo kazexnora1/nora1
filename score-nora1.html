@@ -1239,11 +1239,22 @@ function ProjectorCard({ tableNum, m }) {
         boxShadow: isBrk ? "inset 0 0 0 0.25vw rgba(255,255,255,0.7)" : "none",
       }}>
         <div style={{ position: "absolute", top: "0.3vw", fontSize: "1.15vw", fontWeight: 900, color: "#fff", letterSpacing: 2, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
-        <div style={{
-          fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "center", lineHeight: 1.15,
-          maxWidth: "94%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "1.5vw",
-        }}>{names[i]}</div>
-        <div style={{ fontSize: "5.8vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ width: "94%", marginTop: "1.2vw" }}>
+          <div style={{
+            fontSize: "2.9vw", fontWeight: 900, color: "#fff", textAlign: "right", lineHeight: 1.15,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>{names[i]}</div>
+          {/* ファーゴレート。名前の右端と数字の右端が揃うよう、どちらも右寄せの同じ幅の箱に入れる */}
+          {rateOfPlayer(m, i) && (
+            <div style={{ textAlign: "right", marginTop: "0.1vw" }}>
+              <span style={{ fontSize: "1vw", fontWeight: 800, color: "#fff", opacity: 0.65 }}>FR</span>
+              <span style={{ fontSize: "1.5vw", fontWeight: 900, color: "#fff", opacity: 0.95, fontVariantNumeric: "tabular-nums", marginLeft: "0.15vw" }}>
+                {rateOfPlayer(m, i)}
+              </span>
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: "4.6vw", fontWeight: 900, color: "#fff", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
           {m.pending || m.phase === "banking" ? "–" : disp[i]}
           {!m.pending && <span style={{ fontSize: "0.34em", opacity: 0.75 }}>/{raceTo[i]}</span>}
         </div>
