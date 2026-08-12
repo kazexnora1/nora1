@@ -106,6 +106,24 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
+/* ========= NORAメンバーDB（大会をまたいで共有するマスターデータ）への接続 =========
+   members-nora1.html と同じ nora-members プロジェクトを、名前付きの別アプリとして追加接続する。
+   JCL本体のデータ(db/FIREBASE_CONFIG)とは完全に分離。読み取り専用で使う。 */
+const MEMBERS_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBjTmn_RX08pRF7RJdYBOpv6Jco1sQ190Q",
+  authDomain: "nora-members.firebaseapp.com",
+  databaseURL: "https://nora-members-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora-members",
+  storageBucket: "nora-members.firebasestorage.app",
+  messagingSenderId: "466660255687",
+  appId: "1:466660255687:web:8da8a4839ec5f8ae0f1be2",
+};
+const membersDb = firebase.initializeApp(MEMBERS_FIREBASE_CONFIG, "members").database();
+async function membersDbGet(path) {
+  const snap = await membersDb.ref(path).once("value");
+  return snap.val();
+}
+
 /* 1回だけ読む */
 async function dbGet(path) {
   const snap = await db.ref(path).once("value");
@@ -2585,9 +2603,85 @@ function RateApplyPanel({ roster }) {
   );
 }
 
+/* ========= メンバーDB（nora-members）から選んで一括登録するパネル ========= */
+function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
+  const [state, setState] = useState("loading"); // loading | ready | error
+  const [list, setList] = useState([]);
+  const [checked, setChecked] = useState({});
+  const [errMsg, setErrMsg] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    membersDbGet("members").then((v) => {
+      if (!alive) return;
+      setList(Array.isArray(v) ? v.filter((p) => p && p.name) : []);
+      setState("ready");
+    }).catch((e) => {
+      if (!alive) return;
+      setErrMsg(String(e && e.message ? e.message : e));
+      setState("error");
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const existingNames = new Set(roster.map((p) => (p.name || "").trim()).filter(Boolean));
+  const toggle = (id) => setChecked((c) => ({ ...c, [id]: !c[id] }));
+  const selectedCount = Object.values(checked).filter(Boolean).length;
+
+  const addSelected = () => {
+    const picks = list.filter((p) => checked[p.id]);
+    if (!picks.length) return;
+    const dupNames = picks.filter((p) => existingNames.has((p.name || "").trim())).map((p) => p.name);
+    if (dupNames.length && !window.confirm(`既に選手一覧に同名の人がいます：${dupNames.join("・")}\nそれでも追加しますか？（重複登録されます）`)) return;
+    setRoster((rs) => [
+      ...rs,
+      ...picks.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "" })),
+    ]);
+    persist();
+    onClose();
+  };
+
+  return (
+    <div style={{ border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: 12, marginBottom: 14, background: "#F3F8FF" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.blue }}>👥 メンバーDBから選ぶ</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: C.sub, fontSize: 20, cursor: "pointer", lineHeight: 1 }}>×</button>
+      </div>
+      {state === "loading" && <div style={{ fontSize: 13, color: C.sub, padding: "8px 0" }}>読み込み中…</div>}
+      {state === "error" && <Notice>メンバーDBの読み込みに失敗しました（{errMsg}）</Notice>}
+      {state === "ready" && list.length === 0 && <div style={{ fontSize: 13, color: C.sub, padding: "8px 0" }}>メンバーDBに登録がありません。</div>}
+      {state === "ready" && list.length > 0 && (
+        <React.Fragment>
+          <div style={{ maxHeight: 320, overflowY: "auto", marginBottom: 10 }}>
+            {list.map((p) => (
+              <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 4px", borderBottom: `1px solid ${C.line}`, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!checked[p.id]} onChange={() => toggle(p.id)} style={{ width: 20, height: 20, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 700, color: C.ink }}>
+                    {p.name}
+                    {existingNames.has((p.name || "").trim()) && <span style={{ marginLeft: 6, fontSize: 11, color: C.hill, fontWeight: 700 }}>（登録済み？）</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.sub }}>
+                    {p.cls ? `クラス${p.cls}　` : ""}{p.fargo ? `Fargo ${p.fargo}　` : ""}{p.jpa ? `JPA ${p.jpa}` : ""}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <button onClick={addSelected} disabled={!selectedCount}
+            style={{ width: "100%", background: selectedCount ? C.win : C.line, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: selectedCount ? "pointer" : "default", fontFamily: FONT }}>
+            選んだ{selectedCount}人を追加する
+          </button>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
 function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
   const saveTimer = useRef(null);
   const rosterRef = useRef(roster);
   rosterRef.current = roster;
@@ -2679,7 +2773,15 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
         </div>
       ))}
       {roster.length < 40 && (
-        <button onClick={add} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>＋ 選手を追加</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={add} style={{ flex: 1, background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>＋ 選手を追加</button>
+          <button onClick={() => setShowPicker((v) => !v)} style={{ flex: 1, background: showPicker ? C.blue : "#fff", border: `2px solid ${C.blue}`, borderRadius: 10, color: showPicker ? "#fff" : C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT }}>👥 メンバーDBから選ぶ</button>
+        </div>
+      )}
+      {showPicker && (
+        <div style={{ marginTop: 10 }}>
+          <PickFromMembersPanel roster={roster} setRoster={setRoster} persist={persist} onClose={() => setShowPicker(false)} />
+        </div>
       )}
       {hasAnyDraw && (
         <button onClick={sortByDraw} style={{ width: "100%", marginTop: 10, background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
