@@ -1,4 +1,4 @@
-<!-- v2.008 -->
+<!-- v2.010 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.008";
-const BUILD_TIME = "2026-08-12 イベントの編集・削除、選手マスタの完全削除に対応";
+const APP_VERSION = "2.010";
+const BUILD_TIME = "2026-08-12 予選一括登録（総当たり／試合数指定・グループ回避）を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -158,6 +158,141 @@ function rulesetOf(tournament) {
     breakType: ov.breakType || base.breakType,
     timeLimit: ov.timeLimit || base.timeLimit,
   };
+}
+
+/* ================================================================
+   目標点／目標ラック数の自動算出（NewMatchFormの算出ロジックを、
+   対戦作成フォーム以外〈一括登録など〉からも呼べるよう関数化したもの）
+   ================================================================ */
+function computeAutoTarget(ruleset, allPlayers, roster, seat1Num, seat2Num, round) {
+  const playerOf = (rosterNumber) => {
+    const r = (roster || []).find((x) => x.rosterNumber === rosterNumber);
+    if (!r) return null;
+    return (allPlayers || []).find((p) => p.playerId === r.playerId) || null;
+  };
+  if (ruleset.handicap.mode === "fixedByRound") {
+    const t = ruleset.handicap.targets[round];
+    return t != null ? { seat1: t, seat2: t } : { seat1: null, seat2: null };
+  }
+  if (ruleset.handicap.mode === "classRace") {
+    const p1 = playerOf(seat1Num), p2 = playerOf(seat2Num);
+    return {
+      seat1: p1 && p1.class ? ruleset.handicap.classTargets[p1.class] : null,
+      seat2: p2 && p2.class ? ruleset.handicap.classTargets[p2.class] : null,
+    };
+  }
+  if (ruleset.handicap.mode === "fargo") {
+    const p1 = playerOf(seat1Num), p2 = playerOf(seat2Num);
+    const R1 = p1 && p1.fargoRating ? Number(p1.fargoRating) : 0;
+    const R2 = p2 && p2.fargoRating ? Number(p2.fargoRating) : 0;
+    if (R1 > 0 && R2 > 0) {
+      const res = computeRace(R1, R2, 100);
+      return { seat1: res.rt1, seat2: res.rt2 };
+    }
+    return { seat1: 0, seat2: 0 };
+  }
+  return { seat1: null, seat2: null };
+}
+
+/* ================================================================
+   予選一括登録：総当たり／固定試合数の組み合わせ生成＋卓割り当て
+   （B1/C1のbulkGenerateAuto系を簡略化して移植。優先順位は
+   ①別グループ・連戦なし→②別グループ・同卓連戦→③別グループ・別卓連戦→
+   ④同グループ・連戦なし→⑤同グループ・同卓連戦→⑥同グループ・別卓連戦。
+   3連続コマ出場（同一プレイヤーが3コマ連続で登場）は常にハード禁止）
+   ================================================================ */
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildRoundRobinPairs(n) {
+  const pairs = [];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
+  return shuffleArray(pairs);
+}
+
+// n人・1人あたりk試合になるべく近いペア集合を作る（貪欲法・複数回試行してベストを採用）
+function buildKRegularPairs(n, k) {
+  k = Math.max(1, Math.min(k, n - 1));
+  let best = null, bestShortfall = Infinity;
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const remDeg = new Array(n).fill(k);
+    const all = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) all.push([i, j]);
+    const shuffled = shuffleArray(all);
+    const edges = [];
+    for (const [i, j] of shuffled) {
+      if (remDeg[i] > 0 && remDeg[j] > 0) { edges.push([i, j]); remDeg[i]--; remDeg[j]--; }
+    }
+    const shortfall = remDeg.reduce((s, d) => s + d, 0);
+    if (shortfall < bestShortfall) { bestShortfall = shortfall; best = edges; }
+    if (shortfall === 0) break;
+  }
+  return { edges: best || [], shortfall: bestShortfall };
+}
+
+// pairs（roster配列インデックスのペア）を卓・順番に割り当てる
+function scheduleAcrossTables(pairs, numTables, groupOf, groupAvoidEnabled) {
+  const remaining = pairs.slice();
+  const items = []; // { a, b, table(0-based), order }
+  const tableLastPair = new Array(numTables).fill(null);
+  const lastRoundOf = {}, secondLastRoundOf = {};
+  let round = 0, order = 0, stalledRounds = 0, forcedCount = 0;
+
+  const markPlayed = (p, r) => {
+    if (lastRoundOf[p] === r) return;
+    secondLastRoundOf[p] = lastRoundOf[p];
+    lastRoundOf[p] = r;
+  };
+  const wouldBeThirdInRow = (p, r) => lastRoundOf[p] === r - 1 && secondLastRoundOf[p] === r - 2;
+
+  while (remaining.length > 0 && stalledRounds < 3) {
+    const usedThisRound = new Set();
+    let placedAny = false;
+    for (let t = 0; t < numTables; t++) {
+      let bestIdx = -1, bestCost = Infinity;
+      for (let idx = 0; idx < remaining.length; idx++) {
+        const [a, b] = remaining[idx];
+        if (usedThisRound.has(a) || usedThisRound.has(b)) continue;
+        if (wouldBeThirdInRow(a, round) || wouldBeThirdInRow(b, round)) continue; // ハード禁止
+        let cost = 0;
+        if (groupAvoidEnabled && groupOf(a) === groupOf(b)) cost += 20;
+        const lastPair = tableLastPair[t];
+        const sameTableBackToBack = lastPair && (lastPair[0] === a || lastPair[1] === a || lastPair[0] === b || lastPair[1] === b);
+        const anyBackToBack = lastRoundOf[a] === round - 1 || lastRoundOf[b] === round - 1;
+        if (sameTableBackToBack) cost += 1;
+        else if (anyBackToBack) cost += 3;
+        if (cost < bestCost) { bestCost = cost; bestIdx = idx; }
+      }
+      if (bestIdx >= 0) {
+        const [a, b] = remaining[bestIdx];
+        remaining.splice(bestIdx, 1);
+        items.push({ a, b, table: t, order: order++ });
+        tableLastPair[t] = [a, b];
+        usedThisRound.add(a); usedThisRound.add(b);
+        markPlayed(a, round); markPlayed(b, round);
+        placedAny = true;
+      }
+    }
+    round++;
+    stalledRounds = placedAny ? 0 : stalledRounds + 1;
+  }
+  // 制約を満たせず残った分は、卓の試合数が少ない順に強制的に割り当てる（3連続禁止のみは維持できない場合がある）
+  while (remaining.length > 0) {
+    const [a, b] = remaining.shift();
+    const counts = new Array(numTables).fill(0);
+    items.forEach((it) => counts[it.table]++);
+    let t = 0;
+    for (let i = 1; i < numTables; i++) if (counts[i] < counts[t]) t = i;
+    items.push({ a, b, table: t, order: order++ });
+    forcedCount++;
+  }
+  return { items, forcedCount };
 }
 
 /* ================================================================
@@ -515,6 +650,79 @@ function LiveTablePanel({ tableNum, match, ruleset, roster, onOpen }) {
 }
 
 /* ================================================================
+   画面：ルール上書きパネル（大会単位でbreakType/timeLimitを上書き。
+   RULESETSのbreakTypeOverridable/timeLimitOverridableで許可された項目のみ表示）
+   ================================================================ */
+const BREAK_TYPE_LABELS = { alternate: "交互ブレイク", winner: "勝者ブレイク" };
+const TIME_LIMIT_LABELS = { none: "時間制限なし", deadline: "卓ごとの時間制限（目安）", shotClock: "ショットクロック" };
+
+function RulesetOverridePanel({ tournament, onUpdateTournament }) {
+  const base = RULESETS[tournament.rulesetId];
+  if (!base) return null;
+  const ov = tournament.rulesetOverrides || {};
+  const effective = rulesetOf(tournament);
+  const hasOverride = ov.breakType != null || ov.timeLimit != null;
+
+  const setBreakType = (bt) => {
+    onUpdateTournament({ ...tournament, rulesetOverrides: { ...ov, breakType: bt }, updatedAt: Date.now() });
+  };
+  const setTimeLimitMode = (mode) => {
+    let timeLimit;
+    if (mode === "shotClock") {
+      timeLimit = base.timeLimit.mode === "shotClock" ? base.timeLimit : RULESETS.setMatch.timeLimit;
+    } else {
+      timeLimit = { mode };
+    }
+    onUpdateTournament({ ...tournament, rulesetOverrides: { ...ov, timeLimit }, updatedAt: Date.now() });
+  };
+  const resetOverrides = () => {
+    if (!window.confirm("ルールの上書き設定を解除し、既定のルールセットに戻します。よろしいですか？")) return;
+    const { breakType, timeLimit, ...rest } = ov;
+    onUpdateTournament({ ...tournament, rulesetOverrides: rest, updatedAt: Date.now() });
+  };
+
+  if (!base.breakTypeOverridable && !base.timeLimitOverridable) return null;
+
+  return (
+    <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 18 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 10 }}>ルール上書き（この大会だけ）</div>
+
+      {base.breakTypeOverridable && (
+        <>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>ブレイク方式</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            {Object.keys(BREAK_TYPE_LABELS).map((k) => (
+              <button key={k} onClick={() => setBreakType(k)} style={{
+                flex: 1, padding: "9px 0", border: `2px solid ${effective.breakType === k ? C.blue : C.line}`,
+                background: effective.breakType === k ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT,
+              }}>{BREAK_TYPE_LABELS[k]}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {base.timeLimitOverridable && (
+        <>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>時間制限</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: hasOverride ? 12 : 0, flexWrap: "wrap" }}>
+            {Object.keys(TIME_LIMIT_LABELS).map((k) => (
+              <button key={k} onClick={() => setTimeLimitMode(k)} style={{
+                flex: "1 0 30%", padding: "9px 4px", border: `2px solid ${effective.timeLimit.mode === k ? C.blue : C.line}`,
+                background: effective.timeLimit.mode === k ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: FONT,
+              }}>{TIME_LIMIT_LABELS[k]}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {hasOverride && (
+        <button onClick={resetOverrides} style={{ ...menuBtn, background: "#fff", color: C.sub, border: `1.5px solid ${C.line}`, fontWeight: 700, marginTop: 4, padding: "8px 0" }}>既定のルールに戻す</button>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
    画面：大会詳細（名簿・対戦一覧の入口。コアループの本体は次段で拡張）
    ================================================================ */
 function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }) {
@@ -524,6 +732,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
   const [editingEntry, setEditingEntry] = useState(null); // ロスターエントリ（{rosterNumber, playerId, displayName}）
   const [matches, setMatches] = useState([]);
   const [showNewMatch, setShowNewMatch] = useState(false);
+  const [showBulkSchedule, setShowBulkSchedule] = useState(false);
   const [activeMatchId, setActiveMatchId] = useState(null);
   const [matchMenuFor, setMatchMenuFor] = useState(null); // カードメニュー対象のmatchId
 
@@ -544,6 +753,36 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
 
   const updateMatch = (matchId, patch) => {
     db.ref("matches/" + tournament.tournamentId + "/" + matchId).update({ ...patch, updatedAt: Date.now() });
+  };
+
+  const registerBulkPrelim = (items, replaceExisting) => {
+    const updates = {};
+    if (replaceExisting) {
+      matches.filter((m) => !m.bracket).forEach((m) => { updates["matches/" + tournament.tournamentId + "/" + m.matchId] = null; });
+    }
+    const roundKeys = ruleset.handicap.mode === "fixedByRound" ? Object.keys(ruleset.handicap.targets) : null;
+    const round = roundKeys ? roundKeys[0] : "";
+    const base = Date.now();
+    items.forEach((it, i) => {
+      const seat1Num = tournament.roster[it.a].rosterNumber;
+      const seat2Num = tournament.roster[it.b].rosterNumber;
+      const tableNum = (tournament.tables || [1])[it.table] ?? (tournament.tables || [1])[0];
+      const tgt = computeAutoTarget(ruleset, allPlayers, tournament.roster, seat1Num, seat2Num, round);
+      const matchId = newId("m");
+      updates["matches/" + tournament.tournamentId + "/" + matchId] = {
+        matchId, tournamentId: tournament.tournamentId, table: tableNum,
+        roundLabel: roundKeys ? (ROUND_LABELS[round] || round) : "予選",
+        bracket: false,
+        seat1: { rosterNumber: seat1Num }, seat2: { rosterNumber: seat2Num },
+        target: { seat1: tgt.seat1, seat2: tgt.seat2 },
+        lenPct: ruleset.handicap.mode === "fargo" ? 100 : null,
+        firstBreakSeat: 1,
+        events: [],
+        createdAt: base + i, updatedAt: base + i,
+      };
+    });
+    db.ref().update(updates);
+    setShowBulkSchedule(false);
   };
 
   const deleteMatch = (matchId) => {
@@ -626,7 +865,10 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
       <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
         {tab === "home" && (
           <>
-            <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginBottom: 14 }}>＋ 対戦を作る</button>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, flex: 1, background: C.blue, color: "#fff", borderColor: C.blue, marginBottom: 0 }}>＋ 対戦を作る</button>
+              <button onClick={() => setShowBulkSchedule(true)} style={{ ...menuBtn, flex: 1, background: "#fff", color: C.blue, border: `1.5px solid ${C.blue}`, marginBottom: 0 }}>🎱 予選を組む</button>
+            </div>
             {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 20 }}>まだ対戦がありません</div>}
             {(tournament.tables || [1]).map((t) => {
               const tableMatches = matches.filter((m) => m.table === t);
@@ -679,6 +921,9 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
             <div style={{ fontSize: 13.5, color: C.ink, marginBottom: 16 }}>
               {RULESETS[tournament.rulesetId]?.label || tournament.rulesetId} ・ {tournament.date || ""} ・ 卓数 {(tournament.tables || []).length}
             </div>
+
+            <RulesetOverridePanel tournament={tournament} onUpdateTournament={onUpdateTournament} />
+
             <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 8 }}>メンバー</div>
             {(tournament.roster || []).length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 10 }}>まだ選手が登録されていません</div>}
             {(tournament.roster || []).map((r) => (
@@ -693,6 +938,11 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
       {showNewMatch && (
         <BottomSheet title="対戦を作る" onClose={() => setShowNewMatch(false)}>
           <NewMatchForm ruleset={ruleset} tournament={tournament} allPlayers={allPlayers} onCreate={createMatch} onCancel={() => setShowNewMatch(false)} />
+        </BottomSheet>
+      )}
+      {showBulkSchedule && (
+        <BottomSheet title="予選を組む" onClose={() => setShowBulkSchedule(false)}>
+          <BulkScheduleForm tournament={tournament} ruleset={ruleset} onRegister={registerBulkPrelim} onCancel={() => setShowBulkSchedule(false)} />
         </BottomSheet>
       )}
       {matchMenuFor && (() => {
@@ -866,6 +1116,124 @@ function EditRosterEntry({ entry, player, onSave, onRemove, onDeleteMaster, onCa
    画面：対戦作成フォーム（ルールセットに応じて目標点/ラック数を自動算出）
    ================================================================ */
 const ROUND_LABELS = { prelim: "予選", quarterfinal: "準々決勝", semifinal: "準決勝", final: "決勝" };
+
+/* ================================================================
+   画面：予選一括登録フォーム（総当たり／固定試合数の切替、グループ回避）
+   ================================================================ */
+function BulkScheduleForm({ tournament, ruleset, onRegister, onCancel }) {
+  const roster = tournament.roster || [];
+  const tables = tournament.tables || [1];
+  const n = roster.length;
+  const [roundRobin, setRoundRobin] = useState(true);
+  const [perPerson, setPerPerson] = useState(Math.min(3, Math.max(1, n - 1)));
+  const [groupAvoid, setGroupAvoid] = useState(false);
+  const [groupASize, setGroupASize] = useState(Math.max(1, Math.round(n / 3)));
+  const [groupBSize, setGroupBSize] = useState(Math.max(1, Math.round(n / 3)));
+  const [replaceExisting, setReplaceExisting] = useState(true);
+  const [preview, setPreview] = useState(null);
+
+  const canBuild = n >= 2 && tables.length >= 1;
+
+  const build = () => {
+    const k = roundRobin ? n - 1 : perPerson;
+    const raw = roundRobin ? buildRoundRobinPairs(n) : buildKRegularPairs(n, k).edges;
+    const groupOf = (i) => (i < groupASize ? 0 : i < groupASize + groupBSize ? 1 : 2);
+    const { items, forcedCount } = scheduleAcrossTables(raw, tables.length, groupOf, groupAvoid);
+    const perPersonCount = new Array(n).fill(0);
+    items.forEach((it) => { perPersonCount[it.a]++; perPersonCount[it.b]++; });
+    setPreview({ items, forcedCount, perPersonCount });
+  };
+
+  const confirm = () => {
+    if (!preview) return;
+    if (!window.confirm(`${preview.items.length}試合を登録します。${replaceExisting ? "既存の予選対戦（決勝トーナメントを除く）はすべて削除されます。" : ""}よろしいですか？`)) return;
+    onRegister(preview.items, replaceExisting);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setRoundRobin(true)} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${roundRobin ? C.blue : C.line}`,
+          background: roundRobin ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>総当たり</button>
+        <button onClick={() => setRoundRobin(false)} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${!roundRobin ? C.blue : C.line}`,
+          background: !roundRobin ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>試合数を指定</button>
+      </div>
+
+      {!roundRobin && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>1人あたりの試合数</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[2, 3, 4].map((v) => (
+              <button key={v} onClick={() => setPerPerson(v)} disabled={v > n - 1} style={{
+                flex: 1, padding: "10px 0", border: `2px solid ${perPerson === v ? C.blue : C.line}`,
+                background: perPerson === v ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800,
+                cursor: v > n - 1 ? "not-allowed" : "pointer", opacity: v > n - 1 ? 0.4 : 1, fontFamily: FONT,
+              }}>{v}試合</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: groupAvoid ? 10 : 16 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>グループを避けて組む</span>
+        <button onClick={() => setGroupAvoid((v) => !v)} style={{
+          width: 46, height: 26, borderRadius: 13, border: "none", cursor: "pointer",
+          background: groupAvoid ? C.blue : C.line, position: "relative", flexShrink: 0,
+        }}>
+          <span style={{ position: "absolute", top: 3, left: groupAvoid ? 23 : 3, width: 20, height: 20, borderRadius: 10, background: "#fff", transition: "left .15s" }} />
+        </button>
+      </div>
+      {groupAvoid && (
+        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>メンバーリストの並び順で、上からA・B・残りCの3グループに分けます</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 13, width: 60 }}>Aグループ</span>
+            <input type="number" min={1} max={n - 2} value={groupASize} onChange={(e) => setGroupASize(Math.max(1, Number(e.target.value) || 1))}
+              style={{ width: 70, padding: "8px 8px", border: `1.5px solid ${C.line}`, borderRadius: 8, fontFamily: FONT }} />
+            <span style={{ fontSize: 12, color: C.sub }}>人</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 13, width: 60 }}>Bグループ</span>
+            <input type="number" min={1} max={n - 2} value={groupBSize} onChange={(e) => setGroupBSize(Math.max(1, Number(e.target.value) || 1))}
+              style={{ width: 70, padding: "8px 8px", border: `1.5px solid ${C.line}`, borderRadius: 8, fontFamily: FONT }} />
+            <span style={{ fontSize: 12, color: C.sub }}>人</span>
+          </div>
+          <div style={{ fontSize: 12, color: C.sub, marginTop: 6 }}>残りC：{Math.max(0, n - groupASize - groupBSize)}人</div>
+        </div>
+      )}
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13.5, color: C.ink }}>
+        <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} />
+        既存の予選対戦（決勝トーナメントを除く）を削除してから登録する
+      </label>
+
+      <button onClick={build} disabled={!canBuild} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: canBuild ? 1 : 0.5 }}>組む（プレビュー）</button>
+
+      {preview && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, marginBottom: 8 }}>プレビュー：{preview.items.length}試合</div>
+          {tables.map((tn, ti) => {
+            const cnt = preview.items.filter((it) => it.table === ti).length;
+            return <div key={tn} style={{ fontSize: 13, color: C.sub, marginBottom: 2 }}>T{tn}：{cnt}試合</div>;
+          })}
+          <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>
+            1人あたり試合数：最少{Math.min(...preview.perPersonCount)}〜最多{Math.max(...preview.perPersonCount)}
+          </div>
+          {preview.forcedCount > 0 && (
+            <div style={{ fontSize: 12.5, color: C.hill, marginTop: 6 }}>⚠ 制約を完全には満たせず、{preview.forcedCount}試合は連戦回避なしで割り当てました</div>
+          )}
+          <button onClick={confirm} style={{ ...menuBtn, background: C.win, color: "#fff", borderColor: C.win, marginTop: 12 }}>この内容で登録する</button>
+          <button onClick={build} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>組み直す</button>
+        </div>
+      )}
+      <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700, marginTop: 8 }}>もどる</button>
+    </div>
+  );
+}
 
 function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
   const roster = tournament.roster || [];
