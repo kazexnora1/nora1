@@ -1,4 +1,4 @@
-<!-- v2.006 -->
+<!-- v2.007 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.006";
-const BUILD_TIME = "2026-08-12 LiveTablePanel（卓タブ）を追加";
+const APP_VERSION = "2.007";
+const BUILD_TIME = "2026-08-12 タブ構成をB1準拠に変更、本部アプリからスコア入力UIを撤去";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -486,7 +486,7 @@ function LiveTablePanel({ tableNum, match, ruleset, roster, onOpen }) {
    画面：大会詳細（名簿・対戦一覧の入口。コアループの本体は次段で拡張）
    ================================================================ */
 function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }) {
-  const [tab, setTab] = useState("roster");
+  const [tab, setTab] = useState("home");
   const ruleset = rulesetOf(tournament);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // ロスターエントリ（{rosterNumber, playerId, displayName}）
@@ -561,7 +561,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     const m = matches.find((x) => x.matchId === activeMatchId);
     if (m) {
       return (
-        <MatchScoreScreen
+        <MatchDetailScreen
           match={m}
           ruleset={ruleset}
           roster={tournament.roster || []}
@@ -576,53 +576,51 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
       <TopBar title={tournament.name} onBack={onBack} />
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
-        {[["roster", "名簿"], ["matches", "対戦"], ["tables", "卓"]].map(([key, label]) => (
+        {[["home", "🗓 タイムライン"], ["tables", "🐾 テーブル"], ["player", "🧑‍🤝‍🧑 プレイヤー"], ["settings", "⚙️ 設定"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={{
-            flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: 14.5,
+            flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.4vw, 14.5px)", whiteSpace: "nowrap",
             fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT,
           }}>{label}</button>
         ))}
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
-        {tab === "roster" && (
+        {tab === "home" && (
           <>
-            {(tournament.roster || []).length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>まだ選手が登録されていません</div>}
-            {(tournament.roster || []).map((r) => (
-              <Card key={r.rosterNumber} onClick={() => setEditingEntry(r)}>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>#{r.rosterNumber} {r.displayName}</div>
-              </Card>
-            ))}
-            <button onClick={() => setShowAddPlayer(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 選手を追加</button>
-          </>
-        )}
-        {tab === "matches" && (
-          <>
-            {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>まだ対戦がありません</div>}
-            {matches.map((m) => {
-              const d = deriveMatch(m, ruleset);
-              const n1 = nameOfNum(m.seat1.rosterNumber, tournament.roster);
-              const n2 = nameOfNum(m.seat2.rosterNumber, tournament.roster);
-              const cur1 = ruleset.scoring.mode === "rackRace" ? d.racks.seat1 : d.score.seat1;
-              const cur2 = ruleset.scoring.mode === "rackRace" ? d.racks.seat2 : d.score.seat2;
-              const statusLabel = d.status === "finished" ? "試合終了" : d.status === "inProgress" ? "進行中" : "未開始";
+            <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginBottom: 14 }}>＋ 対戦を作る</button>
+            {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 20 }}>まだ対戦がありません</div>}
+            {(tournament.tables || [1]).map((t) => {
+              const tableMatches = matches.filter((m) => m.table === t);
+              if (tableMatches.length === 0) return null;
               return (
-                <Card key={m.matchId} onClick={() => setActiveMatchId(m.matchId)} highlight={d.status === "inProgress"}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
-                      T{m.table}{m.roundLabel ? "・" + m.roundLabel : ""}・{statusLabel}
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); setMatchMenuFor(m.matchId); }} style={{
-                      background: "none", border: "none", color: C.sub, fontSize: 18, lineHeight: 1, padding: "0 4px", cursor: "pointer",
-                    }}>⋯</button>
-                  </div>
-                  <div style={{ fontSize: 15, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: d.winnerSeat === 1 ? C.win : C.ink }}>{n1} {cur1}{m.target?.seat1 != null ? " / " + m.target.seat1 : ""}</span>
-                    <span style={{ color: d.winnerSeat === 2 ? C.win : C.ink }}>{cur2}{m.target?.seat2 != null ? " / " + m.target.seat2 : ""} {n2}</span>
-                  </div>
-                </Card>
+                <div key={t} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6 }}>T{t}</div>
+                  {tableMatches.map((m) => {
+                    const d = deriveMatch(m, ruleset);
+                    const n1 = nameOfNum(m.seat1.rosterNumber, tournament.roster);
+                    const n2 = nameOfNum(m.seat2.rosterNumber, tournament.roster);
+                    const cur1 = ruleset.scoring.mode === "rackRace" ? d.racks.seat1 : d.score.seat1;
+                    const cur2 = ruleset.scoring.mode === "rackRace" ? d.racks.seat2 : d.score.seat2;
+                    const statusLabel = d.status === "finished" ? "試合終了" : d.status === "inProgress" ? "進行中" : "未開始";
+                    return (
+                      <Card key={m.matchId} onClick={() => setActiveMatchId(m.matchId)} highlight={d.status === "inProgress"}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
+                            {m.roundLabel ? m.roundLabel + "・" : ""}{statusLabel}
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); setMatchMenuFor(m.matchId); }} style={{
+                            background: "none", border: "none", color: C.sub, fontSize: 18, lineHeight: 1, padding: "0 4px", cursor: "pointer",
+                          }}>⋯</button>
+                        </div>
+                        <div style={{ fontSize: 15, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: d.winnerSeat === 1 ? C.win : C.ink }}>{n1} {cur1}{m.target?.seat1 != null ? " / " + m.target.seat1 : ""}</span>
+                          <span style={{ color: d.winnerSeat === 2 ? C.win : C.ink }}>{cur2}{m.target?.seat2 != null ? " / " + m.target.seat2 : ""} {n2}</span>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
               );
             })}
-            <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 対戦を作る</button>
           </>
         )}
         {tab === "tables" && (
@@ -630,6 +628,25 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
             {(tournament.tables || [1]).map((t) => (
               <LiveTablePanel key={t} tableNum={t} match={pickDisplayMatch(matches, ruleset, t)} ruleset={ruleset} roster={tournament.roster || []} onOpen={(m) => setActiveMatchId(m.matchId)} />
             ))}
+          </>
+        )}
+        {tab === "player" && (
+          <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>順位表（勝ち数→達成率→得失点差）は次のステップで実装します</div>
+        )}
+        {tab === "settings" && (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 8 }}>大会情報</div>
+            <div style={{ fontSize: 13.5, color: C.ink, marginBottom: 16 }}>
+              {RULESETS[tournament.rulesetId]?.label || tournament.rulesetId} ・ {tournament.date || ""} ・ 卓数 {(tournament.tables || []).length}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 8 }}>メンバー</div>
+            {(tournament.roster || []).length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 10 }}>まだ選手が登録されていません</div>}
+            {(tournament.roster || []).map((r) => (
+              <Card key={r.rosterNumber} onClick={() => setEditingEntry(r)}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>#{r.rosterNumber} {r.displayName}</div>
+              </Card>
+            ))}
+            <button onClick={() => setShowAddPlayer(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 選手を追加</button>
           </>
         )}
       </div>
@@ -961,30 +978,19 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
 }
 
 /* ================================================================
-   画面：対戦スコア入力（ルールセットのscoring.modeごとに入力UIを出し分け）
+   画面：対戦詳細（本部アプリではスコアを付けない方針のため、スコア入力UIは持たない。
+   ここでは現在の記録の確認と、記録ミスの訂正〈個別記録の削除・前の状態に戻す〉のみを扱う。
+   実際のスコア入力は別アプリ（選手・スコアラー用）で行う想定）
    ================================================================ */
-function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateMatch }) {
+function MatchDetailScreen({ match, ruleset, roster, onBack, onUpdateMatch }) {
   const events = match.events || [];
   const history = match.history || [];
-  // rackWinnerBonus（JCL）方式専用：ラック確定前の未確定球数（ローカルのみ・events化しない）
-  const [tally, setTally] = useState({ seat1: 0, seat2: 0 });
-  useEffect(() => { setTally({ seat1: 0, seat2: 0 }); }, [match.matchId, events.length]);
 
   const d = deriveMatch(match, ruleset);
   const n1 = nameOfNum(match.seat1.rosterNumber, roster);
   const n2 = nameOfNum(match.seat2.rosterNumber, roster);
   const finished = d.status === "finished";
 
-  const commit = (newEvents) => onUpdateMatch({ events: newEvents });
-  const undo = () => { if (events.length > 0) commit(events.slice(0, -1)); };
-  const addRackWon = (seat, ballsWonInRack) => {
-    commit([...events, { type: "rackWon", seat, ballsWonInRack: ballsWonInRack || 0, ts: Date.now() }]);
-  };
-  const addBallPocketed = (seat, ball) => {
-    const evs = [...events, { type: "ballPocketed", seat, ball, ts: Date.now() }];
-    if (ball === 9) evs.push({ type: "rackWon", seat, ts: Date.now() });
-    commit(evs);
-  };
   const deleteEventAt = (idx) => {
     if (!window.confirm("この記録を削除します。よろしいですか？")) return;
     onUpdateMatch({ events: events.filter((_, i) => i !== idx), history: pushHistory(match, "個別記録の削除") });
@@ -1023,50 +1029,15 @@ function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateMatch }) {
                 <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 4 }}>{seat === 1 ? n1 : n2}</div>
                 <div style={{ fontSize: 30, fontWeight: 900, color: isBlue ? C.blue : C.red }}>{cur(key)}</div>
                 {target[key] != null && <div style={{ fontSize: 12, color: C.sub }}>／ {target[key]}{ruleset.hillDisplay.enabled && d.isHill && !finished ? "（ヒル）" : ""}</div>}
-                {ruleset.scoring.mode === "rackWinnerBonus" && !finished && (
-                  <div style={{ fontSize: 12, color: C.sub, marginTop: 6 }}>このラック：{tally[key]}球</div>
-                )}
               </div>
             );
           })}
         </div>
 
-        {!finished && ruleset.scoring.mode === "rackWinnerBonus" && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              {[1, 2].map((seat) => (
-                <div key={seat} style={{ flex: 1, display: "flex", gap: 6 }}>
-                  <button onClick={() => setTally((t) => ({ ...t, ["seat" + seat]: Math.max(0, t["seat" + seat] - 1) }))} style={{ ...menuBtn, marginBottom: 0, flex: 1 }}>−1球</button>
-                  <button onClick={() => setTally((t) => ({ ...t, ["seat" + seat]: t["seat" + seat] + 1 }))} style={{ ...menuBtn, marginBottom: 0, flex: 1 }}>＋1球</button>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => addRackWon(1, tally.seat1)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.blue, color: "#fff", borderColor: C.blue }}>{n1}が9番で終了</button>
-              <button onClick={() => addRackWon(2, tally.seat2)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.red, color: "#fff", borderColor: C.red }}>{n2}が9番で終了</button>
-            </div>
-          </div>
-        )}
+        <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 }}>
+          スコア入力は選手・スコアラー用アプリで行います。ここでは記録の確認と訂正のみ行えます。
+        </div>
 
-        {!finished && ruleset.scoring.mode === "perBallJPA" && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            {[1, 2].map((seat) => (
-              <div key={seat} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-                <button onClick={() => addBallPocketed(seat, 1)} style={{ ...menuBtn, marginBottom: 0, background: seat === 1 ? C.lightBlue : C.lightRed, borderColor: seat === 1 ? C.blue : C.red }}>球（1点）</button>
-                <button onClick={() => addBallPocketed(seat, 9)} style={{ ...menuBtn, marginBottom: 0, background: seat === 1 ? C.blue : C.red, color: "#fff", borderColor: seat === 1 ? C.blue : C.red }}>9番（2点・ラック終了）</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!finished && ruleset.scoring.mode === "rackRace" && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            <button onClick={() => addRackWon(1)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.blue, color: "#fff", borderColor: C.blue }}>{n1}がラック取得</button>
-            <button onClick={() => addRackWon(2)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.red, color: "#fff", borderColor: C.red }}>{n2}がラック取得</button>
-          </div>
-        )}
-
-        <button onClick={undo} disabled={events.length === 0} style={{ ...menuBtn, background: C.zone, fontWeight: 700, opacity: events.length === 0 ? 0.5 : 1 }}>↩️ 直前の記録を取り消す</button>
         {history.length > 0 && (
           <button onClick={restoreFromHistory} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>🕘 前の状態に戻す（{history[history.length - 1].label}）</button>
         )}
