@@ -1,4 +1,4 @@
-<!-- v2.003 -->
+<!-- v2.004 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.003";
-const BUILD_TIME = "2026-08-12 対戦作成・スコア入力を追加";
+const APP_VERSION = "2.004";
+const BUILD_TIME = "2026-08-12 JCL方式のFargoハンデ自動算出をB1から移植";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -63,6 +63,39 @@ const FIREBASE_CONFIG = {
 };
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
+
+/* ========= ハンデ計算（B1から移植・JCL方式のFargoレース目標算出） ========= */
+function roundHalfToEven(v) {
+  const w = Math.floor(v);
+  const d = v - w;
+  if (Math.abs(d - 0.5) > 1e-9) return d > 0.5 ? w + 1 : w;
+  return w % 2 === 1 ? w + 1 : w;
+}
+function normalizeRace(rt1, rt2, lowClamp) {
+  const highClamp = 99.0;
+  const p1IsHigh = rt1 >= rt2;
+  const highRace = Math.max(rt1, rt2), lowRace = Math.min(rt1, rt2);
+  let highC = highRace > highClamp ? highClamp : highRace;
+  let lowC = highRace > highClamp ? lowRace - lowRace * ((highRace - highClamp) / highRace) : lowRace;
+  highC = Math.min(lowRace < lowClamp ? highC + highC * ((lowClamp - lowRace) / lowC) : highC, highClamp);
+  lowC = Math.max(lowC < lowClamp ? lowClamp : lowC, lowClamp);
+  return { rt1: p1IsHigh ? highC : lowC, rt2: p1IsHigh ? lowC : highC };
+}
+function computeRace(R1, R2, lenPct) {
+  const dampFactor = lenPct / 100;
+  const avg = (R1 + R2) / 2;
+  const gp = 0.018 * avg - 1.4;
+  const delta = R1 - R2;
+  const p1 = 1 - 1 / (1 + Math.pow(2, delta / 100));
+  const p2 = 1 - p1;
+  const p1AvgPts = p1 * 14.0 + p2 * (7.4 - 0.0062 * R2);
+  const p2AvgPts = p2 * 14.0 + p1 * (7.4 - 0.0062 * R1);
+  const rt1raw = p1AvgPts * gp * dampFactor;
+  const rt2raw = p2AvgPts * gp * dampFactor;
+  const lowClamp = 0.16 * lenPct + 12;
+  const norm = normalizeRace(rt1raw, rt2raw, lowClamp);
+  return { rt1: roundHalfToEven(norm.rt1), rt2: roundHalfToEven(norm.rt2), p1, p2 };
+}
 
 /* ================================================================
    ルールセット定義
@@ -615,6 +648,7 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
   const [seat2Num, setSeat2Num] = useState(roster[1] ? roster[1].rosterNumber : null);
   const roundKeys = ruleset.handicap.mode === "fixedByRound" ? Object.keys(ruleset.handicap.targets) : null;
   const [round, setRound] = useState(roundKeys ? roundKeys[0] : "");
+  const [lenPct, setLenPct] = useState(100); // fargoモード（JCL）専用：試合の長さ
   const [target1, setTarget1] = useState("");
   const [target2, setTarget2] = useState("");
   const [firstBreak, setFirstBreak] = useState(1);
@@ -636,9 +670,20 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
       const t2 = p2 && p2.class ? ruleset.handicap.classTargets[p2.class] : null;
       if (t1 != null) setTarget1(String(t1));
       if (t2 != null) setTarget2(String(t2));
+    } else if (ruleset.handicap.mode === "fargo") {
+      const p1 = playerOf(seat1Num), p2 = playerOf(seat2Num);
+      const R1 = p1 && p1.fargoRating ? Number(p1.fargoRating) : 0;
+      const R2 = p2 && p2.fargoRating ? Number(p2.fargoRating) : 0;
+      if (R1 > 0 && R2 > 0) {
+        const res = computeRace(R1, R2, lenPct);
+        setTarget1(String(res.rt1));
+        setTarget2(String(res.rt2));
+      } else {
+        setTarget1("0"); setTarget2("0");
+      }
     }
     // eslint-disable-next-line
-  }, [ruleset.handicap.mode, round, seat1Num, seat2Num]);
+  }, [ruleset.handicap.mode, round, seat1Num, seat2Num, lenPct]);
 
   const targetLabel = ruleset.scoring.mode === "rackRace" ? "目標ラック数" : "目標点";
   const canSubmit = seat1Num != null && seat2Num != null && seat1Num !== seat2Num && target1 !== "" && target2 !== "";
@@ -653,6 +698,7 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
       seat1: { rosterNumber: seat1Num },
       seat2: { rosterNumber: seat2Num },
       target: { seat1: Number(target1), seat2: Number(target2) },
+      lenPct: ruleset.handicap.mode === "fargo" ? lenPct : null,
       firstBreakSeat: firstBreak,
       events: [],
       createdAt: Date.now(),
@@ -705,7 +751,22 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
       )}
 
       {ruleset.handicap.mode === "fargo" && (
-        <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>Fargoレートからの自動算出は未実装です。目標点を直接入力してください。</div>
+        <>
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
+              <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+            </div>
+            <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+          </div>
+          {(() => {
+            const p1 = playerOf(seat1Num), p2 = playerOf(seat2Num);
+            const noRatings = !(p1 && p1.fargoRating) || !(p2 && p2.fargoRating);
+            return noRatings
+              ? <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>Fargoレート未設定の選手がいるため、目標点は0で算出されています。手動で入力してください。</div>
+              : null;
+          })()}
+        </>
       )}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{targetLabel}（青／赤）</div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
