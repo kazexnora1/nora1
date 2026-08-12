@@ -94,13 +94,25 @@ function Notice({ children }) {
   return <div style={{ background: "#FFF3E0", border: "1px solid #E8A400", borderRadius: 10, color: "#7A5200", fontSize: 13, padding: "10px 12px", lineHeight: 1.6, textAlign: "left" }}>{children}</div>;
 }
 
-function MemberRow({ p, onUpdate, onRemove }) {
+function MemberRow({ p, onUpdate, onRemove, isNew, onSettle, nameInputRef }) {
   return (
-    <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 10, marginBottom: 10, background: "#fff" }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <input value={p.name} onChange={(e) => onUpdate(p.id, "name", e.target.value.slice(0, 16))}
+    <div style={{
+      border: isNew ? `2px solid ${C.win}` : `1px solid ${C.line}`,
+      borderRadius: 12, padding: 10, marginBottom: 10,
+      background: isNew ? "#EEF8F0" : "#fff",
+      boxShadow: isNew ? "0 0 0 3px rgba(46,125,70,0.12)" : "none",
+      position: "relative",
+    }}>
+      {isNew && (
+        <div style={{ position: "absolute", top: -10, left: 10, background: C.win, color: "#fff", fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999 }}>
+          🆕 新規（未保存の名前）
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, marginTop: isNew ? 4 : 0 }}>
+        <input ref={isNew ? nameInputRef : null} value={p.name}
+          onChange={(e) => onUpdate(p.id, "name", e.target.value.slice(0, 16))}
           placeholder="名前"
-          style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+          style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${isNew ? C.win : C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
         <button onClick={() => onRemove(p.id)} style={{ width: 40, height: 40, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -145,10 +157,13 @@ function App() {
   const [saveMsg, setSaveMsg] = useState(null);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState("name"); // name | fargo | jpa
+  const [newId, setNewId] = useState(null); // 直近で「＋追加」した人のid（並びを固定し目立たせる）
   const membersRef = useRef(members);
   membersRef.current = members;
   const saveTimer = useRef(null);
   const backup = useRef(loadMembersBackup()).current;
+  const nameInputRef = useRef(null);
+  const gotFirstLoad = useRef(false);
 
   useEffect(() => {
     const unsub = dbSubscribe("members",
@@ -162,6 +177,10 @@ function App() {
       (msg) => setLoadError(msg));
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (newId != null && nameInputRef.current) nameInputRef.current.focus();
+  }, [newId]);
 
   const persist = (allowEmpty) => {
     if (!loaded) return;
@@ -178,9 +197,12 @@ function App() {
   const remove = (id) => {
     if (!window.confirm("このメンバーを削除しますか？")) return;
     setMembers((rs) => rs.filter((p) => p.id !== id)); persist(true);
+    if (newId === id) setNewId(null);
   };
   const add = () => {
-    setMembers((rs) => [...rs, { id: nid(), name: "", cls: "", fargo: "", jpa: "", note: "" }]);
+    const id = nid();
+    setMembers((rs) => [...rs, { id, name: "", cls: "", fargo: "", jpa: "", note: "" }]);
+    setNewId(id); // 新規行は「完了」を押すまで一覧の先頭に固定し、緑枠で目立たせる
     persist();
   };
   const restoreBackup = () => {
@@ -188,11 +210,16 @@ function App() {
     if (!window.confirm(`この端末に残っている${backup.length}人分のバックアップで復元します。よろしいですか？`)) return;
     setMembers(backup);
     _id = Math.max(...backup.map((p) => p.id || 0)) + 1;
+    setNewId(null);
     persist(true);
   };
 
+  // 検索・並び替え対象は「新規行以外」。新規行は編集が終わる（完了を押す）まで並び替えの影響を受けず
+  // 常に一覧の一番上に固定表示する。これにより、入力中に名前の文字が変わって行の位置が
+  // 勝手にジャンプし、別の人を編集していると勘違いする事故を防ぐ。
+  const newRow = newId != null ? members.find((p) => p.id === newId) : null;
   const filtered = useMemo(() => {
-    let list = members;
+    let list = members.filter((p) => p.id !== newId);
     if (q.trim()) list = list.filter((p) => (p.name || "").includes(q.trim()));
     list = [...list].sort((a, b) => {
       if (sortKey === "fargo") return (parseInt(b.fargo, 10) || -1) - (parseInt(a.fargo, 10) || -1);
@@ -200,7 +227,7 @@ function App() {
       return (a.name || "").localeCompare(b.name || "", "ja");
     });
     return list;
-  }, [members, q, sortKey]);
+  }, [members, q, sortKey, newId]);
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 40px", color: C.ink, fontFamily: FONT }}>
@@ -232,6 +259,16 @@ function App() {
           <option value="jpa">JPA順</option>
         </select>
       </div>
+
+      {newRow && (
+        <div>
+          <MemberRow p={newRow} onUpdate={update} onRemove={remove} isNew nameInputRef={nameInputRef} />
+          <button onClick={() => setNewId(null)}
+            style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginTop: -4, marginBottom: 14 }}>
+            ✓ この人の入力を完了する（一覧の並びに戻す）
+          </button>
+        </div>
+      )}
 
       {filtered.map((p) => <MemberRow key={p.id} p={p} onUpdate={update} onRemove={remove} />)}
 
