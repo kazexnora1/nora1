@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>NORAメンバー</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  body { -webkit-tap-highlight-color: transparent; }
+</style>
+<script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<script>
+  function showCrash(msg) {
+    const el = document.getElementById("crashlog");
+    el.style.display = "block";
+    el.textContent = "エラーが発生しました:\n\n" + msg;
+  }
+  window.onerror = function (msg, src, line, col, err) {
+    showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
+  };
+  window.addEventListener("unhandledrejection", function (e) {
+    showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo } = React;
+
+const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+const APP_VERSION = "1.000";
+const BUILD_TIME = "2026-08-12 新規作成";
+const C = {
+  bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
+  blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
+  win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B",
+};
+const CLASS_OPTIONS = ["S", "A", "B", "C"];
+
+/* ========= 共有バックエンド：Firebase Realtime Database =========
+   NORAメンバーDB専用プロジェクト。JCL・あずき杯等の大会用プロジェクトとは別に、
+   ずっと使い続けるマスターデータとしてここに置く。
+   ↓ Firebaseコンソール →⚙️プロジェクトの設定 → マイアプリ に表示される値に差し替えてください。 */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBjTmn_RX08pRF7RJdYBOpv6Jco1sQ190Q",
+  authDomain: "nora-members.firebaseapp.com",
+  databaseURL: "https://nora-members-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nora-members",
+  storageBucket: "nora-members.firebasestorage.app",
+  messagingSenderId: "466660255687",
+  appId: "1:466660255687:web:8da8a4839ec5f8ae0f1be2",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+
+async function dbGet(path) {
+  const snap = await db.ref(path).once("value");
+  return snap.val();
+}
+function dbSubscribe(path, onValue, onError) {
+  const ref = db.ref(path);
+  const handler = ref.on("value", (snap) => onValue(snap.val()),
+    (e) => onError && onError(e && e.message ? e.message : String(e)));
+  return () => ref.off("value", handler);
+}
+async function dbSet(path, value) { await db.ref(path).set(value); }
+
+let _id = 1;
+function nid() { return _id++; }
+
+const MEMBERS_BACKUP_KEY = "nora_members_backup_v1";
+function backupMembers(list) {
+  try { if (list && list.length) localStorage.setItem(MEMBERS_BACKUP_KEY, JSON.stringify(list)); } catch {}
+}
+function loadMembersBackup() {
+  try { const s = localStorage.getItem(MEMBERS_BACKUP_KEY); const v = s ? JSON.parse(s) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+}
+async function saveMembers(list, allowEmpty) {
+  if (!allowEmpty && (!list || list.length === 0)) {
+    const cur = await dbGet("members");
+    if (cur && Array.isArray(cur) && cur.length > 0) throw new Error("空リストでの上書きを中止しました（元データ保護）");
+  }
+  await dbSet("members", list || []);
+  backupMembers(list);
+}
+
+function Notice({ children }) {
+  return <div style={{ background: "#FFF3E0", border: "1px solid #E8A400", borderRadius: 10, color: "#7A5200", fontSize: 13, padding: "10px 12px", lineHeight: 1.6, textAlign: "left" }}>{children}</div>;
+}
+
+function MemberRow({ p, onUpdate, onRemove }) {
+  return (
+    <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 10, marginBottom: 10, background: "#fff" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+        <input value={p.name} onChange={(e) => onUpdate(p.id, "name", e.target.value.slice(0, 16))}
+          placeholder="名前"
+          style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+        <button onClick={() => onRemove(p.id)} style={{ width: 40, height: 40, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {CLASS_OPTIONS.map((cl) => (
+            <button key={cl} onClick={() => onUpdate(p.id, "cls", p.cls === cl ? "" : cl)}
+              style={{
+                width: 34, height: 34, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                background: p.cls === cl ? C.blue : "#fff", color: p.cls === cl ? "#fff" : C.sub,
+                border: `1.5px solid ${p.cls === cl ? C.blue : C.line}`,
+              }}>{cl}</button>
+          ))}
+        </div>
+        <div style={{ width: 1, alignSelf: "stretch", background: C.line }} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div style={{ fontSize: 10, color: C.sub, fontWeight: 700 }}>Fargo</div>
+          <input inputMode="numeric" value={p.fargo || ""} onChange={(e) => onUpdate(p.id, "fargo", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+            placeholder="―"
+            style={{ width: 56, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 14, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div style={{ fontSize: 10, color: C.sub, fontWeight: 700 }}>JPA</div>
+          <select value={p.jpa || ""} onChange={(e) => onUpdate(p.id, "jpa", e.target.value)}
+            style={{ width: 56, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 14, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }}>
+            <option value="">―</option>
+            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+      <input value={p.note || ""} onChange={(e) => onUpdate(p.id, "note", e.target.value.slice(0, 60))}
+        placeholder="備考（任意）"
+        style={{ width: "100%", boxSizing: "border-box", marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 12.5, padding: "7px 10px", outline: "none", fontFamily: FONT }} />
+    </div>
+  );
+}
+
+function App() {
+  const [members, setMembers] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+  const [q, setQ] = useState("");
+  const [sortKey, setSortKey] = useState("name"); // name | fargo | jpa
+  const membersRef = useRef(members);
+  membersRef.current = members;
+  const saveTimer = useRef(null);
+  const backup = useRef(loadMembersBackup()).current;
+
+  useEffect(() => {
+    const unsub = dbSubscribe("members",
+      (v) => {
+        const list = Array.isArray(v) ? v : [];
+        setMembers(list);
+        if (list.length) { _id = Math.max(..._id ? [_id] : [1], ...list.map((p) => p.id || 0)) + 1; backupMembers(list); }
+        setLoaded(true);
+        setLoadError(null);
+      },
+      (msg) => setLoadError(msg));
+    return unsub;
+  }, []);
+
+  const persist = (allowEmpty) => {
+    if (!loaded) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      setSaving(true);
+      try { await saveMembers(membersRef.current, allowEmpty); setSaveMsg(null); }
+      catch (e) { setSaveMsg(String(e && e.message ? e.message : e)); }
+      setSaving(false);
+    }, 600);
+  };
+
+  const update = (id, k, v) => { setMembers((rs) => rs.map((p) => (p.id === id ? { ...p, [k]: v } : p))); persist(); };
+  const remove = (id) => {
+    if (!window.confirm("このメンバーを削除しますか？")) return;
+    setMembers((rs) => rs.filter((p) => p.id !== id)); persist(true);
+  };
+  const add = () => {
+    setMembers((rs) => [...rs, { id: nid(), name: "", cls: "", fargo: "", jpa: "", note: "" }]);
+    persist();
+  };
+  const restoreBackup = () => {
+    if (!backup.length) return;
+    if (!window.confirm(`この端末に残っている${backup.length}人分のバックアップで復元します。よろしいですか？`)) return;
+    setMembers(backup);
+    _id = Math.max(...backup.map((p) => p.id || 0)) + 1;
+    persist(true);
+  };
+
+  const filtered = useMemo(() => {
+    let list = members;
+    if (q.trim()) list = list.filter((p) => (p.name || "").includes(q.trim()));
+    list = [...list].sort((a, b) => {
+      if (sortKey === "fargo") return (parseInt(b.fargo, 10) || -1) - (parseInt(a.fargo, 10) || -1);
+      if (sortKey === "jpa") return (parseInt(b.jpa, 10) || -1) - (parseInt(a.jpa, 10) || -1);
+      return (a.name || "").localeCompare(b.name || "", "ja");
+    });
+    return list;
+  }, [members, q, sortKey]);
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 40px", color: C.ink, fontFamily: FONT }}>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 20, fontWeight: 800 }}>👥 NORAメンバー</div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{saving ? "保存中…" : `${members.length}人（共有）`}</div>
+      </div>
+
+      {loadError && (
+        <div style={{ marginBottom: 12 }}>
+          <Notice>メンバーの読み込みに失敗しました。データを守るため編集の保存を停止しています。通信・Firebase設定を確認してください。（{loadError}）</Notice>
+        </div>
+      )}
+      {saveMsg && <div style={{ marginBottom: 12 }}><Notice>{saveMsg}</Notice></div>}
+      {loaded && members.length === 0 && backup.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Notice>共有リストが空です。この端末に{backup.length}人分のバックアップが残っています。</Notice>
+          <button onClick={restoreBackup} style={{ width: "100%", marginTop: 8, background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>↺ バックアップから復元する</button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 名前で検索"
+          style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 14, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+        <select value={sortKey} onChange={(e) => setSortKey(e.target.value)}
+          style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13, padding: "0 8px", fontFamily: FONT }}>
+          <option value="name">名前順</option>
+          <option value="fargo">Fargo順</option>
+          <option value="jpa">JPA順</option>
+        </select>
+      </div>
+
+      {filtered.map((p) => <MemberRow key={p.id} p={p} onUpdate={update} onRemove={remove} />)}
+
+      <button onClick={add} style={{ width: "100%", background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14.5, fontWeight: 700, padding: "12px 0", cursor: "pointer", fontFamily: FONT, marginTop: 4 }}>＋ メンバーを追加</button>
+
+      <div style={{ textAlign: "center", fontSize: 11, color: C.sub, marginTop: 24 }}>
+        v{APP_VERSION}　{BUILD_TIME}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
