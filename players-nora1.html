@@ -1665,7 +1665,7 @@ function Shell() {
         </div>
         <div style={{ position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" }}>
           {setupInfo
-            ? <MatchScreen setupInfo={setupInfo} onExit={handleExit} />
+            ? <MatchScreen key={setupInfo.matchId} setupInfo={setupInfo} onExit={handleExit} />
             : <ScorerEmpty onGoTimeline={() => setTab("timeline")} />}
         </div>
       </div>
@@ -1727,6 +1727,11 @@ function MatchScreen({ setupInfo, onExit }) {
   // 初回：既存の共有stateを取り込む。ここでは絶対に新規作成しない——
   // 対戦は必ずB1（本部）が先に作成しているので、無ければ「本部が対戦表を組み直した」等でこの対戦が
   // 無くなったということ。ここで作り直してしまうと、消えたはずの対戦が復活してB1側を汚してしまう
+  //
+  // なお、この画面は Shell 側で key={matchId} を付けているため、別の試合を担当し直すと必ず作り直される。
+  // （以前は使い回されてしまい、前の試合のスコア・名前が次の試合IDに書き込まれて、
+  //   タイムラインに同じ対戦が二重に現れる不具合になっていた）
+  const loadedIdRef = useRef(null); // 実際に読み込んだ試合ID。これと違うIDへは絶対に書き込まない
   useEffect(() => {
     (async () => {
       try {
@@ -1736,6 +1741,7 @@ function MatchScreen({ setupInfo, onExit }) {
         } else {
           setResetDetected(true);
         }
+        loadedIdRef.current = matchId;
         setSyncStatus({ ok: true });
       } catch (err) {
         setSyncStatus({ ok: false, err: String(err && err.message ? err.message : err) });
@@ -1760,8 +1766,11 @@ function MatchScreen({ setupInfo, onExit }) {
   // 自分の操作で変わった時だけ、少し待ってから共有先に書き込む（リセット後は何も書き込まない）
   useEffect(() => {
     if (!loaded || !dirtyRef.current || resetDetected) return;
+    // 読み込んだ試合と書き込み先が食い違っている時は絶対に書かない（他の試合を上書きする事故を防ぐ）
+    if (loadedIdRef.current !== matchId) return;
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
+      if (loadedIdRef.current !== matchId) return;
       dirtyRef.current = false;
       try {
         await saveMatchRemote(matchId, stateRef.current);
