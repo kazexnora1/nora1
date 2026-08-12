@@ -1661,6 +1661,7 @@ function PcStandingsTab() {
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
 function BracketTab({ roster }) {
+  const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
   const s0 = useMemo(() => loadSettings(), []);
   const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
@@ -1791,7 +1792,7 @@ function BracketTab({ roster }) {
   });
 
   const registerAll = async () => {
-    if (registering) return;
+    if (registering || registeringRef.current) return;
     const entries = slotIdx.slice(0, size).map((idx, i) => ({ p: roster[idx], no: parseInt(drawNo[i], 10) }));
     if (entries.some((e) => !e.p)) { setMsg({ ok: false, text: "全ての枠に選手を割り当ててください" }); return; }
     const names = entries.map((e) => e.p.name);
@@ -1804,6 +1805,7 @@ function BracketTab({ roster }) {
     const total = bracketTotalRounds(size);
     const totalMatches = size - 1;
     if (!window.confirm(`決勝トーナメント（${size}人）の全${totalMatches}試合を、予定時刻つきで登録します。よろしいですか？`)) return;
+    registeringRef.current = true;
     setRegistering(true);
     try {
       const now = Date.now();
@@ -1841,11 +1843,12 @@ function BracketTab({ roster }) {
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
+    registeringRef.current = false;
     setRegistering(false);
   };
 
   const advanceRound = async (fromRound) => {
-    if (registering) return;
+    if (registering || registeringRef.current) return;
     const prev = bracketMatchesForRound(matches, fromRound);
     if (prev.length === 0 || prev.some((m) => !isMatchFinished(m))) { setMsg({ ok: false, text: "前のラウンドがまだ終わっていません" }); return; }
     const winners = prev.map(winnerInfo);
@@ -1863,6 +1866,7 @@ function BracketTab({ roster }) {
     const placeholders = bracketMatchesForRound(matches, nextRound).filter((m) => m.pending);
     const label = nextRound === totalRounds ? "決勝" : totalRounds - nextRound === 1 ? "準決勝" : `${nextRound}回戦`;
     if (!window.confirm(`${label}の${winners.length / 2}試合に、勝ち上がった選手を入れます。よろしいですか？`)) return;
+    registeringRef.current = true;
     setRegistering(true);
     try {
       const now = Date.now();
@@ -1902,6 +1906,7 @@ function BracketTab({ roster }) {
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
+    registeringRef.current = false;
     setRegistering(false);
   };
 
@@ -3035,6 +3040,7 @@ function perTableRoundRobinGenerate(N) {
 }
 
 function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roundRobin, onSetRoundRobin }) {
+  const registeringRef = useRef(false); // 連打による二重登録防止（state更新は非同期なのでrefで即座にブロック）
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
@@ -3176,8 +3182,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   }, [rows]);
 
   const register = async () => {
-    if (!rows || registering) return;
+    if (!rows || registering || registeringRef.current) return;
     if (!window.confirm(`${rows.length}件の対戦を登録します。\n現在の対戦とスコアラーの担当回数はすべてリセットされます。よろしいですか？`)) return;
+    registeringRef.current = true;
     setRegistering(true);
     try {
       const now = Date.now();
@@ -3206,6 +3213,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
     }
+    registeringRef.current = false;
     setRegistering(false);
   };
 
@@ -3511,6 +3519,7 @@ function ScheduleTab({ roster }) {
   const [lenPct, setLenPct] = useState(100);
   const [tableStatus, setTableStatus] = useState([null, null, null]);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false); // 連打による二重作成防止（state更新は非同期なのでrefで即座にブロック）
   const [createdInfo, setCreatedInfo] = useState(null);
 
   const refreshStatus = async () => {
@@ -3529,7 +3538,8 @@ function ScheduleTab({ roster }) {
   const res = valid ? computeRace(R1, R2, lenPct) : null;
 
   const create = async () => {
-    if (!valid || creating) return;
+    if (!valid || creating || creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
     const matchId = randomMatchId();
     const state = {
@@ -3541,6 +3551,7 @@ function ScheduleTab({ roster }) {
     };
     await saveMatch(matchId, state).catch(() => {});
     setCreatedInfo({ table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
+    creatingRef.current = false;
     setCreating(false);
     refreshStatus();
   };
