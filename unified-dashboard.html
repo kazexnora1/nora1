@@ -1,4 +1,4 @@
-<!-- v2.002 -->
+<!-- v2.003 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.002";
-const BUILD_TIME = "2026-08-12 統合版・骨組み";
+const APP_VERSION = "2.003";
+const BUILD_TIME = "2026-08-12 対戦作成・スコア入力を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -176,6 +176,16 @@ function deriveMatch(match, ruleset) {
     if (ruleset.hillDisplay.enabled && cur === t - 1) result.isHill = true;
     if (cur >= t) { result.status = "finished"; result.winnerSeat = s; }
   });
+
+  // ブレイク権：ラック確定イベントの順序から導出する（breakType: winner=前ラック勝者／alternate=交互）
+  const rackWinners = events.filter((ev) => ev.type === "rackWon").map((ev) => ev.seat);
+  const firstBreak = match.firstBreakSeat || 1;
+  if (rackWinners.length === 0) {
+    result.currentBreakSeat = firstBreak;
+  } else {
+    const lastWinner = rackWinners[rackWinners.length - 1];
+    result.currentBreakSeat = ruleset.breakType === "winner" ? lastWinner : (lastWinner === 1 ? 2 : 1);
+  }
 
   return result;
 }
@@ -336,6 +346,28 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
   const ruleset = rulesetOf(tournament);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // ロスターエントリ（{rosterNumber, playerId, displayName}）
+  const [matches, setMatches] = useState([]);
+  const [showNewMatch, setShowNewMatch] = useState(false);
+  const [activeMatchId, setActiveMatchId] = useState(null);
+
+  useEffect(() => {
+    const ref = db.ref("matches/" + tournament.tournamentId);
+    const cb = ref.on("value", (snap) => {
+      const val = snap.val() || {};
+      setMatches(Object.values(val).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+    });
+    return () => ref.off("value", cb);
+  }, [tournament.tournamentId]);
+
+  const createMatch = (match) => {
+    db.ref("matches/" + tournament.tournamentId + "/" + match.matchId).set(match);
+    setShowNewMatch(false);
+    setActiveMatchId(match.matchId);
+  };
+
+  const updateMatchEvents = (matchId, newEvents) => {
+    db.ref("matches/" + tournament.tournamentId + "/" + matchId).update({ events: newEvents, updatedAt: Date.now() });
+  };
 
   const addRosterEntry = (playerId, displayName, rosterNumber) => {
     const roster = [...(tournament.roster || []), { rosterNumber, playerId, displayName }];
@@ -359,6 +391,21 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     onUpdateTournament({ ...tournament, roster, updatedAt: Date.now() });
     setEditingEntry(null);
   };
+
+  if (activeMatchId) {
+    const m = matches.find((x) => x.matchId === activeMatchId);
+    if (m) {
+      return (
+        <MatchScoreScreen
+          match={m}
+          ruleset={ruleset}
+          roster={tournament.roster || []}
+          onBack={() => setActiveMatchId(null)}
+          onUpdateEvents={(newEvents) => updateMatchEvents(m.matchId, newEvents)}
+        />
+      );
+    }
+  }
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
@@ -384,9 +431,36 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
           </>
         )}
         {tab === "matches" && (
-          <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>対戦作成・スコア入力は次段で実装します</div>
+          <>
+            {matches.length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>まだ対戦がありません</div>}
+            {matches.map((m) => {
+              const d = deriveMatch(m, ruleset);
+              const n1 = nameOfNum(m.seat1.rosterNumber, tournament.roster);
+              const n2 = nameOfNum(m.seat2.rosterNumber, tournament.roster);
+              const cur1 = ruleset.scoring.mode === "rackRace" ? d.racks.seat1 : d.score.seat1;
+              const cur2 = ruleset.scoring.mode === "rackRace" ? d.racks.seat2 : d.score.seat2;
+              const statusLabel = d.status === "finished" ? "試合終了" : d.status === "inProgress" ? "進行中" : "未開始";
+              return (
+                <Card key={m.matchId} onClick={() => setActiveMatchId(m.matchId)} highlight={d.status === "inProgress"}>
+                  <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
+                    T{m.table}{m.roundLabel ? "・" + m.roundLabel : ""}・{statusLabel}
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: d.winnerSeat === 1 ? C.win : C.ink }}>{n1} {cur1}{m.target?.seat1 != null ? " / " + m.target.seat1 : ""}</span>
+                    <span style={{ color: d.winnerSeat === 2 ? C.win : C.ink }}>{cur2}{m.target?.seat2 != null ? " / " + m.target.seat2 : ""} {n2}</span>
+                  </div>
+                </Card>
+              );
+            })}
+            <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 対戦を作る</button>
+          </>
         )}
       </div>
+      {showNewMatch && (
+        <BottomSheet title="対戦を作る" onClose={() => setShowNewMatch(false)}>
+          <NewMatchForm ruleset={ruleset} tournament={tournament} allPlayers={allPlayers} onCreate={createMatch} onCancel={() => setShowNewMatch(false)} />
+        </BottomSheet>
+      )}
       {showAddPlayer && (
         <BottomSheet title="選手を追加" onClose={() => setShowAddPlayer(false)}>
           <AddPlayerForm existingRoster={tournament.roster || []} allPlayers={allPlayers} onAdd={addRosterEntry} onCancel={() => setShowAddPlayer(false)} />
@@ -524,6 +598,247 @@ function EditRosterEntry({ entry, player, onSave, onRemove, onCancel }) {
       <button onClick={save} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>保存する</button>
       <button onClick={onRemove} style={{ ...menuBtn, background: C.lightRed, color: C.red, fontWeight: 800 }}>この大会の名簿から外す</button>
       <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+    </div>
+  );
+}
+
+/* ================================================================
+   画面：対戦作成フォーム（ルールセットに応じて目標点/ラック数を自動算出）
+   ================================================================ */
+const ROUND_LABELS = { prelim: "予選", quarterfinal: "準々決勝", semifinal: "準決勝", final: "決勝" };
+
+function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
+  const roster = tournament.roster || [];
+  const tables = tournament.tables || [1];
+  const [table, setTable] = useState(tables[0]);
+  const [seat1Num, setSeat1Num] = useState(roster[0] ? roster[0].rosterNumber : null);
+  const [seat2Num, setSeat2Num] = useState(roster[1] ? roster[1].rosterNumber : null);
+  const roundKeys = ruleset.handicap.mode === "fixedByRound" ? Object.keys(ruleset.handicap.targets) : null;
+  const [round, setRound] = useState(roundKeys ? roundKeys[0] : "");
+  const [target1, setTarget1] = useState("");
+  const [target2, setTarget2] = useState("");
+  const [firstBreak, setFirstBreak] = useState(1);
+
+  const playerOf = (rosterNumber) => {
+    const r = roster.find((x) => x.rosterNumber === rosterNumber);
+    if (!r) return null;
+    return (allPlayers || []).find((p) => p.playerId === r.playerId) || null;
+  };
+
+  // ルールセットに応じた目標の自動算出（fargoモードのみ未対応・手動入力）
+  useEffect(() => {
+    if (ruleset.handicap.mode === "fixedByRound") {
+      const t = ruleset.handicap.targets[round];
+      if (t != null) { setTarget1(String(t)); setTarget2(String(t)); }
+    } else if (ruleset.handicap.mode === "classRace") {
+      const p1 = playerOf(seat1Num), p2 = playerOf(seat2Num);
+      const t1 = p1 && p1.class ? ruleset.handicap.classTargets[p1.class] : null;
+      const t2 = p2 && p2.class ? ruleset.handicap.classTargets[p2.class] : null;
+      if (t1 != null) setTarget1(String(t1));
+      if (t2 != null) setTarget2(String(t2));
+    }
+    // eslint-disable-next-line
+  }, [ruleset.handicap.mode, round, seat1Num, seat2Num]);
+
+  const targetLabel = ruleset.scoring.mode === "rackRace" ? "目標ラック数" : "目標点";
+  const canSubmit = seat1Num != null && seat2Num != null && seat1Num !== seat2Num && target1 !== "" && target2 !== "";
+
+  const submit = () => {
+    if (!canSubmit) return;
+    const match = {
+      matchId: newId("m"),
+      tournamentId: tournament.tournamentId,
+      table,
+      roundLabel: roundKeys ? (ROUND_LABELS[round] || round) : "",
+      seat1: { rosterNumber: seat1Num },
+      seat2: { rosterNumber: seat2Num },
+      target: { seat1: Number(target1), seat2: Number(target2) },
+      firstBreakSeat: firstBreak,
+      events: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    onCreate(match);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>卓</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {tables.map((n) => (
+          <button key={n} onClick={() => setTable(n)} style={{
+            flex: "0 0 auto", minWidth: 44, padding: "10px 0", border: `2px solid ${table === n ? C.blue : C.line}`,
+            background: table === n ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+          }}>{n}</button>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>対戦者（青）</div>
+      <select value={seat1Num ?? ""} onChange={(e) => setSeat1Num(Number(e.target.value))}
+        style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }}>
+        <option value="" disabled>選手を選択</option>
+        {roster.map((r) => <option key={r.rosterNumber} value={r.rosterNumber}>#{r.rosterNumber} {r.displayName}</option>)}
+      </select>
+
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>対戦者（赤）</div>
+      <select value={seat2Num ?? ""} onChange={(e) => setSeat2Num(Number(e.target.value))}
+        style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }}>
+        <option value="" disabled>選手を選択</option>
+        {roster.map((r) => <option key={r.rosterNumber} value={r.rosterNumber}>#{r.rosterNumber} {r.displayName}</option>)}
+      </select>
+      {seat1Num != null && seat1Num === seat2Num && (
+        <div style={{ color: C.red, fontSize: 12.5, marginBottom: 12 }}>同じ選手は選べません</div>
+      )}
+
+      {roundKeys && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>回戦</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+            {roundKeys.map((k) => (
+              <button key={k} onClick={() => setRound(k)} style={{
+                flex: "1 0 40%", padding: "10px 0", border: `2px solid ${round === k ? C.blue : C.line}`,
+                background: round === k ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+              }}>{ROUND_LABELS[k] || k}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {ruleset.handicap.mode === "fargo" && (
+        <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>Fargoレートからの自動算出は未実装です。目標点を直接入力してください。</div>
+      )}
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>{targetLabel}（青／赤）</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <input value={target1} onChange={(e) => setTarget1(e.target.value)} inputMode="numeric" placeholder="例：21"
+          style={{ flex: 1, padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT }} />
+        <input value={target2} onChange={(e) => setTarget2(e.target.value)} inputMode="numeric" placeholder="例：21"
+          style={{ flex: 1, padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT }} />
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>最初のブレイク</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        <button onClick={() => setFirstBreak(1)} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${firstBreak === 1 ? C.blue : C.line}`,
+          background: firstBreak === 1 ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>青</button>
+        <button onClick={() => setFirstBreak(2)} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${firstBreak === 2 ? C.red : C.line}`,
+          background: firstBreak === 2 ? C.lightRed : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>赤</button>
+      </div>
+
+      <button onClick={submit} disabled={!canSubmit} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: canSubmit ? 1 : 0.5 }}>この内容で対戦を作る</button>
+      <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+    </div>
+  );
+}
+
+/* ================================================================
+   画面：対戦スコア入力（ルールセットのscoring.modeごとに入力UIを出し分け）
+   ================================================================ */
+function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateEvents }) {
+  const events = match.events || [];
+  // rackWinnerBonus（JCL）方式専用：ラック確定前の未確定球数（ローカルのみ・events化しない）
+  const [tally, setTally] = useState({ seat1: 0, seat2: 0 });
+  useEffect(() => { setTally({ seat1: 0, seat2: 0 }); }, [match.matchId, events.length]);
+
+  const d = deriveMatch(match, ruleset);
+  const n1 = nameOfNum(match.seat1.rosterNumber, roster);
+  const n2 = nameOfNum(match.seat2.rosterNumber, roster);
+  const finished = d.status === "finished";
+
+  const commit = (newEvents) => onUpdateEvents(newEvents);
+  const undo = () => { if (events.length > 0) commit(events.slice(0, -1)); };
+  const addRackWon = (seat, ballsWonInRack) => {
+    commit([...events, { type: "rackWon", seat, ballsWonInRack: ballsWonInRack || 0, ts: Date.now() }]);
+  };
+  const addBallPocketed = (seat, ball) => {
+    const evs = [...events, { type: "ballPocketed", seat, ball, ts: Date.now() }];
+    if (ball === 9) evs.push({ type: "rackWon", seat, ts: Date.now() });
+    commit(evs);
+  };
+
+  const cur = (key) => (ruleset.scoring.mode === "rackRace" ? d.racks[key] : d.score[key]);
+  const target = match.target || {};
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
+      <TopBar title={`T${match.table}${match.roundLabel ? "・" + match.roundLabel : ""}`} onBack={onBack} />
+      <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+        {finished && (
+          <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, borderRadius: 12, padding: 12, marginBottom: 14, textAlign: "center", fontWeight: 800, color: C.hill }}>
+            🏆 {d.winnerSeat === 1 ? n1 : n2} の勝利
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          {[1, 2].map((seat) => {
+            const key = "seat" + seat;
+            const isBlue = seat === 1;
+            const isBreak = d.currentBreakSeat === seat && !finished;
+            return (
+              <div key={seat} style={{
+                flex: 1, background: isBlue ? C.lightBlue : C.lightRed, border: `2px solid ${isBlue ? C.blue : C.red}`,
+                borderRadius: 14, padding: 12, textAlign: "center", position: "relative",
+              }}>
+                {isBreak && <div style={{ position: "absolute", top: 6, right: 8, fontSize: 11, fontWeight: 800, color: isBlue ? C.blue : C.red }}>●ブレイク</div>}
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 4 }}>{seat === 1 ? n1 : n2}</div>
+                <div style={{ fontSize: 30, fontWeight: 900, color: isBlue ? C.blue : C.red }}>{cur(key)}</div>
+                {target[key] != null && <div style={{ fontSize: 12, color: C.sub }}>／ {target[key]}{ruleset.hillDisplay.enabled && d.isHill && !finished ? "（ヒル）" : ""}</div>}
+                {ruleset.scoring.mode === "rackWinnerBonus" && !finished && (
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 6 }}>このラック：{tally[key]}球</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {!finished && ruleset.scoring.mode === "rackWinnerBonus" && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              {[1, 2].map((seat) => (
+                <div key={seat} style={{ flex: 1, display: "flex", gap: 6 }}>
+                  <button onClick={() => setTally((t) => ({ ...t, ["seat" + seat]: Math.max(0, t["seat" + seat] - 1) }))} style={{ ...menuBtn, marginBottom: 0, flex: 1 }}>−1球</button>
+                  <button onClick={() => setTally((t) => ({ ...t, ["seat" + seat]: t["seat" + seat] + 1 }))} style={{ ...menuBtn, marginBottom: 0, flex: 1 }}>＋1球</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => addRackWon(1, tally.seat1)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.blue, color: "#fff", borderColor: C.blue }}>{n1}が9番で終了</button>
+              <button onClick={() => addRackWon(2, tally.seat2)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.red, color: "#fff", borderColor: C.red }}>{n2}が9番で終了</button>
+            </div>
+          </div>
+        )}
+
+        {!finished && ruleset.scoring.mode === "perBallJPA" && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[1, 2].map((seat) => (
+              <div key={seat} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <button onClick={() => addBallPocketed(seat, 1)} style={{ ...menuBtn, marginBottom: 0, background: seat === 1 ? C.lightBlue : C.lightRed, borderColor: seat === 1 ? C.blue : C.red }}>球（1点）</button>
+                <button onClick={() => addBallPocketed(seat, 9)} style={{ ...menuBtn, marginBottom: 0, background: seat === 1 ? C.blue : C.red, color: "#fff", borderColor: seat === 1 ? C.blue : C.red }}>9番（2点・ラック終了）</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!finished && ruleset.scoring.mode === "rackRace" && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <button onClick={() => addRackWon(1)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.blue, color: "#fff", borderColor: C.blue }}>{n1}がラック取得</button>
+            <button onClick={() => addRackWon(2)} style={{ ...menuBtn, marginBottom: 0, flex: 1, background: C.red, color: "#fff", borderColor: C.red }}>{n2}がラック取得</button>
+          </div>
+        )}
+
+        <button onClick={undo} disabled={events.length === 0} style={{ ...menuBtn, background: C.zone, fontWeight: 700, opacity: events.length === 0 ? 0.5 : 1 }}>↩️ 直前の記録を取り消す</button>
+
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, margin: "18px 0 6px" }}>タイムライン</div>
+        {events.length === 0 && <div style={{ color: C.sub, fontSize: 13, textAlign: "center", padding: "10px 0" }}>まだ記録がありません</div>}
+        {events.slice().reverse().map((ev, i) => (
+          <div key={events.length - 1 - i} style={{ fontSize: 13, color: C.ink, padding: "6px 2px", borderBottom: `1px solid ${C.line}` }}>
+            {ev.type === "rackWon" && `● ラック：${ev.seat === 1 ? n1 : n2}${ev.ballsWonInRack != null ? `（${ev.ballsWonInRack}球）` : ""}`}
+            {ev.type === "ballPocketed" && `○ 球：${ev.seat === 1 ? n1 : n2}（${ev.ball === 9 ? "9番・2点" : "1点"}）`}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
