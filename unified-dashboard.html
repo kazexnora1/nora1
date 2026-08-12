@@ -1,4 +1,4 @@
-<!-- v2.001 -->
+<!-- v2.002 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,7 +41,7 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.001";
+const APP_VERSION = "2.002";
 const BUILD_TIME = "2026-08-12 統合版・骨組み";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
@@ -331,15 +331,33 @@ function NewTournamentScreen({ onCreate, onCancel }) {
 /* ================================================================
    画面：大会詳細（名簿・対戦一覧の入口。コアループの本体は次段で拡張）
    ================================================================ */
-function TournamentScreen({ tournament, onBack, onUpdateTournament }) {
+function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }) {
   const [tab, setTab] = useState("roster");
   const ruleset = rulesetOf(tournament);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null); // ロスターエントリ（{rosterNumber, playerId, displayName}）
 
   const addRosterEntry = (playerId, displayName, rosterNumber) => {
     const roster = [...(tournament.roster || []), { rosterNumber, playerId, displayName }];
     onUpdateTournament({ ...tournament, roster, updatedAt: Date.now() });
     setShowAddPlayer(false);
+  };
+
+  const updatePlayerMaster = (playerId, patch) => {
+    // 選手マスタ（全大会共通）を更新。名前を直しても過去の対戦記録の表示には影響しない
+    db.ref("players/" + playerId).update({ ...patch, updatedAt: Date.now() });
+    if (patch.name) {
+      const roster = (tournament.roster || []).map((r) => r.playerId === playerId ? { ...r, displayName: patch.name } : r);
+      onUpdateTournament({ ...tournament, roster, updatedAt: Date.now() });
+    }
+    setEditingEntry(null);
+  };
+
+  const removeFromRoster = (rosterNumber) => {
+    // この大会の名簿からのみ外す。選手マスタ自体は消さない
+    const roster = (tournament.roster || []).filter((r) => r.rosterNumber !== rosterNumber);
+    onUpdateTournament({ ...tournament, roster, updatedAt: Date.now() });
+    setEditingEntry(null);
   };
 
   return (
@@ -358,7 +376,7 @@ function TournamentScreen({ tournament, onBack, onUpdateTournament }) {
           <>
             {(tournament.roster || []).length === 0 && <div style={{ color: C.sub, fontSize: 14, textAlign: "center", marginTop: 30 }}>まだ選手が登録されていません</div>}
             {(tournament.roster || []).map((r) => (
-              <Card key={r.rosterNumber}>
+              <Card key={r.rosterNumber} onClick={() => setEditingEntry(r)}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>#{r.rosterNumber} {r.displayName}</div>
               </Card>
             ))}
@@ -371,26 +389,41 @@ function TournamentScreen({ tournament, onBack, onUpdateTournament }) {
       </div>
       {showAddPlayer && (
         <BottomSheet title="選手を追加" onClose={() => setShowAddPlayer(false)}>
-          <AddPlayerForm existingRoster={tournament.roster || []} onAdd={addRosterEntry} onCancel={() => setShowAddPlayer(false)} />
+          <AddPlayerForm existingRoster={tournament.roster || []} allPlayers={allPlayers} onAdd={addRosterEntry} onCancel={() => setShowAddPlayer(false)} />
+        </BottomSheet>
+      )}
+      {editingEntry && (
+        <BottomSheet title={`#${editingEntry.rosterNumber} を訂正`} onClose={() => setEditingEntry(null)}>
+          <EditRosterEntry
+            entry={editingEntry}
+            player={(allPlayers || []).find((p) => p.playerId === editingEntry.playerId)}
+            onSave={updatePlayerMaster}
+            onRemove={() => removeFromRoster(editingEntry.rosterNumber)}
+            onCancel={() => setEditingEntry(null)}
+          />
         </BottomSheet>
       )}
     </div>
   );
 }
 
-function AddPlayerForm({ existingRoster, onAdd, onCancel }) {
-  const [mode, setMode] = useState("new"); // "new" | "existing"
+function AddPlayerForm({ existingRoster, allPlayers, onAdd, onCancel }) {
+  const [mode, setMode] = useState("existing"); // "existing" | "new"
+  const [search, setSearch] = useState("");
   const [name, setName] = useState("");
   const [fargo, setFargo] = useState("");
   const [cls, setCls] = useState("");
   const nextNumber = (existingRoster.reduce((max, r) => Math.max(max, r.rosterNumber), 0) || 0) + 1;
+  const usedPlayerIds = new Set(existingRoster.map((r) => r.playerId));
+  const candidates = (allPlayers || [])
+    .filter((p) => !usedPlayerIds.has(p.playerId))
+    .filter((p) => !search.trim() || p.name.includes(search.trim()));
 
-  const submit = () => {
+  const submitNew = () => {
     if (!name.trim()) return;
-    // 選手マスタへ新規登録（重複判別は手動運用のため自動名寄せはしない）
+    // 選手マスタ（全大会共通）へ新規登録。重複判別は手動運用のため自動名寄せはしない
     const playerId = newId("p");
-    const playerRef = db.ref("players/" + playerId);
-    playerRef.set({
+    db.ref("players/" + playerId).set({
       playerId, name: name.trim(),
       fargoRating: fargo ? Number(fargo) : null,
       class: cls || null,
@@ -401,11 +434,83 @@ function AddPlayerForm({ existingRoster, onAdd, onCancel }) {
 
   return (
     <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setMode("existing")} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${mode === "existing" ? C.blue : C.line}`,
+          background: mode === "existing" ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>名簿から選ぶ</button>
+        <button onClick={() => setMode("new")} style={{
+          flex: 1, padding: "10px 0", border: `2px solid ${mode === "new" ? C.blue : C.line}`,
+          background: mode === "new" ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>新規登録</button>
+      </div>
+
+      {mode === "existing" && (
+        <div>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="名前で検索"
+            style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }} />
+          {candidates.length === 0 && <div style={{ color: C.sub, fontSize: 13.5, textAlign: "center", padding: "16px 0" }}>該当する選手がいません</div>}
+          {candidates.map((p) => (
+            <Card key={p.playerId} onClick={() => onAdd(p.playerId, p.name, nextNumber)}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{p.name}</div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                Fargo：{p.fargoRating != null ? p.fargoRating : "未定"}　クラス：{p.class || "未定"}
+              </div>
+            </Card>
+          ))}
+          <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700, marginTop: 8 }}>もどる</button>
+        </div>
+      )}
+
+      {mode === "new" && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>名前</div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="選手名"
+            style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }} />
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>Fargoレート（未定なら空欄でOK）</div>
+          <input value={fargo} onChange={(e) => setFargo(e.target.value)} inputMode="numeric" placeholder="例：512"
+            style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }} />
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>クラス（未定なら空欄でOK）</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {["", "A", "B", "C"].map((c) => (
+              <button key={c || "none"} onClick={() => setCls(c)} style={{
+                flex: 1, padding: "10px 0", border: `2px solid ${cls === c ? C.blue : C.line}`,
+                background: cls === c ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+              }}>{c || "未定"}</button>
+            ))}
+          </div>
+          <button onClick={submitNew} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>登録する</button>
+          <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditRosterEntry({ entry, player, onSave, onRemove, onCancel }) {
+  const [name, setName] = useState(player ? player.name : entry.displayName);
+  const [fargo, setFargo] = useState(player && player.fargoRating != null ? String(player.fargoRating) : "");
+  const [cls, setCls] = useState(player && player.class ? player.class : "");
+
+  const save = () => {
+    if (!name.trim()) return;
+    onSave(entry.playerId, {
+      name: name.trim(),
+      fargoRating: fargo ? Number(fargo) : null,
+      class: cls || null,
+    });
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: C.sub, marginBottom: 12 }}>
+        ここでの訂正は選手マスタ（全大会共通）に反映されます。名前を直しても、これまでの対戦記録の表示は変わりません。
+      </div>
       <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>名前</div>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="選手名"
+      <input value={name} onChange={(e) => setName(e.target.value)}
         style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }} />
       <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>Fargoレート（未定なら空欄でOK）</div>
-      <input value={fargo} onChange={(e) => setFargo(e.target.value)} inputMode="numeric" placeholder="例：512"
+      <input value={fargo} onChange={(e) => setFargo(e.target.value)} inputMode="numeric"
         style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 12 }} />
       <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>クラス（未定なら空欄でOK）</div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -416,7 +521,8 @@ function AddPlayerForm({ existingRoster, onAdd, onCancel }) {
           }}>{c || "未定"}</button>
         ))}
       </div>
-      <button onClick={submit} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>登録する</button>
+      <button onClick={save} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>保存する</button>
+      <button onClick={onRemove} style={{ ...menuBtn, background: C.lightRed, color: C.red, fontWeight: 800 }}>この大会の名簿から外す</button>
       <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
     </div>
   );
@@ -427,8 +533,18 @@ function AddPlayerForm({ existingRoster, onAdd, onCancel }) {
    ================================================================ */
 function App() {
   const [tournaments, setTournaments] = useState([]);
+  const [allPlayers, setAllPlayers] = useState([]);
   const [screen, setScreen] = useState("home"); // "home" | "new" | "tournament"
   const [activeTournament, setActiveTournament] = useState(null);
+
+  useEffect(() => {
+    const ref = db.ref("players");
+    const cb = ref.on("value", (snap) => {
+      const val = snap.val() || {};
+      setAllPlayers(Object.values(val).sort((a, b) => a.name.localeCompare(b.name, "ja")));
+    });
+    return () => ref.off("value", cb);
+  }, []);
 
   useEffect(() => {
     const ref = db.ref("tournaments");
@@ -463,7 +579,7 @@ function App() {
     return <NewTournamentScreen onCreate={createTournament} onCancel={() => setScreen("home")} />;
   }
   if (screen === "tournament" && activeTournament) {
-    return <TournamentScreen tournament={activeTournament} onBack={() => setScreen("home")} onUpdateTournament={updateTournament} />;
+    return <TournamentScreen tournament={activeTournament} allPlayers={allPlayers} onBack={() => setScreen("home")} onUpdateTournament={updateTournament} />;
   }
   return <HomeScreen tournaments={tournaments} onOpen={(t) => { setActiveTournament(t); setScreen("tournament"); }} onNew={() => setScreen("new")} />;
 }
