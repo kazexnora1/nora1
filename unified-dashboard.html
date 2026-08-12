@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.007";
-const BUILD_TIME = "2026-08-12 タブ構成をB1準拠に変更、本部アプリからスコア入力UIを撤去";
+const APP_VERSION = "2.008";
+const BUILD_TIME = "2026-08-12 イベントの編集・削除、選手マスタの完全削除に対応";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -294,7 +294,10 @@ function TopBar({ title, onBack }) {
 /* ================================================================
    画面：大会一覧（ホーム）
    ================================================================ */
-function HomeScreen({ tournaments, onOpen, onNew }) {
+function HomeScreen({ tournaments, onOpen, onNew, onEdit, onDelete }) {
+  const [menuFor, setMenuFor] = useState(null); // tournamentId
+  const menuTarget = tournaments.find((t) => t.tournamentId === menuFor) || null;
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
       <TopBar title="カゼログ 統合版" />
@@ -304,15 +307,29 @@ function HomeScreen({ tournaments, onOpen, onNew }) {
         )}
         {tournaments.map((t) => (
           <Card key={t.tournamentId} onClick={() => onOpen(t)}>
-            <div style={{ fontSize: 15.5, fontWeight: 800, color: C.ink }}>{t.name}</div>
-            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
-              {RULESETS[t.rulesetId]?.label || t.rulesetId} ・ {t.date || ""} ・ {t.status === "finished" ? "終了" : t.status === "inProgress" ? "進行中" : "準備中"}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 15.5, fontWeight: 800, color: C.ink }}>{t.name}</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+                  {RULESETS[t.rulesetId]?.label || t.rulesetId} ・ {t.date || ""} ・ {t.status === "finished" ? "終了" : t.status === "inProgress" ? "進行中" : "準備中"}
+                </div>
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); setMenuFor(t.tournamentId); }} style={{
+                background: "none", border: "none", color: C.sub, fontSize: 18, lineHeight: 1, padding: "0 4px", cursor: "pointer",
+              }}>⋯</button>
             </div>
           </Card>
         ))}
         <button onClick={onNew} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 新しい大会を作る</button>
       </div>
       <div style={{ textAlign: "center", fontSize: 10.5, color: C.sub, padding: "4px 0 8px" }}>ver{APP_VERSION}　{BUILD_TIME}</div>
+      {menuTarget && (
+        <BottomSheet title={menuTarget.name} onClose={() => setMenuFor(null)}>
+          <button onClick={() => { onEdit(menuTarget); setMenuFor(null); }} style={menuBtn}>✎ 編集する</button>
+          <button onClick={() => { onDelete(menuTarget); setMenuFor(null); }} style={{ ...menuBtn, background: C.lightRed, color: C.red, fontWeight: 800 }}>🗑 削除する</button>
+          <button onClick={() => setMenuFor(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
+        </BottomSheet>
+      )}
     </div>
   );
 }
@@ -320,36 +337,50 @@ function HomeScreen({ tournaments, onOpen, onNew }) {
 /* ================================================================
    画面：大会作成
    ================================================================ */
-function NewTournamentScreen({ onCreate, onCancel }) {
-  const [name, setName] = useState("");
-  const [rulesetId, setRulesetId] = useState("jcl");
-  const [tables, setTables] = useState(3);
+function NewTournamentScreen({ editing, onCreate, onSave, onCancel }) {
+  const isEdit = !!editing;
+  const [name, setName] = useState(editing ? editing.name : "");
+  const [rulesetId, setRulesetId] = useState(editing ? editing.rulesetId : "jcl");
+  const [tables, setTables] = useState(editing ? (editing.tables || [1]).length : 3);
+  const [date, setDate] = useState(editing ? (editing.date || "") : new Date().toISOString().slice(0, 10));
 
   const submit = () => {
     if (!name.trim()) return;
-    const tournament = {
-      tournamentId: newId("t"),
-      name: name.trim(),
-      rulesetId,
-      rulesetOverrides: {},
-      date: new Date().toISOString().slice(0, 10),
-      status: "setup",
-      tables: Array.from({ length: tables }, (_, i) => i + 1),
-      roster: [],
-      groups: { mode: "open", assignments: null },
-      bracket: { size: null, seedingSource: RULESETS[rulesetId].bracket.seedingSource, slots: [] },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    onCreate(tournament);
+    if (isEdit) {
+      // 既存の名簿・組み合わせ・大会内対戦との整合を壊さないよう、
+      // roster/groups/bracket 等はそのまま維持し、基本情報のみ更新する。
+      // 卓数を減らした場合、既存対戦がその卓番号を参照していても削除はしない（本部が個別に卓移動する運用）。
+      const nextTables = Array.from({ length: tables }, (_, i) => i + 1);
+      onSave({ ...editing, name: name.trim(), rulesetId, date, tables: nextTables, updatedAt: Date.now() });
+    } else {
+      const tournament = {
+        tournamentId: newId("t"),
+        name: name.trim(),
+        rulesetId,
+        rulesetOverrides: {},
+        date,
+        status: "setup",
+        tables: Array.from({ length: tables }, (_, i) => i + 1),
+        roster: [],
+        groups: { mode: "open", assignments: null },
+        bracket: { size: null, seedingSource: RULESETS[rulesetId].bracket.seedingSource, slots: [] },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      onCreate(tournament);
+    }
   };
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
-      <TopBar title="新しい大会" onBack={onCancel} />
+      <TopBar title={isEdit ? "大会を編集" : "新しい大会"} onBack={onCancel} />
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>大会名</div>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例：第4回あずき杯"
+          style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 18 }} />
+
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>開催日</div>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
           style={{ width: "100%", padding: "12px 10px", border: `1.5px solid ${C.line}`, borderRadius: 10, fontSize: 15, fontFamily: FONT, marginBottom: 18 }} />
 
         <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>ルールセット</div>
@@ -359,6 +390,7 @@ function NewTournamentScreen({ onCreate, onCancel }) {
             borderColor: rulesetId === r.id ? C.blue : C.line, textAlign: "left",
           }}>{r.label}</button>
         ))}
+        {isEdit && <div style={{ fontSize: 12, color: C.sub, margin: "4px 0 4px" }}>ルールセットを変更しても、すでに作成済みの対戦の目標点などは自動では変わりません。</div>}
 
         <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, margin: "18px 0 6px" }}>卓数</div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -371,7 +403,7 @@ function NewTournamentScreen({ onCreate, onCancel }) {
         </div>
       </div>
       <div style={{ padding: 16 }}>
-        <button onClick={submit} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>作成する</button>
+        <button onClick={submit} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>{isEdit ? "保存する" : "作成する"}</button>
       </div>
     </div>
   );
@@ -557,6 +589,14 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     setEditingEntry(null);
   };
 
+  const deletePlayerMaster = (playerId) => {
+    if (!window.confirm("この選手を選手マスタから完全に削除します。全大会の名簿・過去の対戦記録の表示名解決に影響します。よろしいですか？")) return;
+    db.ref("players/" + playerId).remove();
+    const roster = (tournament.roster || []).filter((r) => r.playerId !== playerId);
+    onUpdateTournament({ ...tournament, roster, updatedAt: Date.now() });
+    setEditingEntry(null);
+  };
+
   if (activeMatchId) {
     const m = matches.find((x) => x.matchId === activeMatchId);
     if (m) {
@@ -689,6 +729,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
             player={(allPlayers || []).find((p) => p.playerId === editingEntry.playerId)}
             onSave={updatePlayerMaster}
             onRemove={() => removeFromRoster(editingEntry.rosterNumber)}
+            onDeleteMaster={() => deletePlayerMaster(editingEntry.playerId)}
             onCancel={() => setEditingEntry(null)}
           />
         </BottomSheet>
@@ -777,7 +818,7 @@ function AddPlayerForm({ existingRoster, allPlayers, onAdd, onCancel }) {
   );
 }
 
-function EditRosterEntry({ entry, player, onSave, onRemove, onCancel }) {
+function EditRosterEntry({ entry, player, onSave, onRemove, onDeleteMaster, onCancel }) {
   const [name, setName] = useState(player ? player.name : entry.displayName);
   const [fargo, setFargo] = useState(player && player.fargoRating != null ? String(player.fargoRating) : "");
   const [cls, setCls] = useState(player && player.class ? player.class : "");
@@ -813,6 +854,9 @@ function EditRosterEntry({ entry, player, onSave, onRemove, onCancel }) {
       </div>
       <button onClick={save} disabled={!name.trim()} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, opacity: name.trim() ? 1 : 0.5 }}>保存する</button>
       <button onClick={onRemove} style={{ ...menuBtn, background: C.lightRed, color: C.red, fontWeight: 800 }}>この大会の名簿から外す</button>
+      {onDeleteMaster && (
+        <button onClick={onDeleteMaster} style={{ ...menuBtn, background: "#fff", color: C.red, border: `1.5px solid ${C.red}`, fontWeight: 700, marginTop: 4 }}>🗑 選手マスタから完全に削除する（全大会の名簿から消えます）</button>
+      )}
       <button onClick={onCancel} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
     </div>
   );
@@ -1067,8 +1111,9 @@ function MatchDetailScreen({ match, ruleset, roster, onBack, onUpdateMatch }) {
 function App() {
   const [tournaments, setTournaments] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]);
-  const [screen, setScreen] = useState("home"); // "home" | "new" | "tournament"
+  const [screen, setScreen] = useState("home"); // "home" | "new" | "edit" | "tournament"
   const [activeTournament, setActiveTournament] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   useEffect(() => {
     const ref = db.ref("players");
@@ -1108,13 +1153,41 @@ function App() {
     db.ref("tournaments/" + t.tournamentId).set({ ...t, updatedAt: Date.now() });
   };
 
+  const saveTournamentEdit = (t) => {
+    db.ref("tournaments/" + t.tournamentId).set(t);
+    if (activeTournament && activeTournament.tournamentId === t.tournamentId) setActiveTournament(t);
+    setScreen("home");
+    setEditTarget(null);
+  };
+
+  const deleteTournament = (t) => {
+    if (!window.confirm(`「${t.name}」を削除します。この大会の対戦記録もすべて消えます。よろしいですか？`)) return;
+    db.ref("tournaments/" + t.tournamentId).remove();
+    db.ref("matches/" + t.tournamentId).remove();
+    if (activeTournament && activeTournament.tournamentId === t.tournamentId) {
+      setActiveTournament(null);
+      setScreen("home");
+    }
+  };
+
   if (screen === "new") {
     return <NewTournamentScreen onCreate={createTournament} onCancel={() => setScreen("home")} />;
+  }
+  if (screen === "edit" && editTarget) {
+    return <NewTournamentScreen editing={editTarget} onSave={saveTournamentEdit} onCancel={() => { setScreen("home"); setEditTarget(null); }} />;
   }
   if (screen === "tournament" && activeTournament) {
     return <TournamentScreen tournament={activeTournament} allPlayers={allPlayers} onBack={() => setScreen("home")} onUpdateTournament={updateTournament} />;
   }
-  return <HomeScreen tournaments={tournaments} onOpen={(t) => { setActiveTournament(t); setScreen("tournament"); }} onNew={() => setScreen("new")} />;
+  return (
+    <HomeScreen
+      tournaments={tournaments}
+      onOpen={(t) => { setActiveTournament(t); setScreen("tournament"); }}
+      onNew={() => setScreen("new")}
+      onEdit={(t) => { setEditTarget(t); setScreen("edit"); }}
+      onDelete={deleteTournament}
+    />
+  );
 }
 
 try {
