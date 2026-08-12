@@ -2199,13 +2199,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </div>
 
-      {/* 以下は大会当日の流れの順に並べる：① メンバー → ② 予選を組む → ③ 決勝トーナメント */}
-      <Section icon="👥" title="メンバー" sub="名前とレートの登録・並べ替え" note={`${roster.length}人`}>
-        <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
-      </Section>
-
-      <Section icon="⚙️" title="大会の設定" sub="大会名・配信リンク・スコアラー機能">
+      {/* 以下は大会当日の流れの順に並べる：① イベントの設定 → ② 予選を組む（参加者リストを含む） → ③ 決勝トーナメント */}
+      <Section icon="⚙️" title="イベントの設定" sub="試合のフォーマット選択と調整">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
+          <div style={{ ...HELP, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", marginBottom: 14 }}>
+            現在はJCL方式（9ボール・球1点・ファーゴハンデ）のみ対応しています。あずき杯／モスカップ／対抗戦など他形式の切替は今後追加予定です。
+          </div>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>大会名</div>
           <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
             placeholder="例：第◯回 身内杯"
@@ -2238,8 +2237,8 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </Section>
 
-      <Section icon="🎱" title="予選を組む" sub="人数・試合数・時間割から対戦表をつくる">
-        <BulkScheduleTab roster={roster} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
+      <Section icon="🎱" title="予選を組む" sub="参加者リスト・分け方・時間割から対戦表をつくる">
+        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
@@ -3035,7 +3034,7 @@ function perTableRoundRobinGenerate(N) {
   };
 }
 
-function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
+function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roundRobin, onSetRoundRobin }) {
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
@@ -3228,7 +3227,7 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
       )}
 
       {roster.length < players && (
-        <Notice>メンバーが{roster.length}人しかいません。先頭から{players}人分を使うので、メンバータブで人数を確認してください。</Notice>
+        <Notice>参加者リストが{roster.length}人しかいません。先頭から{players}人分を使うので、下の参加者リストで人数を確認してください。</Notice>
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -3243,6 +3242,28 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
         ) : (
           <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
         )}
+      </div>
+
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>👥 参加者リスト</div>
+          <div style={{ fontSize: 12.5, color: C.sub }}>{roster.length}人 / 枠{players}</div>
+        </div>
+        {roster.length !== players && (
+          <button onClick={() => {
+            if (roster.length < players) {
+              const add = players - roster.length;
+              setRoster((rs) => [...rs, ...Array.from({ length: add }, (_, i) => ({ id: nid(), name: `選手${rs.length + i + 1}`, r: "" }))]);
+            } else {
+              const extra = roster.length - players;
+              if (!window.confirm(`参加者リストの末尾${extra}人を削除して枠数（${players}人）に合わせます。よろしいですか？`)) return;
+              setRoster((rs) => rs.slice(0, players));
+            }
+          }} style={{ width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 13.5, fontWeight: 800, padding: "10px 0", cursor: "pointer", fontFamily: FONT, marginBottom: 10 }}>
+            🎯 枠を{players}人に合わせる（{roster.length < players ? `+${players - roster.length}人追加` : `末尾${roster.length - players}人を削除`}）
+          </button>
+        )}
+        <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} />
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: roundRobin ? C.lightBlue : C.zone, border: `1.5px solid ${roundRobin ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
@@ -3311,6 +3332,22 @@ function BulkScheduleTab({ roster, roundRobin, onSetRoundRobin }) {
         )}
       </div>
       )}
+
+      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, opacity: 0.55 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>必ず相手グループと当たる（対抗戦）</div>
+            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>2グループに分け、必ず違うグループの相手とだけ対戦を組みます</div>
+          </div>
+          <button disabled style={{
+            background: C.line, color: C.sub,
+            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+            cursor: "default", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
+          }}>
+            未実装
+          </button>
+        </div>
+      </div>
 
       {result && !result.error && result.usedRelaxed && (
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
