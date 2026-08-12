@@ -1,4 +1,4 @@
-<!-- v2.004 -->
+<!-- v2.005 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.004";
-const BUILD_TIME = "2026-08-12 JCL方式のFargoハンデ自動算出をB1から移植";
+const APP_VERSION = "2.005";
+const BUILD_TIME = "2026-08-12 タイムラインカード操作（対戦者入替・削除・卓変更・個別記録取消・前の状態に戻す）を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -235,6 +235,12 @@ function nameOfNum(rosterNumber, roster) {
   return r ? r.displayName : "？";
 }
 
+// 破壊的な操作（対戦者入替・個別記録削除など）の前にスナップショットを積む。直近10件まで保持
+function pushHistory(match, label) {
+  const hist = (match.history || []).concat([{ events: match.events || [], savedAt: Date.now(), label }]);
+  return hist.slice(-10);
+}
+
 /* ================================================================
    共通UI部品（B1のデザイン言語を踏襲）
    ================================================================ */
@@ -382,6 +388,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
   const [matches, setMatches] = useState([]);
   const [showNewMatch, setShowNewMatch] = useState(false);
   const [activeMatchId, setActiveMatchId] = useState(null);
+  const [matchMenuFor, setMatchMenuFor] = useState(null); // カードメニュー対象のmatchId
 
   useEffect(() => {
     const ref = db.ref("matches/" + tournament.tournamentId);
@@ -398,9 +405,29 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     setActiveMatchId(match.matchId);
   };
 
-  const updateMatchEvents = (matchId, newEvents) => {
-    db.ref("matches/" + tournament.tournamentId + "/" + matchId).update({ events: newEvents, updatedAt: Date.now() });
+  const updateMatch = (matchId, patch) => {
+    db.ref("matches/" + tournament.tournamentId + "/" + matchId).update({ ...patch, updatedAt: Date.now() });
   };
+
+  const deleteMatch = (matchId) => {
+    if (!window.confirm("この対戦を削除します。記録も消えます。よろしいですか？")) return;
+    db.ref("matches/" + tournament.tournamentId + "/" + matchId).remove();
+    setMatchMenuFor(null);
+  };
+
+  const swapMatchPlayers = (match) => {
+    if (!window.confirm("対戦者（青と赤）を入れ替えます。よろしいですか？")) return;
+    const flippedEvents = (match.events || []).map((ev) => ({ ...ev, seat: ev.seat === 1 ? 2 : ev.seat === 2 ? 1 : ev.seat }));
+    updateMatch(match.matchId, {
+      seat1: match.seat2, seat2: match.seat1,
+      target: { seat1: (match.target || {}).seat2 ?? null, seat2: (match.target || {}).seat1 ?? null },
+      firstBreakSeat: match.firstBreakSeat === 1 ? 2 : 1,
+      events: flippedEvents,
+      history: pushHistory(match, "対戦者入れ替え前"),
+    });
+    setMatchMenuFor(null);
+  };
+
 
   const addRosterEntry = (playerId, displayName, rosterNumber) => {
     const roster = [...(tournament.roster || []), { rosterNumber, playerId, displayName }];
@@ -434,7 +461,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
           ruleset={ruleset}
           roster={tournament.roster || []}
           onBack={() => setActiveMatchId(null)}
-          onUpdateEvents={(newEvents) => updateMatchEvents(m.matchId, newEvents)}
+          onUpdateMatch={(patch) => updateMatch(m.matchId, patch)}
         />
       );
     }
@@ -475,8 +502,13 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
               const statusLabel = d.status === "finished" ? "試合終了" : d.status === "inProgress" ? "進行中" : "未開始";
               return (
                 <Card key={m.matchId} onClick={() => setActiveMatchId(m.matchId)} highlight={d.status === "inProgress"}>
-                  <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
-                    T{m.table}{m.roundLabel ? "・" + m.roundLabel : ""}・{statusLabel}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
+                      T{m.table}{m.roundLabel ? "・" + m.roundLabel : ""}・{statusLabel}
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); setMatchMenuFor(m.matchId); }} style={{
+                      background: "none", border: "none", color: C.sub, fontSize: 18, lineHeight: 1, padding: "0 4px", cursor: "pointer",
+                    }}>⋯</button>
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
                     <span style={{ color: d.winnerSeat === 1 ? C.win : C.ink }}>{n1} {cur1}{m.target?.seat1 != null ? " / " + m.target.seat1 : ""}</span>
@@ -494,6 +526,28 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
           <NewMatchForm ruleset={ruleset} tournament={tournament} allPlayers={allPlayers} onCreate={createMatch} onCancel={() => setShowNewMatch(false)} />
         </BottomSheet>
       )}
+      {matchMenuFor && (() => {
+        const m = matches.find((x) => x.matchId === matchMenuFor);
+        if (!m) return null;
+        const n1 = nameOfNum(m.seat1.rosterNumber, tournament.roster);
+        const n2 = nameOfNum(m.seat2.rosterNumber, tournament.roster);
+        return (
+          <BottomSheet title={`${n1} 対 ${n2}`} onClose={() => setMatchMenuFor(null)}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 6 }}>卓を変更する</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+              {(tournament.tables || [1]).map((n) => (
+                <button key={n} onClick={() => { updateMatch(m.matchId, { table: n }); setMatchMenuFor(null); }} style={{
+                  flex: "0 0 auto", minWidth: 44, padding: "10px 0", border: `2px solid ${m.table === n ? C.blue : C.line}`,
+                  background: m.table === n ? C.lightBlue : "#fff", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                }}>{n}</button>
+              ))}
+            </div>
+            <button onClick={() => swapMatchPlayers(m)} style={menuBtn}>🔀 対戦者（青・赤）を入れ替える</button>
+            <button onClick={() => deleteMatch(m.matchId)} style={{ ...menuBtn, background: C.lightRed, color: C.red, fontWeight: 800 }}>🗑 この対戦を削除する</button>
+            <button onClick={() => setMatchMenuFor(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>閉じる</button>
+          </BottomSheet>
+        );
+      })()}
       {showAddPlayer && (
         <BottomSheet title="選手を追加" onClose={() => setShowAddPlayer(false)}>
           <AddPlayerForm existingRoster={tournament.roster || []} allPlayers={allPlayers} onAdd={addRosterEntry} onCancel={() => setShowAddPlayer(false)} />
@@ -797,8 +851,9 @@ function NewMatchForm({ ruleset, tournament, allPlayers, onCreate, onCancel }) {
 /* ================================================================
    画面：対戦スコア入力（ルールセットのscoring.modeごとに入力UIを出し分け）
    ================================================================ */
-function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateEvents }) {
+function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateMatch }) {
   const events = match.events || [];
+  const history = match.history || [];
   // rackWinnerBonus（JCL）方式専用：ラック確定前の未確定球数（ローカルのみ・events化しない）
   const [tally, setTally] = useState({ seat1: 0, seat2: 0 });
   useEffect(() => { setTally({ seat1: 0, seat2: 0 }); }, [match.matchId, events.length]);
@@ -808,7 +863,7 @@ function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateEvents }) {
   const n2 = nameOfNum(match.seat2.rosterNumber, roster);
   const finished = d.status === "finished";
 
-  const commit = (newEvents) => onUpdateEvents(newEvents);
+  const commit = (newEvents) => onUpdateMatch({ events: newEvents });
   const undo = () => { if (events.length > 0) commit(events.slice(0, -1)); };
   const addRackWon = (seat, ballsWonInRack) => {
     commit([...events, { type: "rackWon", seat, ballsWonInRack: ballsWonInRack || 0, ts: Date.now() }]);
@@ -817,6 +872,16 @@ function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateEvents }) {
     const evs = [...events, { type: "ballPocketed", seat, ball, ts: Date.now() }];
     if (ball === 9) evs.push({ type: "rackWon", seat, ts: Date.now() });
     commit(evs);
+  };
+  const deleteEventAt = (idx) => {
+    if (!window.confirm("この記録を削除します。よろしいですか？")) return;
+    onUpdateMatch({ events: events.filter((_, i) => i !== idx), history: pushHistory(match, "個別記録の削除") });
+  };
+  const restoreFromHistory = () => {
+    if (history.length === 0) return;
+    if (!window.confirm("直前に保存した状態に戻します。よろしいですか？")) return;
+    const last = history[history.length - 1];
+    onUpdateMatch({ events: last.events, history: history.slice(0, -1) });
   };
 
   const cur = (key) => (ruleset.scoring.mode === "rackRace" ? d.racks[key] : d.score[key]);
@@ -890,15 +955,24 @@ function MatchScoreScreen({ match, ruleset, roster, onBack, onUpdateEvents }) {
         )}
 
         <button onClick={undo} disabled={events.length === 0} style={{ ...menuBtn, background: C.zone, fontWeight: 700, opacity: events.length === 0 ? 0.5 : 1 }}>↩️ 直前の記録を取り消す</button>
+        {history.length > 0 && (
+          <button onClick={restoreFromHistory} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>🕘 前の状態に戻す（{history[history.length - 1].label}）</button>
+        )}
 
         <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, margin: "18px 0 6px" }}>タイムライン</div>
         {events.length === 0 && <div style={{ color: C.sub, fontSize: 13, textAlign: "center", padding: "10px 0" }}>まだ記録がありません</div>}
-        {events.slice().reverse().map((ev, i) => (
-          <div key={events.length - 1 - i} style={{ fontSize: 13, color: C.ink, padding: "6px 2px", borderBottom: `1px solid ${C.line}` }}>
-            {ev.type === "rackWon" && `● ラック：${ev.seat === 1 ? n1 : n2}${ev.ballsWonInRack != null ? `（${ev.ballsWonInRack}球）` : ""}`}
-            {ev.type === "ballPocketed" && `○ 球：${ev.seat === 1 ? n1 : n2}（${ev.ball === 9 ? "9番・2点" : "1点"}）`}
-          </div>
-        ))}
+        {events.slice().reverse().map((ev, i) => {
+          const idx = events.length - 1 - i;
+          return (
+            <div key={idx} style={{ fontSize: 13, color: C.ink, padding: "6px 2px", borderBottom: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>
+                {ev.type === "rackWon" && `● ラック：${ev.seat === 1 ? n1 : n2}${ev.ballsWonInRack != null ? `（${ev.ballsWonInRack}球）` : ""}`}
+                {ev.type === "ballPocketed" && `○ 球：${ev.seat === 1 ? n1 : n2}（${ev.ball === 9 ? "9番・2点" : "1点"}）`}
+              </span>
+              <button onClick={() => deleteEventAt(idx)} style={{ background: "none", border: "none", color: C.sub, fontSize: 13, cursor: "pointer", padding: "2px 6px" }}>✕</button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
