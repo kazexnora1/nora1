@@ -1,4 +1,4 @@
-<!-- v2.005 -->
+<!-- v2.006 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -41,8 +41,8 @@ const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 /* ========= 表示まわり：B1から踏襲 ========= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "2.005";
-const BUILD_TIME = "2026-08-12 タイムラインカード操作（対戦者入替・削除・卓変更・個別記録取消・前の状態に戻す）を追加";
+const APP_VERSION = "2.006";
+const BUILD_TIME = "2026-08-12 LiveTablePanel（卓タブ）を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -378,6 +378,111 @@ function NewTournamentScreen({ onCreate, onCancel }) {
 }
 
 /* ================================================================
+   画面：テーブルタブ（卓ごとのライブ状況。B1のLiveTablePanelを移植・簡略化）
+   ================================================================ */
+function pickDisplayMatch(matches, ruleset, tableNum) {
+  const forTable = (matches || []).filter((m) => m.table === tableNum);
+  if (forTable.length === 0) return null;
+  const withStatus = forTable.map((m) => ({ m, d: deriveMatch(m, ruleset) }));
+  const inProgress = withStatus.find((x) => x.d.status === "inProgress");
+  if (inProgress) return inProgress.m;
+  const notStarted = withStatus
+    .filter((x) => x.d.status === "notStarted")
+    .sort((a, b) => (a.m.createdAt || 0) - (b.m.createdAt || 0))[0];
+  if (notStarted) return notStarted.m;
+  const finished = withStatus
+    .filter((x) => x.d.status === "finished")
+    .sort((a, b) => (b.m.updatedAt || 0) - (a.m.updatedAt || 0))[0];
+  return finished ? finished.m : null;
+}
+
+function LiveTablePanel({ tableNum, match, ruleset, roster, onOpen }) {
+  const panelBox = {
+    background: "#fff", border: `3px solid ${C.ink}`, borderRadius: 14,
+    padding: "10px 12px", marginBottom: 14, boxSizing: "border-box", cursor: match ? "pointer" : "default",
+  };
+  const tBadge = {
+    display: "inline-block", background: C.ink, color: "#fff", borderRadius: 6,
+    padding: "3px 11px", fontSize: 15, fontWeight: 900, letterSpacing: 2, whiteSpace: "nowrap",
+  };
+
+  if (!match) {
+    return (
+      <div style={{ ...panelBox, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={tBadge}>T{tableNum}</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>予定なし</span>
+      </div>
+    );
+  }
+
+  const d = deriveMatch(match, ruleset);
+  const names = [nameOfNum(match.seat1.rosterNumber, roster), nameOfNum(match.seat2.rosterNumber, roster)];
+  const target = match.target || {};
+  const cur = (key) => (ruleset.scoring.mode === "rackRace" ? d.racks[key] : d.score[key]);
+  const disp = [cur("seat1"), cur("seat2")];
+  const finished = d.status === "finished";
+  const statusTxt = finished ? "試合終了" : d.status === "inProgress" ? "進行中" : "未開始";
+
+  const badgeOf = (seatNum) => {
+    const key = "seat" + seatNum;
+    if (finished) return seatNum === d.winnerSeat ? { t: "勝ち" } : { t: "", gray: true };
+    if (target[key] == null) return null;
+    const rem = target[key] - disp[seatNum - 1];
+    if (rem <= 0) return { t: "達成" };
+    if (ruleset.hillDisplay.enabled && d.isHill) return { t: "ヒル" };
+    return { t: `あと${rem}` };
+  };
+
+  const card = (seatNum) => {
+    const i = seatNum - 1;
+    const pc = seatNum === 1 ? C.blue : C.red;
+    const b = badgeOf(seatNum);
+    const isBrk = d.currentBreakSeat === seatNum && !finished;
+    const isWinner = finished && d.winnerSeat === seatNum;
+    return (
+      <div style={{
+        flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 5px 6px", textAlign: "center", color: "#fff",
+        boxShadow: isWinner ? "0 0 0 3px #FFD54A, inset 0 0 0 3px rgba(255,255,255,0.65)" : isBrk ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
+      }}>
+        <div style={{ fontSize: 16.5, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7, padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names[i]}</div>
+        <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+          {disp[i]}
+          {target["seat" + seatNum] != null && <span style={{ fontSize: 21, fontWeight: 700, opacity: 0.75 }}>/{target["seat" + seatNum]}</span>}
+        </div>
+        <div style={{ height: 24, marginTop: 4, display: "flex", alignItems: "stretch" }}>
+          {b && b.t && (
+            <span style={{
+              flex: 1, minWidth: 0, background: isWinner ? "#FFD54A" : "#fff", color: isWinner ? "#5A4400" : b.gray ? C.sub : pc, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap", padding: "0 2px",
+            }}>{b.t}</span>
+          )}
+        </div>
+        <div style={{ minHeight: 18, marginTop: 4, fontSize: 12.5, fontWeight: 800, letterSpacing: 1, visibility: isBrk ? "visible" : "hidden" }}>● ブレイク</div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={panelBox} onClick={() => onOpen && onOpen(match)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span style={tBadge}>T{tableNum}</span>
+          {match.roundLabel && <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>{match.roundLabel}</span>}
+        </span>
+        <span style={{ fontSize: 14.5, fontWeight: 900, color: C.ink }}>{statusTxt}</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+        {card(1)}
+        {card(2)}
+      </div>
+      {finished && (
+        <div style={{ marginTop: 8, textAlign: "center", fontSize: 16.5, fontWeight: 900, color: "#fff", background: C.win, borderRadius: 8, padding: "3px 0" }}>🏆 {names[d.winnerSeat - 1]} 勝利</div>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
    画面：大会詳細（名簿・対戦一覧の入口。コアループの本体は次段で拡張）
    ================================================================ */
 function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }) {
@@ -471,7 +576,7 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: C.bg, fontFamily: FONT }}>
       <TopBar title={tournament.name} onBack={onBack} />
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff" }}>
-        {[["roster", "名簿"], ["matches", "対戦"]].map(([key, label]) => (
+        {[["roster", "名簿"], ["matches", "対戦"], ["tables", "卓"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={{
             flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: 14.5,
             fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT,
@@ -518,6 +623,13 @@ function TournamentScreen({ tournament, allPlayers, onBack, onUpdateTournament }
               );
             })}
             <button onClick={() => setShowNewMatch(true)} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue, marginTop: 8 }}>＋ 対戦を作る</button>
+          </>
+        )}
+        {tab === "tables" && (
+          <>
+            {(tournament.tables || [1]).map((t) => (
+              <LiveTablePanel key={t} tableNum={t} match={pickDisplayMatch(matches, ruleset, t)} ruleset={ruleset} roster={tournament.roster || []} onOpen={(m) => setActiveMatchId(m.matchId)} />
+            ))}
           </>
         )}
       </div>
