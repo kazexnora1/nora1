@@ -2752,28 +2752,28 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError }) {
       )}
       {roster.length > 0 && (
         <div style={{ display: "flex", gap: 8, marginBottom: 6, padding: "0 2px" }}>
-          <div style={{ flex: 1, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
-          <div style={{ width: 80, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>レート</div>
-          <div style={{ width: 64, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>抽選番号</div>
-          <div style={{ width: 38, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>遅刻</div>
-          <div style={{ width: 40 }} />
+          <div style={{ flex: 2, fontSize: 11, color: C.sub, fontWeight: 700 }}>名前</div>
+          <div style={{ width: 56, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>レート</div>
+          <div style={{ width: 52, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>抽選番号</div>
+          <div style={{ width: 34, fontSize: 11, color: C.sub, fontWeight: 700, textAlign: "center" }}>遅刻</div>
+          <div style={{ width: 34 }} />
         </div>
       )}
       {roster.map((p) => (
-        <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+        <div key={p.id} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
-            style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+            style={{ flex: 2, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 10px", outline: "none", fontFamily: FONT }} />
           <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            style={{ width: 80, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+            style={{ width: 56, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 14, fontWeight: 700, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
           <input inputMode="numeric" value={p.draw || ""} onChange={(e) => update(p.id, "draw", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
             placeholder="―"
-            style={{ width: 64, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 15, fontWeight: 800, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+            style={{ width: 52, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 14, fontWeight: 800, padding: "10px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
           <button onClick={() => update(p.id, "late", !p.late)} title="遅刻予定（試合割りで後の試合になるよう優先的に調整）" style={{
-            width: 38, height: 40, flexShrink: 0, background: p.late ? C.hill : "#fff",
+            width: 34, height: 38, flexShrink: 0, background: p.late ? C.hill : "#fff",
             border: `1.5px solid ${p.late ? C.hill : C.line}`, borderRadius: 10,
-            color: p.late ? "#fff" : C.sub, fontSize: 16, cursor: "pointer",
+            color: p.late ? "#fff" : C.sub, fontSize: 15, cursor: "pointer",
           }}>⏰</button>
-          <button onClick={() => remove(p.id)} style={{ width: 40, height: 40, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
+          <button onClick={() => remove(p.id)} style={{ width: 34, height: 38, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 16, cursor: "pointer" }}>×</button>
         </div>
       ))}
       {roster.length < 40 && (
