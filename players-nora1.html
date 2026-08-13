@@ -348,7 +348,7 @@ function TimelineTab({ myMatchId, onPick }) {
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
       <RivalBanner teamNames={rivalTeamNames} />
       <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
-        <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
+        <RulesButtonAuto style={{ position: "absolute", left: 0, top: -2 }} />
         <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
         <div style={{ height: 8, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 8 }}>
           <div style={{ height: "100%", width: `${total ? Math.round((doneCount / total) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
@@ -624,18 +624,20 @@ function StandingsSheet({ onClose }) {
 
 /* ========= ルールのメモ =========
    本部（B1）の設定に書いた文章を、対戦表とスコアラーの左上のボタンから読めるようにする。
-   config/rules に平文で入っている。空なら何も出さない */
-function useRules() {
+   JCL／あずき杯・モスカップで内容が違うので、config/rules_jcl または config/rules_azuki の
+   どちらかをフォーマットに応じて読む（空なら何も出さない） */
+function useRules(format) {
+  const key = format === "azuki" ? "rules_azuki" : "rules_jcl";
   const [text, setText] = useState("");
   useEffect(() => {
-    const ref = db.ref("config/rules");
+    const ref = db.ref(`config/${key}`);
     const handler = ref.on("value", (snap) => setText(String(snap.val() || "")));
     return () => ref.off("value", handler);
-  }, []);
+  }, [key]);
   return text;
 }
-function RulesButton({ style }) {
-  const text = useRules();
+function RulesButton({ style, format }) {
+  const text = useRules(format);
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
   return (
@@ -668,6 +670,13 @@ function RulesButton({ style }) {
       )}
     </>
   );
+}
+/* 対戦表など、特定の試合に紐づかない画面用。現在の大会全体のフォーマット（config/format）を見て、
+   そのフォーマットのルールメモを出す */
+function RulesButtonAuto({ style }) {
+  const [format, setFormat] = useState("jcl");
+  useEffect(() => subscribeConfig((c) => setFormat(c.format || "jcl")), []);
+  return <RulesButton style={style} format={format} />;
 }
 
 /* このアプリの立場。バナーの投稿を止めるかどうかの判定に使う
@@ -2176,7 +2185,7 @@ function MatchScreen({ setupInfo, onExit }) {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
       {rival && teamNames && <RivalBanner teamNames={teamNames} />}
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ width: 90 }}><RulesButton /></span>
+        <span style={{ width: 90 }}><RulesButton format={setupInfo.format} /></span>
         <div onClick={() => { if (timeLimitEnabled && matchWinner == null && !bothLose) togglePause(); }} style={{
           position: "absolute", left: "50%", transform: "translateX(-50%)",
           display: "flex", alignItems: "center", cursor: timeLimitEnabled && matchWinner == null && !bothLose ? "pointer" : "default",
@@ -2259,7 +2268,9 @@ function MatchScreen({ setupInfo, onExit }) {
                 textShadow: "0 1px 2px rgba(0,0,0,0.35)",
               }}>{pl[i].name}</div>
               <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
-                {disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
+                {/* メインスコアはラック確定分のみ（JCL）。台上の球を含めたライブ更新は下の「現在のラック」表示に任せる。
+                    あずき杯／モスカップは元々の仕様どおり常時ライブ更新のまま */}
+                {ruleset.hillThreshold != null ? tot[i] : disp[i]}<span style={{ fontSize: 20, fontWeight: 700, opacity: 0.75 }}>/{pl[i].raceTo}</span>
               </div>
               {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
               {/* ラックが終わっている間は、次のラックでブレイクする側に「次ブレイク」を出す。
