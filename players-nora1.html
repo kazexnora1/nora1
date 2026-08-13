@@ -1592,6 +1592,7 @@ function Shell() {
         ? [Number(params.get("rt1")), Number(params.get("rt2"))]
         : null,
       table: Number(params.get("t")) || 1,
+      format: params.get("fmt") || "jcl",
     };
   });
   const [tab, setTab] = useState("scorer");
@@ -1608,6 +1609,7 @@ function Shell() {
       lenPct: Number(m.lenPct) || 100,
       raceToParam: Array.isArray(m.raceTo) ? [Number(m.raceTo[0]) || 0, Number(m.raceTo[1]) || 0] : null,
       table: Number(m.table) || 1,
+      format: m.format || "jcl",
     });
   };
   // 選んだ対戦をURLにも書き込んでおく（リロードしても同じ試合に戻れる）
@@ -1621,6 +1623,7 @@ function Shell() {
     url.searchParams.set("r2", info.ratings[1]);
     url.searchParams.set("len", info.lenPct);
     url.searchParams.set("t", info.table);
+    url.searchParams.set("fmt", info.format || "jcl");
     if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
     window.history.replaceState({}, "", url.toString());
     setSetupInfo(info);
@@ -1679,9 +1682,44 @@ function App() {
   return <Shell />;
 }
 
+/* ========= ルールセット定義 =========
+   match.format に基づいてスコアリング・ブレイク・表示を切り替える。
+   デフォルト（未設定）は "jcl"。 */
+const RULESETS = {
+  jcl: {
+    label: "JCL / NORA 1GP",
+    hillThreshold: 14,          // 残りこの点以下でヒル状態
+    breakMode: "alternate",     // 交互ブレイク
+    // 9番確定時の加点計算。winner=0 or 1、balls=台上球配列
+    calcAdd: (balls, w) => {
+      const ll = w === 0 ? "p2" : "p1";
+      const loserPts = balls.filter((x) => x.loc === ll && !x.dead).length;
+      const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+      return add;
+    },
+    // ライブスコア（台上の球から計算）
+    calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length,
+    // 次のブレイク
+    nextBrk: (_lastResult, curBrk) => 1 - curBrk,
+  },
+  azuki: {
+    label: "あずき杯 / モスカップ",
+    hillThreshold: null,        // ヒル概念なし
+    breakMode: "winner",        // 勝者ブレイク
+    calcAdd: (balls, _w) => {
+      const ptsOf = (loc) => balls.filter((x) => x.loc === loc && !x.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0);
+      return [ptsOf("p1"), ptsOf("p2")];
+    },
+    calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0),
+    nextBrk: (lastResult, curBrk) => (lastResult ? lastResult.w : curBrk),
+  },
+};
+const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
+
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo, onExit }) {
   const { matchId, names, lenPct, table } = setupInfo;
+  const ruleset = getRuleset(setupInfo.format); // フォーマットに応じたルールセット（JCL or あずき杯等）
   const [res] = useState(() => setupInfo.raceToParam
     ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
     : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
@@ -1783,10 +1821,13 @@ function MatchScreen({ setupInfo, onExit }) {
 
   const rt = (i) => state.raceTo[i] || 0;
   const { tot, rack, brk, balls, phase, lastResult, hist } = state;
-  const live = [balls.filter((b) => b.loc === "p1" && !b.dead).length, balls.filter((b) => b.loc === "p2" && !b.dead).length];
+  const live = [ruleset.calcLive(balls, "p1"), ruleset.calcLive(balls, "p2")];
   const liveTot = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
-  const hillHill = rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= 14 && rt(1) - tot[1] <= 14;
-  // 得点・目標点・ヒントは台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
+  // hillHillはJCL専用（hillThresholdがnullのモードでは常にfalse）
+  const hillHill = ruleset.hillThreshold != null
+    ? rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= ruleset.hillThreshold && rt(1) - tot[1] <= ruleset.hillThreshold
+    : false;
+  // JCL: ヒルヒル中は確定分のみ表示（9番落とすまで得点確定しないため）。あずき杯: 常時ライブ更新
   const disp = (phase === "play" && !hillHill) ? liveTot : [tot[0], tot[1]];
 
   // ===== 持ち時間タイマー =====
@@ -1870,11 +1911,10 @@ function MatchScreen({ setupInfo, onExit }) {
 
   const finish = (nb, w) => {
     pushUndo();
-    const wl = w === 0 ? "p1" : "p2", ll = w === 0 ? "p2" : "p1";
-    const winnerBalls = nb.filter((x) => x.loc === wl && !x.dead).length;
-    const loserPts = nb.filter((x) => x.loc === ll && !x.dead).length;
-    const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
-    const entry = { rack, w, add, brk, hill: hillHill, winnerBalls, loserPts };
+    const add = ruleset.calcAdd(nb, w);
+    const entry = { rack, w, add, brk, hill: hillHill,
+      winnerBalls: nb.filter((x) => x.loc === (w === 0 ? "p1" : "p2") && !x.dead).length,
+      loserPts: nb.filter((x) => x.loc === (w === 0 ? "p2" : "p1") && !x.dead).length };
     saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
     applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
   };
@@ -1909,7 +1949,7 @@ function MatchScreen({ setupInfo, onExit }) {
   };
   const nextRack = () => {
     pushUndo();
-    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: 1 - s.brk, lastResult: null, phase: "play" }));
+    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: ruleset.nextBrk(s.lastResult, s.brk), lastResult: null, phase: "play" }));
   };
   const undoRack = () => {
     saveMatchHistory(matchId, stateRef.current, "1ラック戻すの前");
@@ -1990,9 +2030,13 @@ function MatchScreen({ setupInfo, onExit }) {
     if (rt(i) <= 0) return { txt: "", on: false };
     const rem = rt(i) - disp[i];
     if (rem <= 0) return { txt: "達成", on: true };
-    // ヒルヒルはこのラックの9番で決まるので、残り点数ではなくその旨を出す
+    if (ruleset.hillThreshold == null) {
+      // あずき杯モード: シンプルに残り点数のみ
+      return rem <= 3 ? { txt: `あと${rem}！`, on: true } : rem <= 5 ? { txt: `あと${rem}`, on: true } : { txt: `あと${rem}`, on: false };
+    }
+    // JCLモード: ヒルヒルはこのラックの9番で決まるので残り点数ではなくその旨を出す
     if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : "9番勝負！", on: true };
-    const toHill = rem - 14;
+    const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
   };
   const col = (loc) => balls.filter((b) => b.loc === loc);
@@ -2143,7 +2187,7 @@ function MatchScreen({ setupInfo, onExit }) {
         })}
       </div>
 
-      {hillHill && matchWinner == null && phase === "play" && (
+      {hillHill && matchWinner == null && phase === "play" && ruleset.hillThreshold != null && (
         <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
           ヒルヒル：このラックで9番を落とした方が勝ち
         </div>
