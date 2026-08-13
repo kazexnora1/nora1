@@ -41,7 +41,7 @@
   });
 </script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 /* ========= ハンデ計算（App Aと共通） ========= */
 function roundHalfToEven(v) {
@@ -299,9 +299,17 @@ function TimelineTab({ myMatchId, onPick }) {
   };
   const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
   const firstVisibleRow = folded ? bracketStart : 0;
+  const rivalTeamNames = useMemo(() => {
+    for (const id in raw) {
+      const m = raw[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [raw]);
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <RivalBanner teamNames={rivalTeamNames} />
       <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
         <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
         <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
@@ -873,6 +881,36 @@ const RULESETS = {
 };
 const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
 
+/* ========= 対抗戦バナー：Aチーム名 vs Bチーム名。対抗戦の試合が1件でもあれば、対戦表・テーブルの各画面上部に表示する ========= */
+function RivalBanner({ teamNames }) {
+  if (!teamNames) return null;
+  return (
+    <div style={{
+      position: "relative", display: "flex", alignItems: "center", borderRadius: 10, overflow: "hidden",
+      marginBottom: 12, fontSize: 14, fontWeight: 800, textAlign: "center",
+    }}>
+      <div style={{ flex: 1, background: C.lightBlue, color: C.blue, padding: "9px 26px 9px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[0]}</div>
+      <div style={{ flex: 1, background: C.lightRed, color: C.red, padding: "9px 10px 9px 26px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[1]}</div>
+      <div style={{
+        position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)",
+        background: C.ink, color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 10.5, fontWeight: 900, letterSpacing: 0.5,
+      }}>VS</div>
+    </div>
+  );
+}
+function RivalBannerAuto() {
+  const [matches, setMatches] = useState({});
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {}), () => {}), []);
+  const teamNames = useMemo(() => {
+    for (const id in matches) {
+      const m = matches[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [matches]);
+  return <RivalBanner teamNames={teamNames} />;
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -1136,9 +1174,17 @@ function TablesTab() {
       return upcoming ? { ...upcoming, tableNum: i + 1 } : null;
     })
     .filter(Boolean);
+  const rivalTeamNames = useMemo(() => {
+    for (const id in matches) {
+      const m = matches[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [matches]);
 
   return (
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      <RivalBanner teamNames={rivalTeamNames} />
       {[0, 1, 2].map((i) => (
         <LiveTablePanel key={i} tableNum={i + 1} m={display[i]} />
       ))}
