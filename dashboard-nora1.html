@@ -1791,11 +1791,6 @@ function BracketTab({ roster, format }) {
   // 2回戦以降は対戦相手がまだ決まらないので「◯回戦①の勝者」という仮の枠（pending）で押さえておき、
   // 前の回戦が終わった時点で名前と目標点を埋める。仮の枠はタイムラインや卓の待機列には出さない
   const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
-  const mkMatch = (extra) => ({
-    version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-    balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-    lastResult: null, hist: [], ...extra,
-  });
 
   const registerAll = async () => {
     if (registering || registeringRef.current) return;
