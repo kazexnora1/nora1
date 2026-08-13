@@ -78,6 +78,10 @@ function computeRace(R1, R2, lenPct) {
 }
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+// このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
+// （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
+const APP_VERSION = "1.001";
+const BUILD_TIME = "2026-08-13 メインスコアのラック単位更新（JCL）・バージョン自動検知";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -677,6 +681,48 @@ function RulesButtonAuto({ style }) {
   const [format, setFormat] = useState("jcl");
   useEffect(() => subscribeConfig((c) => setFormat(c.format || "jcl")), []);
   return <RulesButton style={style} format={format} />;
+}
+
+/* ========= 新しいバージョンの検知 =========
+   サーバー側の仕組みは不要。自分自身のURLをキャッシュ無視で定期的に取りに行き、
+   そこに埋め込まれたAPP_VERSIONの値が今動いているものと違えば「新しいバージョンがあります」と出す。
+   タップで即リロード（対戦選択・進行中のスコアはURLとFirebaseに残っているので、
+   リロードしても同じ試合の続きから開ける）。強制はせず、押すまでは今の画面のまま操作できる */
+function useVersionCheck() {
+  const [newVersion, setNewVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(window.location.pathname + "?_=" + Date.now(), { cache: "no-store" });
+        const text = await res.text();
+        const m = text.match(/const APP_VERSION = "([^"]+)"/);
+        if (!cancelled && m && m[1] && m[1] !== APP_VERSION) setNewVersion(m[1]);
+      } catch {}
+    };
+    check();
+    const iv = setInterval(check, 90000); // 90秒おき
+    const onVis = () => { if (document.visibilityState === "visible") check(); }; // タブに戻ってきた時も確認
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  return newVersion;
+}
+function UpdateBanner() {
+  const newVersion = useVersionCheck();
+  const [dismissed, setDismissed] = useState(false);
+  if (!newVersion || dismissed) return null;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, background: C.blue, color: "#fff",
+      padding: "7px 12px", fontSize: 13, fontWeight: 800, flexShrink: 0,
+    }}>
+      <span onClick={() => window.location.reload()} style={{ flex: 1, cursor: "pointer" }}>
+        🔄 新しいバージョンがあります・タップで更新
+      </span>
+      <span onClick={() => setDismissed(true)} style={{ cursor: "pointer", opacity: 0.85, padding: "0 4px" }}>✕</span>
+    </div>
+  );
 }
 
 /* このアプリの立場。バナーの投稿を止めるかどうかの判定に使う
@@ -1636,6 +1682,7 @@ function ScorerEmpty({ onGoTimeline }) {
         padding: "20px 30px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
         boxShadow: "0 4px 14px rgba(46,109,181,0.3)",
       }}>🗓 対戦表をひらく</button>
+      <div style={{ fontSize: 11.5, color: C.line, marginTop: 26 }}>v{APP_VERSION}</div>
     </div>
   );
 }
@@ -1713,6 +1760,7 @@ function Shell() {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <UpdateBanner />
       <div style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
           <button key={key}
@@ -2111,13 +2159,16 @@ function MatchScreen({ setupInfo, onExit }) {
       return { txt: `あと${rem}`, on: false };
     }
     if (rt(i) <= 0) return { txt: "", on: false };
-    const rem = rt(i) - disp[i];
-    if (rem <= 0) return { txt: "達成", on: true };
     if (ruleset.hillThreshold == null) {
-      // あずき杯モード: シンプルに残り点数のみ
+      // あずき杯モード: シンプルに残り点数のみ、台上の球も含めて常時ライブ更新
+      const rem = rt(i) - disp[i];
+      if (rem <= 0) return { txt: "達成", on: true };
       return rem <= 3 ? { txt: `あと${rem}！`, on: true } : rem <= 5 ? { txt: `あと${rem}`, on: true } : { txt: `あと${rem}`, on: false };
     }
-    // JCLモード: ヒルヒルはこのラックの9番で決まるので残り点数ではなくその旨を出す
+    // JCLモード: メインスコアと同じく、ラックが終わるまでは確定分（tot）だけを見る。台上の球の増減では動かさない
+    const rem = rt(i) - tot[i];
+    if (rem <= 0) return { txt: "達成", on: true };
+    // ヒルヒルはこのラックの9番で決まるので残り点数ではなくその旨を出す
     if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : "9番勝負！", on: true };
     const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
