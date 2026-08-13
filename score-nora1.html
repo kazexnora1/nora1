@@ -77,6 +77,9 @@ function computeRace(R1, R2, lenPct) {
 }
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
+// このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
+const APP_VERSION = "1.000";
+const BUILD_TIME = "2026-08-13 対抗戦バナー・フォーマット別ヒル表記・ラック単位スコア対応";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -980,8 +983,11 @@ function LiveTablePanel({ tableNum, m }) {
   // ヒルヒル＝両者とも残りヒル閾値以下（確定分で判定）。JCLだけの概念で、あずき杯には無い
   const hillHill = !finished && m.phase === "play" && ruleset.hillThreshold != null &&
     raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= ruleset.hillThreshold && raceTo[1] - tot[1] <= ruleset.hillThreshold;
-  // 得点は台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
-  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // 得点は台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める（あずき杯／モスカップ）
+  // JCLはメインスコア・バッジともラック確定分（tot）のみで動かす（台上の球の増減では動かさない）
+  const disp = ruleset.hillThreshold != null
+    ? tot
+    : ((m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot);
 
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
@@ -1287,7 +1293,10 @@ function ProjectorCard({ tableNum, m }) {
   const finished = winner != null || bothLose;
   const hillHill = !finished && m.phase === "play" && ruleset.hillThreshold != null &&
     raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= ruleset.hillThreshold && raceTo[1] - tot[1] <= ruleset.hillThreshold;
-  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // JCLはメインスコアをラック確定分（tot）のみで動かす。あずき杯／モスカップは従来どおり常時ライブ更新
+  const disp = ruleset.hillThreshold != null
+    ? tot
+    : ((m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot);
   const stateTxt = m.pending ? "勝者待ち" : m.phase === "banking" ? "バンキング中" : finished ? "試合終了" : "";
 
   const card = (i) => {
