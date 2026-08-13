@@ -2335,7 +2335,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             チャンネルの /live のURLを入れておくと、当日の配信に自動でつながります
           </div>
 
-          <RulesPanel />
+          <RulesPanel format={format} />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 14px", marginTop: 16 }}>
             <div style={{ minWidth: 0 }}>
@@ -2390,28 +2390,44 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
 
 /* ========= ルールのメモ =========
-   自由に書ける文章。選手側（B2）の対戦表とスコアラーの左上のボタンから読める */
-function RulesPanel() {
+   自由に書ける文章。選手側（B2）の対戦表とスコアラーの左上のボタンから読める。
+   JCL／あずき杯・モスカップでルールが違うので、フォーマットごとに別々に保存する（config/rules_jcl, config/rules_azuki）。
+   まだ切替前の古い文言（config/rules）しか無い場合は、JCL側の初期表示にだけ一度取り込む（保存はユーザーが編集した時） */
+function RulesPanel({ format }) {
+  const key = format === "azuki" ? "rules_azuki" : "rules_jcl";
   const [text, setText] = useState(null);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const timer = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
+    setText(null);
     (async () => {
-      try { const cur = await dbGet("config/rules"); setText(cur == null ? "" : String(cur)); }
-      catch { setText(""); }
+      try {
+        const cur = await dbGet(`config/${key}`);
+        if (cancelled) return;
+        if (cur != null) { setText(String(cur)); return; }
+        if (key === "rules_jcl") {
+          const legacy = await dbGet("config/rules"); // 旧・単一のルール欄からの一度きりの引き継ぎ
+          if (!cancelled) setText(legacy == null ? "" : String(legacy));
+        } else {
+          setText("");
+        }
+      } catch { if (!cancelled) setText(""); }
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [key]);
   const update = (v) => {
     setText(v); setSaved(false);
     clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      try { await dbUpdate("config", { rules: v }); setSaved(true); } catch {}
+      try { await dbUpdate("config", { [key]: v }); setSaved(true); } catch {}
     }, 600);
   };
   useEffect(() => () => clearTimeout(timer.current), []);
   const lines = String(text || "").split("\n").filter((x) => x.trim()).length;
+  const fmtLabel = format === "azuki" ? "あずき杯／モスカップ" : "JCL";
 
   return (
     <div style={{ marginTop: 18 }}>
@@ -2419,7 +2435,7 @@ function RulesPanel() {
         width: "100%", background: "none", border: "none", padding: "2px 0 7px",
         display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: FONT, textAlign: "left",
       }}>
-        <span style={{ fontSize: 16, fontWeight: 800, color: C.ink, flex: 1 }}>ルール設定</span>
+        <span style={{ fontSize: 16, fontWeight: 800, color: C.ink, flex: 1 }}>ルール設定（{fmtLabel}）</span>
         <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>{lines ? `${lines}行` : "未記入"}</span>
         <span style={{ fontSize: 15, color: C.sub }}>{open ? "▲" : "▼"}</span>
       </button>
@@ -2427,7 +2443,8 @@ function RulesPanel() {
         <>
           <div style={{ ...HELP, marginBottom: 8 }}>
             自由に書けます。選手のアプリの対戦表とスコアラーの左上に「📖 ルール」のボタンが出て、
-            ここに書いた内容がそのまま読めます。空にするとボタンは出ません
+            ここに書いた内容がそのまま読めます。空にするとボタンは出ません。
+            JCLとあずき杯／モスカップでそれぞれ別に保存されるので、フォーマットを切り替えるとここの表示も自動で入れ替わります
           </div>
           <textarea value={text == null ? "" : text} onChange={(e) => update(e.target.value)} rows={10}
             placeholder={"例：\n・9番を落とした側がそのラック＋14点\n・持ち時間30分、時間切れの時は最終ラック\n・遅刻は10分まで、それ以降は不戦敗"}
