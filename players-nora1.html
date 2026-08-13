@@ -895,7 +895,7 @@ function rateOfPlayer(m, i) {
    古いラックは直近5件を残して畳む（タップで開閉） */
 const SHOW_RACKS = 5;
 
-function LiveTablePanel({ tableNum, m }) {
+function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
   const [nowTs, setNowTs] = useState(Date.now());
   const [openHist, setOpenHist] = useState(false);
   const [flashing, setFlashing] = useState(false);
@@ -980,8 +980,9 @@ function LiveTablePanel({ tableNum, m }) {
     return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
 
-  // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
+  // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める。時間制限が無効な大会では表示しない
   const clockJsx = (() => {
+    if (!timeLimitEnabled) return null;
     if (m.pending) return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
     if (m.phase === "banking") {
       return <span style={{ fontSize: 13.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
@@ -1138,10 +1139,13 @@ function pickDisplayMatch(matches, tableNum) {
 function TablesTab() {
   const [matches, setMatches] = useState({});
   const [err, setErr] = useState(null);
+  const [config, setConfig] = useState({});
 
   useEffect(() => subscribeAllMatches(
     (m) => { setMatches(m || {}); setErr(null); },
     (e) => setErr(e)), []);
+  useEffect(() => subscribeConfig(setConfig), []);
+  const timeLimitEnabled = config.timeLimitEnabled === "true" || config.timeLimitEnabled === true;
 
   const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
@@ -1160,7 +1164,7 @@ function TablesTab() {
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
       <RivalBanner teamNames={rivalTeamNames} />
       {[0, 1, 2].map((i) => (
-        <LiveTablePanel key={i} tableNum={i + 1} m={display[i]} />
+        <LiveTablePanel key={i} tableNum={i + 1} m={display[i]} timeLimitEnabled={timeLimitEnabled} />
       ))}
       <NextList matches={nextMatches} />
       {err && <div style={{ textAlign: "center", fontSize: 13, color: C.minus, marginTop: 12 }}>同期エラー: {err}</div>}
@@ -1787,6 +1791,11 @@ function MatchScreen({ setupInfo, onExit }) {
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [nowTs, setNowTs] = useState(Date.now());
+  const [config, setConfig] = useState({});
+  useEffect(() => subscribeConfig(setConfig), []);
+  // 時間制限を設けるかどうかは運営（B1）が大会中いつでも切り替えられる共有設定。
+  // デフォルトはOFF（ファーゴレートのボールハンデで進行調整するため）
+  const timeLimitEnabled = config.timeLimitEnabled === "true" || config.timeLimitEnabled === true;
   useEffect(() => {
     const iv = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(iv);
@@ -2025,7 +2034,7 @@ function MatchScreen({ setupInfo, onExit }) {
     pushUndo();
     applyLocal((s) => {
       const now = Date.now();
-      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: now + matchDurationMs(s), finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
+      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: timeLimitEnabled ? now + matchDurationMs(s) : null, finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
     });
   };
   const backToSetup = () => {
@@ -2066,7 +2075,7 @@ function MatchScreen({ setupInfo, onExit }) {
     applyLocal((s) => {
       if (s.startedAt) return { ...s, brk: i, phase: "play" };
       const now = Date.now();
-      return { ...s, brk: i, phase: "play", startedAt: now, deadline: now + matchDurationMs(s) };
+      return { ...s, brk: i, phase: "play", startedAt: now, deadline: timeLimitEnabled ? now + matchDurationMs(s) : null };
     });
   };
 
@@ -2143,8 +2152,14 @@ function MatchScreen({ setupInfo, onExit }) {
           目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
         </div>
         <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
-          持ち時間 <b style={{ fontSize: 20, color: TEST_SEC ? C.minus : C.ink }}>{TEST_SEC ? `${TEST_SEC}秒` : `${state.matchMinutes || DEFAULT_MATCH_MINUTES}分`}</b>（先攻を選んだ時点から計測開始）
-          {TEST_SEC ? <span style={{ color: C.minus, fontWeight: 800 }}>　※動作確認モード</span> : null}
+          {timeLimitEnabled ? (
+            <>
+              持ち時間 <b style={{ fontSize: 20, color: TEST_SEC ? C.minus : C.ink }}>{TEST_SEC ? `${TEST_SEC}秒` : `${state.matchMinutes || DEFAULT_MATCH_MINUTES}分`}</b>（先攻を選んだ時点から計測開始）
+              {TEST_SEC ? <span style={{ color: C.minus, fontWeight: 800 }}>　※動作確認モード</span> : null}
+            </>
+          ) : (
+            <>時間制限なし（進行が大きく遅れた場合は、運営の判断で途中から時間制限を設定できます）</>
+          )}
         </div>
         <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.7 }}>もう1台で同じ試合を開くときは、その端末の「対戦表」から同じカードを押してください</div>
         {syncStatus && !syncStatus.ok && <div style={{ marginTop: 10, fontSize: 12, color: C.minus }}>✗ 同期エラー: {syncStatus.err}</div>}
@@ -2157,13 +2172,13 @@ function MatchScreen({ setupInfo, onExit }) {
       {rival && teamNames && <RivalBanner teamNames={teamNames} />}
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ width: 90 }}><RulesButton /></span>
-        <div onClick={() => { if (matchWinner == null && !bothLose) togglePause(); }} style={{
+        <div onClick={() => { if (timeLimitEnabled && matchWinner == null && !bothLose) togglePause(); }} style={{
           position: "absolute", left: "50%", transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", cursor: matchWinner == null && !bothLose ? "pointer" : "default",
+          display: "flex", alignItems: "center", cursor: timeLimitEnabled && matchWinner == null && !bothLose ? "pointer" : "default",
           fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
           color: matchWinner != null ? C.sub : paused ? C.hill : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
         }}>
-          {matchWinner == null && isTimeUp ? (
+          {!timeLimitEnabled ? null : matchWinner == null && isTimeUp ? (
             <span>時間切れ</span>
           ) : (
             <>
@@ -2180,7 +2195,7 @@ function MatchScreen({ setupInfo, onExit }) {
               background: paused ? C.hillBg : "#fff", border: `1px solid ${paused ? C.hill : C.line}`,
               borderRadius: 8, padding: "3px 8px", fontSize: 12, fontWeight: 800,
               color: paused ? C.hill : C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
-            }}>{paused ? "⏸ 停止中" : "⏱ タイマー設定"}</button>
+            }}>{!timeLimitEnabled ? "⋯ メニュー" : paused ? "⏸ 停止中" : "⏱ タイマー設定"}</button>
           )}
           <span style={{ fontSize: 12.5, color: C.sub }}>T{table}・第 {rack} ラック {syncStatus && !syncStatus.ok ? "（同期エラー）" : ""}</span>
         </div>
@@ -2193,19 +2208,23 @@ function MatchScreen({ setupInfo, onExit }) {
             borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
           }}>
             <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 14px" }} />
-            <div style={{ fontSize: 16, fontWeight: 900, textAlign: "center", marginBottom: 4 }}>タイマー設定</div>
-            <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 }}>
-              時間の表示をタップすると一時停止・再開できます（{paused ? "現在：一時停止中" : "現在：動作中"}）
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 }}>持ち時間を延長</div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              {[1, 3, 5].map((min) => (
-                <button key={min} onClick={() => addTime(min)} style={{
-                  flex: 1, background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10,
-                  padding: "11px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-                }}>+{min}分</button>
-              ))}
-            </div>
+            <div style={{ fontSize: 16, fontWeight: 900, textAlign: "center", marginBottom: 4 }}>{timeLimitEnabled ? "タイマー設定" : "メニュー"}</div>
+            {timeLimitEnabled && (
+              <>
+                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 }}>
+                  時間の表示をタップすると一時停止・再開できます（{paused ? "現在：一時停止中" : "現在：動作中"}）
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 }}>持ち時間を延長</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  {[1, 3, 5].map((min) => (
+                    <button key={min} onClick={() => addTime(min)} style={{
+                      flex: 1, background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10,
+                      padding: "11px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                    }}>+{min}分</button>
+                  ))}
+                </div>
+              </>
+            )}
             <button onClick={stepDown} style={{
               width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, color: C.minus, borderRadius: 12,
               padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 8,
