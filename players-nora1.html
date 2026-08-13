@@ -1593,6 +1593,8 @@ function Shell() {
         : null,
       table: Number(params.get("t")) || 1,
       format: params.get("fmt") || "jcl",
+      rival: params.get("rv") === "1",
+      teamNames: params.get("ta") && params.get("tb") ? [params.get("ta"), params.get("tb")] : null,
     };
   });
   const [tab, setTab] = useState("scorer");
@@ -1610,6 +1612,8 @@ function Shell() {
       raceToParam: Array.isArray(m.raceTo) ? [Number(m.raceTo[0]) || 0, Number(m.raceTo[1]) || 0] : null,
       table: Number(m.table) || 1,
       format: m.format || "jcl",
+      rival: !!m.rival,
+      teamNames: Array.isArray(m.teamNames) ? m.teamNames : null,
     });
   };
   // 選んだ対戦をURLにも書き込んでおく（リロードしても同じ試合に戻れる）
@@ -1625,6 +1629,13 @@ function Shell() {
     url.searchParams.set("t", info.table);
     url.searchParams.set("fmt", info.format || "jcl");
     if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
+    if (info.rival && info.teamNames) {
+      url.searchParams.set("rv", "1");
+      url.searchParams.set("ta", info.teamNames[0]);
+      url.searchParams.set("tb", info.teamNames[1]);
+    } else {
+      url.searchParams.delete("rv"); url.searchParams.delete("ta"); url.searchParams.delete("tb");
+    }
     window.history.replaceState({}, "", url.toString());
     setSetupInfo(info);
     setTab("scorer");
@@ -1719,6 +1730,8 @@ const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo, onExit }) {
   const { matchId, names, lenPct, table } = setupInfo;
+  const rival = !!setupInfo.rival;
+  const teamNames = setupInfo.teamNames;
   const ruleset = getRuleset(setupInfo.format); // フォーマットに応じたルールセット（JCL or あずき杯等）
   const [res] = useState(() => setupInfo.raceToParam
     ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
@@ -2088,6 +2101,15 @@ function MatchScreen({ setupInfo, onExit }) {
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
+      {rival && teamNames && (
+        <div style={{
+          display: "flex", alignItems: "center", borderRadius: 10, overflow: "hidden",
+          marginBottom: 8, fontSize: 13.5, fontWeight: 800, textAlign: "center",
+        }}>
+          <div style={{ flex: 1, background: C.lightBlue, color: C.blue, padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[0]}</div>
+          <div style={{ flex: 1, background: C.lightRed, color: C.red, padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[1]}</div>
+        </div>
+      )}
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ width: 90 }}><RulesButton /></span>
         <div onClick={() => { if (matchWinner == null && !bothLose) togglePause(); }} style={{
