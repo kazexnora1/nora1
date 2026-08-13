@@ -336,9 +336,17 @@ function TimelineTab({ myMatchId, onPick }) {
   };
   const rowStarted = (si) => [0, 1, 2].some((ti) => cols[ti][si] && cols[ti][si].m.startedAt);
   const firstVisibleRow = folded ? bracketStart : 0;
+  const rivalTeamNames = useMemo(() => {
+    for (const id in raw) {
+      const m = raw[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [raw]);
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink, fontFamily: FONT }}>
+      <RivalBanner teamNames={rivalTeamNames} />
       <div style={{ position: "relative", textAlign: "center", marginBottom: 14 }}>
         <RulesButton style={{ position: "absolute", left: 0, top: -2 }} />
         <div style={{ fontSize: 18, color: C.ink, fontWeight: 800 }}>終了 {doneCount} / 全{total}試合</div>
@@ -1140,9 +1148,17 @@ function TablesTab() {
   const nextMatches = queues
     .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
     .filter(Boolean);
+  const rivalTeamNames = useMemo(() => {
+    for (const id in matches) {
+      const m = matches[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [matches]);
 
   return (
     <div style={{ padding: "16px 12px 32px", fontFamily: FONT }}>
+      <RivalBanner teamNames={rivalTeamNames} />
       {[0, 1, 2].map((i) => (
         <LiveTablePanel key={i} tableNum={i + 1} m={display[i]} />
       ))}
@@ -1559,9 +1575,40 @@ function ScheduleTab({ onPick }) {
 /* ========= スコアラー未選択の画面 =========
    以前はQRを読み取って対戦を特定していたが、対戦表のカードから直接入る方式に変更した。
    カメラの許可も外部ライブラリも要らず、会場の明るさにも左右されない */
+/* ========= 対抗戦バナー：Aチーム名 vs Bチーム名。対抗戦の試合が1件でもあれば、対戦表・テーブル・スコアラーの各画面上部に表示する ========= */
+function RivalBanner({ teamNames }) {
+  if (!teamNames) return null;
+  return (
+    <div style={{
+      position: "relative", display: "flex", alignItems: "center", borderRadius: 10, overflow: "hidden",
+      marginBottom: 12, fontSize: 14, fontWeight: 800, textAlign: "center",
+    }}>
+      <div style={{ flex: 1, background: C.lightBlue, color: C.blue, padding: "9px 26px 9px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[0]}</div>
+      <div style={{ flex: 1, background: C.lightRed, color: C.red, padding: "9px 10px 9px 26px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[1]}</div>
+      <div style={{
+        position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)",
+        background: C.ink, color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 10.5, fontWeight: 900, letterSpacing: 0.5,
+      }}>VS</div>
+    </div>
+  );
+}
+function RivalBannerAuto() {
+  const [matches, setMatches] = useState({});
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {}), () => {}), []);
+  const teamNames = useMemo(() => {
+    for (const id in matches) {
+      const m = matches[id];
+      if (m && m.rival && Array.isArray(m.teamNames) && m.teamNames[0] && m.teamNames[1]) return m.teamNames;
+    }
+    return null;
+  }, [matches]);
+  return <RivalBanner teamNames={teamNames} />;
+}
+
 function ScorerEmpty({ onGoTimeline }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "64px 24px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <RivalBannerAuto />
       <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 10 }}>担当する試合を選んでください</div>
       <div style={{ fontSize: 14, color: C.sub, marginBottom: 28, lineHeight: 1.8 }}>
         「対戦表」で、呼び出し中または試合中のカードを押すと、この画面でその試合のスコアを付けられます。
@@ -2101,15 +2148,7 @@ function MatchScreen({ setupInfo, onExit }) {
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
-      {rival && teamNames && (
-        <div style={{
-          display: "flex", alignItems: "center", borderRadius: 10, overflow: "hidden",
-          marginBottom: 8, fontSize: 13.5, fontWeight: 800, textAlign: "center",
-        }}>
-          <div style={{ flex: 1, background: C.lightBlue, color: C.blue, padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[0]}</div>
-          <div style={{ flex: 1, background: C.lightRed, color: C.red, padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{teamNames[1]}</div>
-        </div>
-      )}
+      {rival && teamNames && <RivalBanner teamNames={teamNames} />}
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ width: 90 }}><RulesButton /></span>
         <div onClick={() => { if (matchWinner == null && !bothLose) togglePause(); }} style={{
