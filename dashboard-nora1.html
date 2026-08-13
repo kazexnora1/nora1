@@ -549,7 +549,7 @@ function saveSettings(patch) {
   // 時間割に関わる値だけは共有側にも書いておく。
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
-  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format"].forEach((k) => {
+  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format", "timeLimitEnabled"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
@@ -1723,6 +1723,17 @@ function BracketTab({ roster, format }) {
   const basePct = parseInt(s0.lenPct, 10) || 100;
   const per100 = parseInt(s0.per100Min, 10) || 60;
   const changeover = parseInt(s0.changeoverMin, 10) || 5;
+  // あずき杯／モスカップ用：ファーゴハンデを使わないので、回戦ごとに固定の目標点を使う
+  // （決勝＝azukiFinal、準決勝＝azukiSemi、それより前の回戦＝azukiQuarter。4人開催なら準決勝と決勝の2段階のみ使う）
+  const azukiQuarter = parseInt(s0.azukiQuarter, 10) || 25;
+  const azukiSemi = parseInt(s0.azukiSemi, 10) || 30;
+  const azukiFinal = parseInt(s0.azukiFinal, 10) || 40;
+  const azukiTargetFor = (r, total) => {
+    const distFromFinal = total - r;
+    if (distFromFinal <= 0) return azukiFinal;
+    if (distFromFinal === 1) return azukiSemi;
+    return azukiQuarter;
+  };
   const defaultPctFor = (r, total) => Math.min(140, basePct + (r === total ? 30 : r === total - 1 ? 15 : 0));
   const [pcts, setPcts] = useState(() => [1, 2, 3].map((r) => defaultPctFor(r, 3)));
   const d0 = useMemo(() => defaultSchedule(), []);
@@ -1874,7 +1885,9 @@ function BracketTab({ roster, format }) {
           if (r === 1) {
             const p1 = players[i * 2], p2 = players[i * 2 + 1];
             const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
-            const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, plan.pct) : { rt1: 0, rt2: 0 };
+            const race = fmt === "azuki"
+              ? { rt1: azukiTargetFor(r, total), rt2: azukiTargetFor(r, total) }
+              : (R1 > 0 && R2 > 0 ? computeRace(R1, R2, plan.pct) : { rt1: 0, rt2: 0 });
             next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2 });
           } else {
             const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
@@ -1925,7 +1938,9 @@ function BracketTab({ roster, format }) {
         const p1 = winners[i * 2], p2 = winners[i * 2 + 1];
         const ph = placeholders.find((m) => m.bracketPos === i);
         const pct = ph ? (ph.lenPct || plan.pct) : plan.pct;
-        const race = p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, pct) : { rt1: 0, rt2: 0 };
+        const race = fmt === "azuki"
+          ? { rt1: azukiTargetFor(nextRound, totalRounds), rt2: azukiTargetFor(nextRound, totalRounds) }
+          : (p1.r > 0 && p2.r > 0 ? computeRace(p1.r, p2.r, pct) : { rt1: 0, rt2: 0 });
         if (ph) {
           // まとめて登録した仮の枠を埋める。卓・予定時刻・試合の長さはそのまま活かす
           if (nextRound === totalRounds && Number(ph.table) !== 1) next[ph.id + "/table"] = 1; // 決勝はT1
@@ -2219,6 +2234,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [liveUrl, setLiveUrl] = useState(() => loadSettings().liveUrl || "");
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
   const [format, setFormat] = useState(() => loadSettings().format || "jcl");
+  const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
 
   const updateFormat = (v) => { setFormat(v); saveSettings({ format: v }); };
   const updateTournamentName = (v) => {
@@ -2234,6 +2250,13 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
     const next = !refereeEnabled;
     setRefereeEnabled(next);
     saveSettings({ refereeEnabled: next });
+  };
+  // 時間制限：デフォルトはOFF（ファーゴレートのボールハンデで進行調整するため）。
+  // 大会中いつでも切り替えでき、B2側にはFirebase共有設定として即時反映される
+  const toggleTimeLimitEnabled = () => {
+    const next = !timeLimitEnabled;
+    setTimeLimitEnabled(next);
+    saveSettings({ timeLimitEnabled: next });
   };
 
   return (
@@ -2276,6 +2299,28 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             </div>
             <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングでフォーマットが各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
           </div>
+
+          <div style={{ background: timeLimitEnabled ? C.lightBlue : C.zone, border: `1.5px solid ${timeLimitEnabled ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>⏱ 時間制限を設ける</div>
+                <div style={{ fontSize: 13.5, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
+                  デフォルトはOFF（ファーゴレート・JPAスキルのハンデで進行調整するため）。進行が大きく遅れた時だけ、ここでONにすると以後スコアラー画面に時間制限が反映されます
+                </div>
+              </div>
+              <button onClick={toggleTimeLimitEnabled} style={{
+                background: timeLimitEnabled ? C.blue : C.line, color: timeLimitEnabled ? "#fff" : C.sub,
+                border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+                cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
+              }}>
+                {timeLimitEnabled ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ ...HELP, marginTop: 8 }}>
+              ONにした時点で進行中の試合は変わりません。以後、新しく先攻を選んだ試合から時間制限が始まります（持ち時間は「予選を組む」の時間設定に従います）。
+            </div>
+          </div>
+
           <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>大会名</div>
           <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
             placeholder="例：第◯回 身内杯"
@@ -3149,13 +3194,18 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const [rivalA, setRivalA] = useState(s0.rivalA || Math.ceil((s0.players || 12) / 2));
   const [rivalNameA, setRivalNameA] = useState(s0.rivalNameA || "Aチーム");
   const [rivalNameB, setRivalNameB] = useState(s0.rivalNameB || "Bチーム");
+  // あずき杯／モスカップ用：ファーゴハンデを使わないため、時間設定の代わりに回戦ごとの目標点を持つ
+  const [azukiPrelim, setAzukiPrelim] = useState(s0.azukiPrelim || 12);
+  const [azukiQuarter, setAzukiQuarter] = useState(s0.azukiQuarter || 25);
+  const [azukiSemi, setAzukiSemi] = useState(s0.azukiSemi || 30);
+  const [azukiFinal, setAzukiFinal] = useState(s0.azukiFinal || 40);
 
   const perTableEligible = players % 3 === 0 && players / 3 >= 2;
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal]);
   // 「テーブル毎に総当たり」は人数が3で割り切れる時だけ使える。対象外になったら自動でOFFにする
   useEffect(() => {
     if (perTableRR && !perTableEligible) setPerTableRR(false);
@@ -3262,11 +3312,13 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       const p1 = roster[m.a - 1] || { name: `選手${m.a}`, r: "" };
       const p2 = roster[m.b - 1] || { name: `選手${m.b}`, r: "" };
       const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
-      const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 };
+      const race = fmt === "azuki"
+        ? { rt1: azukiPrelim, rt2: azukiPrelim }
+        : (R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 });
       const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
       return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
     });
-  }, [result, roster, lenPct, per100Min]);
+  }, [result, roster, lenPct, per100Min, fmt, azukiPrelim]);
 
   const grid = useMemo(() => {
     if (!rows) return null;
@@ -3487,21 +3539,40 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
       )}
 
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>ロングゲームの時間設定</span>
-          <span style={{ fontSize: 16, fontWeight: 800 }}>🎱100%（{per100Min}分）</span>
-        </div>
-        <input type="range" min={10} max={180} step={5} value={per100Min || 60} onChange={(e) => setPer100Min(e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-      </div>
+      {fmt === "jcl" ? (
+        <>
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>ロングゲームの時間設定</span>
+              <span style={{ fontSize: 16, fontWeight: 800 }}>🎱100%（{per100Min}分）</span>
+            </div>
+            <input type="range" min={10} max={180} step={5} value={per100Min || 60} onChange={(e) => setPer100Min(e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+          </div>
 
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>ショートゲームの割合設定</span>
-          <span style={{ fontSize: 16, fontWeight: 800 }}>🎱{lenPct}%（{Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100))}分）</span>
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>ショートゲームの割合設定</span>
+              <span style={{ fontSize: 16, fontWeight: 800 }}>🎱{lenPct}%（{Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100))}分）</span>
+            </div>
+            <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+          </div>
+        </>
+      ) : (
+        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>目標点の設定（あずき杯 / モスカップ）</div>
+          <div style={{ fontSize: 13, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
+            ファーゴハンデを使わないため、回戦ごとに目標点を固定で設定します。予選はここで組む対戦に、準々決勝・準決勝・決勝は決勝トーナメントで使われます（4人開催の時は準々決勝は使いません）。
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <BulkStepper label="予選" value={azukiPrelim} min={1} max={50} onChange={setAzukiPrelim} />
+            <BulkStepper label="準々決勝" value={azukiQuarter} min={1} max={50} onChange={setAzukiQuarter} />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <BulkStepper label="準決勝" value={azukiSemi} min={1} max={50} onChange={setAzukiSemi} />
+            <BulkStepper label="決勝" value={azukiFinal} min={1} max={50} onChange={setAzukiFinal} />
+          </div>
         </div>
-        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-      </div>
+      )}
 
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 10 }}>時間割</div>
