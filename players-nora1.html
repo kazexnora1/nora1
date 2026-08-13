@@ -948,15 +948,16 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
+  const ruleset = getRuleset(m.format); // フォーマットに応じたルールセット（JCL or あずき杯等）。あずき杯にはヒル概念が無い
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
     : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
     : reached[0] ? 0 : reached[1] ? 1 : null;
   const finished = winner != null || bothLose;
-  // ヒルヒル＝両者とも残り14点以下（確定分で判定）。このラックの9番で決まるので、残り点数は出さない
-  const hillHill = !finished && m.phase === "play" &&
-    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
+  // ヒルヒル＝両者とも残りヒル閾値以下（確定分で判定）。JCLだけの概念で、あずき杯には無い
+  const hillHill = !finished && m.phase === "play" && ruleset.hillThreshold != null &&
+    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= ruleset.hillThreshold && raceTo[1] - tot[1] <= ruleset.hillThreshold;
   // 得点は台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
   const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
 
@@ -973,10 +974,14 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
       const rem = Math.max(0, raceTo[i] - disp[i]);
       return { t: `あと${rem}`, gray: true };
     }
-    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
-    const toHill = rem - 14;
+    if (ruleset.hillThreshold == null) {
+      // あずき杯／モスカップ：ヒル概念が無いので、最初から最後まで「あと◯」表記で統一する
+      return { t: `あと${rem}` };
+    }
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
 
@@ -1015,10 +1020,10 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
           fontSize: 15, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
-        {/* ファーゴレート。数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。
-            運営が暫定で決めた人もいるので、無い時は出さない */}
+        {/* ファーゴレート。JCLのみ表示（あずき杯／モスカップはファーゴレートを使わないため出さない）。
+            数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。運営が暫定で決めた人もいるので、無い時も出さない */}
         <div style={{ minHeight: 17, marginBottom: 2, display: "flex", alignItems: "baseline", justifyContent: "center", gap: 2 }}>
-          {rateOfPlayer(m, i) && (
+          {ruleset.hillThreshold != null && rateOfPlayer(m, i) && (
             <>
               <span style={{ fontSize: 10, fontWeight: 800, opacity: 0.6 }}>FR</span>
               <span style={{ fontSize: 15, fontWeight: 900, letterSpacing: 0.4, fontVariantNumeric: "tabular-nums", opacity: 0.95 }}>
