@@ -467,6 +467,33 @@ function buildStandings(matches, roster, scope) {
 }
 const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
 
+// 対抗戦（団体戦）成績集計：m.rival && m.teamNames が付いた試合だけを対象に、チーム名ごとに勝敗・得失点を集計する。
+// names[0]側が常にteamNames[0]（Aチーム）、names[1]側が常にteamNames[1]（Bチーム）
+function buildTeamStandings(matches) {
+  const stats = {};
+  const ensure = (name) => {
+    if (!stats[name]) stats[name] = { name, win: 0, loss: 0, pf: 0, pa: 0 };
+    return stats[name];
+  };
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || !m.rival || !Array.isArray(m.teamNames) || !m.teamNames[0] || !m.teamNames[1]) continue;
+    if (!isMatchFinished(m)) continue;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    const tot = m.tot || [0, 0];
+    const w = matchWinnerIndex(m); // null なら両者負け（時間切れ）
+    const sa = ensure(m.teamNames[0]);
+    const sb = ensure(m.teamNames[1]);
+    sa.pf += tot[0] || 0; sa.pa += tot[1] || 0;
+    sb.pf += tot[1] || 0; sb.pa += tot[0] || 0;
+    if (w === 0) sa.win++; else sa.loss++;
+    if (w === 1) sb.win++; else sb.loss++;
+  }
+  const rows = Object.values(stats).map((s) => ({ ...s, played: s.win + s.loss, diff: s.pf - s.pa }));
+  rows.sort((a, b) => (b.win !== a.win ? b.win - a.win : (b.pf - b.pa) - (a.pf - a.pa)));
+  return rows;
+}
+
 // 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら達成率）を並べる。
 // 「戦績（対戦相手つき）」PC表示用
 function buildDetailedStandings(matches, roster, scope) {
@@ -1273,6 +1300,7 @@ function StandingsTab() {
 
   const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
   const rows = buildStandings(matches, roster, "prelim");
+  const teamRows = useMemo(() => buildTeamStandings(matches), [matches]);
 
   return (
     <div style={{ padding: "16px 12px 32px", color: C.ink }}>
@@ -1281,6 +1309,25 @@ function StandingsTab() {
         <BracketReadOnlyView matches={matches} />
       ) : (
         <>
+      {teamRows.length > 0 && (
+        <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 10 }}>🏳️ 団体戦成績（対抗戦）</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 40px 40px 64px", gap: 6, padding: "0 4px 6px", fontSize: 12.5, color: C.sub, fontWeight: 800 }}>
+            <div>チーム</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>得失点</div>
+          </div>
+          {teamRows.map((t) => (
+            <div key={t.name} style={{
+              display: "grid", gridTemplateColumns: "1fr 40px 40px 64px", gap: 6, alignItems: "center",
+              background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 10px", marginBottom: 6,
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+              <div style={{ textAlign: "center", fontSize: 18, fontWeight: 900, color: C.win }}>{t.win}</div>
+              <div style={{ textAlign: "center", fontSize: 18, fontWeight: 800, color: C.sub }}>{t.loss}</div>
+              <div style={{ textAlign: "right", fontSize: 15, fontWeight: 800, color: C.ink }}>{t.diff > 0 ? `+${t.diff}` : t.diff}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 12px 8px", fontSize: 14.5, color: C.sub, fontWeight: 800 }}>
         <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
       </div>
@@ -2865,7 +2912,7 @@ function groupOf(x, groupSizes) {
    小さく抑える（そのまま乗せると終盤のコマ数不足で手詰まりを起こし、組めなくなることがあるため） */
 const LATE_WEIGHT = 4000;
 const LATE_SCORE_CAP = 8;
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, lateSet) {
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, lateSet, rivalTeamA) {
   const { total, slots, sizes } = plan;
   const pos = [];
   for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
@@ -2909,8 +2956,22 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
       if (deg[a] >= G || here.has(a)) continue;
       for (let b = a + 1; b <= N; b++) {
         if (deg[b] >= G || here.has(b) || used.has(a * 32 + b)) continue;
+        // 対抗戦：同チームの組み合わせは候補にすら入れない（ソフトなペナルティではなく完全除外）
+        if (rivalTeamA && (a <= rivalTeamA) === (b <= rivalTeamA)) continue;
         let matchCost = 0, carryFlag = false, ok = true;
-        if (groupSizes) {
+        if (rivalTeamA) {
+          // 同チーム対戦は上で除外済みなので、連投（キャリー）だけを「グループを避けて組む」と同じ緩さで扱う
+          let carryPenalty = 0;
+          for (const x of [a, b]) {
+            if (prev && prev.has(x)) {
+              if (back && back.has(x)) { ok = false; break; }
+              carryPenalty += prev.get(x) === t ? 1 : 3;
+            }
+          }
+          if (!ok) continue;
+          matchCost = carryPenalty;
+          carryFlag = carryPenalty > 0;
+        } else if (groupSizes) {
           // グループを避けて組む場合：3連戦（3コマ連続で同一人物）は常に禁止。
           // 連戦そのもの（2連続）は許容し、同卓なら軽いペナルティ・別卓なら重いペナルティにする
           let carryPenalty = 0;
@@ -2948,7 +3009,7 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
         }
         const totalCost = matchCost + lateCost;
         if (cost + totalCost >= ceiling) continue;
-        const scoreCost = groupSizes ? matchCost * 100 : matchCost * 1000;
+        const scoreCost = (groupSizes || rivalTeamA) ? matchCost * 100 : matchCost * 1000;
         const lateScoreNudge = Math.min(lateCost, LATE_SCORE_CAP);
         cands.push({ a, b, cost: totalCost, carryFlag, score: scoreCost - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 + lateScoreNudge });
       }
@@ -2963,6 +3024,7 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
       board.push({
         slot: s, table: t, a: c.a, b: c.b, carry: c.carryFlag ? 1 : 0,
         sameGroup: !!(groupSizes && groupOf(c.a, groupSizes) === groupOf(c.b, groupSizes)),
+        rival: !!rivalTeamA,
       });
       if (t !== sizes[s] - 1 || viable(s)) { if (walk(p + 1)) return true; }
       board.pop(); cost -= c.cost;
@@ -2976,24 +3038,25 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
   try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
   return best;
 }
-function bulkGenerate(N, G, relaxed, groupSizes, lateSet) {
+function bulkGenerate(N, G, relaxed, groupSizes, lateSet, rivalTeamA) {
   const plan = bulkMakePlan(N, G, relaxed);
   if (plan.error) return { error: plan.error };
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet);
-    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !(lateSet && lateSet.size) && best.cost <= plan.lower) break; }
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet, rivalTeamA);
+    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && best.cost <= plan.lower) break; }
   }
-  if (!best) return { error: relaxed ? "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。" : "条件を満たす組み合わせが見つかりませんでした。" };
-  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && !(lateSet && lateSet.size) && best.cost <= plan.lower };
+  if (!best) return { error: relaxed ? (rivalTeamA ? "この人数・チーム分けでは対抗戦を組めませんでした。人数やチーム分けを変えてください。" : "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。") : "条件を満たす組み合わせが見つかりませんでした。" };
+  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && best.cost <= plan.lower };
 }
-// 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する
-function bulkGenerateAuto(N, G, groupSizes, lateSet) {
-  const strict = bulkGenerate(N, G, false, groupSizes, lateSet);
+// 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する。
+// 対抗戦（rivalTeamA指定）の場合は「同チーム対戦の禁止」だけは緩和モードでも常に維持する
+function bulkGenerateAuto(N, G, groupSizes, lateSet, rivalTeamA) {
+  const strict = bulkGenerate(N, G, false, groupSizes, lateSet, rivalTeamA);
   if (!strict.error) return { ...strict, usedRelaxed: false };
-  const relaxed = bulkGenerate(N, G, true, groupSizes, lateSet);
+  const relaxed = bulkGenerate(N, G, true, groupSizes, lateSet, rivalTeamA);
   if (!relaxed.error) return { ...relaxed, usedRelaxed: true };
   return { error: relaxed.error || strict.error };
 }
@@ -3081,20 +3144,34 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const [group2, setGroup2] = useState(s0.group2 || 5);
   const [perTableRR, setPerTableRR] = useState(!!s0.perTableRR);
   const [existingMatches, setExistingMatches] = useState({});
+  // 対抗戦（団体戦）：参加者リストの前半／後半で2チームに分け、必ず違うチーム同士だけを組む
+  const [rivalMode, setRivalMode] = useState(!!s0.rivalMode);
+  const [rivalA, setRivalA] = useState(s0.rivalA || Math.ceil((s0.players || 12) / 2));
+  const [rivalNameA, setRivalNameA] = useState(s0.rivalNameA || "Aチーム");
+  const [rivalNameB, setRivalNameB] = useState(s0.rivalNameB || "Bチーム");
 
   const perTableEligible = players % 3 === 0 && players / 3 >= 2;
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB]);
   // 「テーブル毎に総当たり」は人数が3で割り切れる時だけ使える。対象外になったら自動でOFFにする
   useEffect(() => {
     if (perTableRR && !perTableEligible) setPerTableRR(false);
   }, [perTableRR, perTableEligible]);
+  // 「グループを避けて組む」と「対抗戦」は"グループ"の定義が異なるため同時には使えない（相互排他）
+  useEffect(() => { if (rivalMode && avoidGroups) setAvoidGroups(false); }, [rivalMode]);
+  useEffect(() => { if (avoidGroups && rivalMode) setRivalMode(false); }, [avoidGroups]);
+  // チームA人数は1〜(players-1)の範囲に収める。人数が変わって範囲外になったら中央値へ寄せる
+  useEffect(() => {
+    if (rivalA > players - 1 || rivalA < 1) setRivalA(Math.max(1, Math.min(players - 1, Math.ceil(players / 2))));
+  }, [players]);
 
   const groupSizes = avoidGroups ? [group1, group2] : null;
   const group3Count = Math.max(0, players - group1 - group2);
+  const rivalTeamA = rivalMode ? Math.max(1, Math.min(players - 1, rivalA)) : null;
+  const rivalTeamBCount = rivalTeamA ? players - rivalTeamA : 0;
   // 遅刻オプション：現在の参加人数（players）の範囲で、メンバーリスト上の位置＝選手番号として遅刻フラグを拾う
   const lateSet = useMemo(() => {
     const s = new Set();
@@ -3173,7 +3250,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet));
+      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA));
       setBusy(false);
     }, 20);
   };
@@ -3217,6 +3294,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           names: [m.n1, m.n2], table: m.table + 1, slot: m.slot,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: now, format: fmt,
+          ...(rivalTeamA ? { rival: true, teamNames: [rivalNameA || "Aチーム", rivalNameB || "Bチーム"] } : {}),
         };
       });
       await saveBackup("対戦表を組み直す前");
@@ -3361,21 +3439,49 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       </div>
       )}
 
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, opacity: 0.55 }}>
+      {!usePerTableRR && (
+      <div style={{ background: rivalMode ? C.lightBlue : C.zone, border: `1.5px solid ${rivalMode ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>必ず相手グループと当たる（対抗戦）</div>
-            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>2グループに分け、必ず違うグループの相手とだけ対戦を組みます</div>
+            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
+              参加者リストの前半／後半で2チームに分け、必ず違うチームの相手とだけ対戦を組みます
+            </div>
           </div>
-          <button disabled style={{
-            background: C.line, color: C.sub,
+          <button onClick={() => setRivalMode((v) => !v)} style={{
+            background: rivalMode ? C.blue : C.line, color: rivalMode ? "#fff" : C.sub,
             border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-            cursor: "default", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
+            cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
           }}>
-            未実装
+            {rivalMode ? "ON" : "OFF"}
           </button>
         </div>
+        {rivalMode && (
+          <>
+            <div style={{ marginTop: 12 }}>
+              <BulkStepper label="Aチーム（前半）人数" value={rivalTeamA || 1} min={1} max={Math.max(1, players - 1)} onChange={setRivalA} />
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, marginTop: 8, marginBottom: 12 }}>
+              Bチーム（後半）：{rivalTeamBCount}人。参加者リストの上から{rivalTeamA || 0}人がAチーム、残り{rivalTeamBCount}人がBチームになります（人数が同数でなくても構いません）。
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 5 }}>Aチーム名（左・青）</div>
+                <input value={rivalNameA} onChange={(e) => setRivalNameA(e.target.value.slice(0, 20))}
+                  placeholder="例：東軍"
+                  style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 10px", outline: "none", fontFamily: FONT }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 5 }}>Bチーム名（右・赤）</div>
+                <input value={rivalNameB} onChange={(e) => setRivalNameB(e.target.value.slice(0, 20))}
+                  placeholder="例：西軍"
+                  style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 10px", outline: "none", fontFamily: FONT }} />
+              </div>
+            </div>
+          </>
+        )}
       </div>
+      )}
 
       {result && !result.error && result.usedRelaxed && (
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
@@ -3440,6 +3546,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
             <span>コマ <b style={{ color: C.ink }}>{result.plan.slots}</b></span>
             <span>連戦 <b style={{ color: C.ink }}>{rows.filter((m) => m.carry).length}</b>件{!avoidGroups && !usePerTableRR && <> / 下限 {result.plan.lower}</>}</span>
             {avoidGroups && <span>同グループ対戦 <b style={{ color: rows.filter((m) => m.sameGroup).length ? C.hill : C.win }}>{rows.filter((m) => m.sameGroup).length}</b>件</span>}
+            {rivalMode && <span style={{ color: C.win, fontWeight: 800 }}>対抗戦（{rivalNameA} 対 {rivalNameB}）</span>}
             {usePerTableRR && <span style={{ color: C.win, fontWeight: 800 }}>テーブル毎リーグ戦</span>}
             {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
           </div>
