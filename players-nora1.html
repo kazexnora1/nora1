@@ -2130,8 +2130,14 @@ function MatchScreen({ setupInfo, onExit }) {
         <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>バンキング</div>
         <div style={{ fontSize: 14, color: C.sub, marginBottom: 20 }}>先攻を選んでください（どちらの端末からでもOK）</div>
         <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[0].name}<br />が先攻</button>
-          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{pl[1].name}<br />が先攻</button>
+          <button onClick={() => chooseBreak(0)} style={{ flex: 1, background: C.blue, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            {rival && teamNames && <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, marginBottom: 3 }}>{teamNames[0]}</div>}
+            {pl[0].name}<br />が先攻
+          </button>
+          <button onClick={() => chooseBreak(1)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 14, padding: "22px 8px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            {rival && teamNames && <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, marginBottom: 3 }}>{teamNames[1]}</div>}
+            {pl[1].name}<br />が先攻
+          </button>
         </div>
         <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>
           目標点：<b style={{ color: C.blue }}>{rt(0)}</b> 対 <b style={{ color: C.red }}>{rt(1)}</b>
@@ -2304,7 +2310,7 @@ function MatchScreen({ setupInfo, onExit }) {
       )}
 
       <div ref={playAreaRef} style={{ touchAction: "none" }}>
-        <Zone label={pl[0].name} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
           <div style={{ flex: 1, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6 }}>
@@ -2321,7 +2327,7 @@ function MatchScreen({ setupInfo, onExit }) {
           </div>
         </div>
 
-        <Zone label={pl[1].name} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
       </div>
 
       {histRows.length > 0 && (
@@ -2344,9 +2350,10 @@ function MatchScreen({ setupInfo, onExit }) {
   );
 }
 
-function Zone({ label, side, color, balls, sub, pressed, onPress, onGesture }) {
+function Zone({ label, team, side, color, balls, sub, pressed, onPress, onGesture }) {
   return (
     <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      {team && <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 0.3 }}>{team}</div>}
       <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
       {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
