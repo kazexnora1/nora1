@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.183";
-const BUILD_TIME = "2026-08-11 カードメニュー字体統一・テーブル毎総当たり";
+const APP_VERSION = "1.184";
+const BUILD_TIME = "2026-08-13 対抗戦・時間制限トグル・目標点フォーマット・ラック単位スコア対応";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -4090,6 +4090,13 @@ function rateOfPlayer(m, i) {
   const v = parseInt(i === 0 ? (m && m.r1) : (m && m.r2), 10);
   return v > 0 ? v : null;
 }
+/* フォーマットに応じたルールセット。JCLだけ「ヒル」概念（残り点数がこの値以下）を持つ。
+   あずき杯／モスカップにはヒルが無いので「あと◯」表記で統一し、FR（ファーゴレート）も出さない */
+const RULESETS = {
+  jcl: { hillThreshold: 14 },
+  azuki: { hillThreshold: null },
+};
+const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
@@ -4150,28 +4157,35 @@ function LiveTablePanel({ tableNum, m }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
+  const ruleset = getRuleset(m.format); // JCL or あずき杯／モスカップ
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
     : (reached[0] && reached[1]) ? ((hist.slice(-1)[0] || { w: 0 }).w)
     : reached[0] ? 0 : reached[1] ? 1 : null;
   const finished = winner != null || bothLose;
-  // ヒルヒル＝両者とも残り14点以下（確定分で判定）。このラックの9番で決まるので、残り点数は出さない
-  const hillHill = !finished && m.phase === "play" &&
-    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= 14 && raceTo[1] - tot[1] <= 14;
-  // 得点は台上の球を含めて常にライブ更新する。ただしヒルヒルに入ったら、その9番で決着が付くまで
-  // 表示を確定分（tot）で止める（ヒルヒル中は「あと◯」を出さない仕様と揃える）
-  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // ヒルヒル＝両者とも残りヒル閾値以下（確定分で判定）。JCLだけの概念で、あずき杯には無い
+  const hillHill = !finished && m.phase === "play" && ruleset.hillThreshold != null &&
+    raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= ruleset.hillThreshold && raceTo[1] - tot[1] <= ruleset.hillThreshold;
+  // JCL: メインスコアはラック確定分（tot）のみ。台上の球の増減では動かさず、ラックが終わった時だけ更新する
+  // あずき杯／モスカップ: 従来どおり台上の球も含めて常時ライブ更新
+  const disp = ruleset.hillThreshold != null
+    ? tot
+    : ((m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot);
 
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
     if (m.phase === "banking") return null;
     if (bothLose) return { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
     if (winner != null) return winner === i ? { t: "勝ち" } : { t: `達成率 ${Math.round(rateOf(i) * 100)}％`, gray: true };
-    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
     const rem = raceTo[i] - disp[i];
     if (rem <= 0) return { t: "達成" };
-    const toHill = rem - 14;
+    if (ruleset.hillThreshold == null) {
+      // あずき杯／モスカップ：ヒル概念が無いので、最初から最後まで「あと◯」表記で統一する
+      return { t: `あと${rem}` };
+    }
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
 
@@ -4209,10 +4223,10 @@ function LiveTablePanel({ tableNum, m }) {
           fontSize: 16.5, fontWeight: 800, background: "rgba(0,0,0,0.16)", borderRadius: 7,
           padding: "2px 4px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{names[i]}</div>
-        {/* ファーゴレート。数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。
-            運営が暫定で決めた人もいるので、無い時は出さない */}
+        {/* ファーゴレート。JCLのみ表示（あずき杯／モスカップはファーゴレートを使わないため出さない）。
+            数字を読みやすくするため、FRの文字は小さく、数字は大きく太く。運営が暫定で決めた人もいるので、無い時も出さない */}
         <div style={{ minHeight: 17, marginBottom: 2, display: "flex", alignItems: "baseline", justifyContent: "center", gap: 2 }}>
-          {rateOfPlayer(m, i) && (
+          {ruleset.hillThreshold != null && rateOfPlayer(m, i) && (
             <>
               <span style={{ fontSize: 10, fontWeight: 800, opacity: 0.6 }}>FR</span>
               <span style={{ fontSize: 15, fontWeight: 900, letterSpacing: 0.4, fontVariantNumeric: "tabular-nums", opacity: 0.95 }}>
