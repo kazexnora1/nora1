@@ -522,7 +522,7 @@ function saveSettings(patch) {
   // 時間割に関わる値だけは共有側にも書いておく。
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
-  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl"].forEach((k) => {
+  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
@@ -1660,8 +1660,14 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster }) {
+function BracketTab({ roster, format }) {
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
+  const fmt = format || loadSettings().format || "jcl";
+  const mkMatch = (extra) => ({
+    version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+    balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+    lastResult: null, hist: [], format: fmt, ...extra,
+  });
   const s0 = useMemo(() => loadSettings(), []);
   const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
@@ -2170,7 +2176,9 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
   const [liveUrl, setLiveUrl] = useState(() => loadSettings().liveUrl || "");
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
+  const [format, setFormat] = useState(() => loadSettings().format || "jcl");
 
+  const updateFormat = (v) => { setFormat(v); saveSettings({ format: v }); };
   const updateTournamentName = (v) => {
     setTournamentName(v);
     saveSettings({ tournamentName: v });
@@ -2207,8 +2215,24 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       {/* 以下は大会当日の流れの順に並べる：① イベントの設定 → ② 予選を組む（参加者リストを含む） → ③ 決勝トーナメント */}
       <Section icon="⚙️" title="イベントの設定" sub="試合のフォーマット選択と調整">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
-          <div style={{ ...HELP, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", marginBottom: 14 }}>
-            現在はJCL方式（9ボール・球1点・ファーゴハンデ）のみ対応しています。あずき杯／モスカップ／対抗戦など他形式の切替は今後追加予定です。
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 10 }}>試合のフォーマット</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { id: "jcl", label: "JCL / NORA 1GP", sub: "ファーゴハンデ・交互ブレイク" },
+                { id: "azuki", label: "あずき杯 / モスカップ", sub: "JPAスコア・勝者ブレイク" },
+              ].map(({ id, label, sub }) => (
+                <button key={id} onClick={() => updateFormat(id)} style={{
+                  flex: 1, background: format === id ? C.blue : "#fff",
+                  border: `2px solid ${format === id ? C.blue : C.line}`,
+                  borderRadius: 12, padding: "10px 6px", cursor: "pointer", fontFamily: FONT, textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: format === id ? "#fff" : C.ink }}>{label}</div>
+                  <div style={{ fontSize: 11, color: format === id ? "rgba(255,255,255,0.8)" : C.sub, marginTop: 3 }}>{sub}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングでフォーマットが各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
           </div>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 7 }}>大会名</div>
           <input value={tournamentName} onChange={(e) => updateTournamentName(e.target.value.slice(0, 40))}
@@ -2243,11 +2267,11 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🎱" title="予選を組む" sub="参加者リスト・分け方・時間割から対戦表をつくる">
-        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} />
+        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} format={format} />
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
-        <BracketTab roster={roster} />
+        <BracketTab roster={roster} format={format} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
@@ -3039,8 +3063,9 @@ function perTableRoundRobinGenerate(N) {
   };
 }
 
-function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roundRobin, onSetRoundRobin }) {
+function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roundRobin, onSetRoundRobin, format }) {
   const registeringRef = useRef(false); // 連打による二重登録防止（state更新は非同期なのでrefで即座にブロック）
+  const fmt = format || loadSettings().format || "jcl";
   const s0 = useMemo(() => loadSettings(), []);
   const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
@@ -3196,7 +3221,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table + 1, slot: m.slot,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
-          createdAt: m.createdAt, updatedAt: now,
+          createdAt: m.createdAt, updatedAt: now, format: fmt,
         };
       });
       await saveBackup("対戦表を組み直す前");
@@ -3548,6 +3573,7 @@ function ScheduleTab({ roster }) {
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
       r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+      format: loadSettings().format || "jcl",
     };
     await saveMatch(matchId, state).catch(() => {});
     setCreatedInfo({ table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
