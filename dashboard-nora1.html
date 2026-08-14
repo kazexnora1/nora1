@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.187";
-const BUILD_TIME = "2026-08-13 新バージョン検知バナーを追加";
+const APP_VERSION = "1.188";
+const BUILD_TIME = "2026-08-13 決勝トーナメント：勝ち上がり反映が実際には書き込まれないバグを修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -374,7 +374,13 @@ function annotateColumn(list) {
 }
 /* ========= 決勝トーナメント（単純な抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
 function getBracketMatches(matches) {
-  return Object.values(matches || {}).filter((m) => m && m.bracket).map((m) => ({ ...normalizeMatch(m) }));
+  const list = [];
+  for (const id in matches) {
+    const m = matches[id];
+    if (!m || !m.bracket) continue;
+    list.push({ ...normalizeMatch(m), id });
+  }
+  return list;
 }
 function bracketMatchesForRound(matches, round) {
   return getBracketMatches(matches).filter((m) => m.bracketRound === round).sort((a, b) => a.bracketPos - b.bracketPos);
