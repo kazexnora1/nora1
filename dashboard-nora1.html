@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.184";
-const BUILD_TIME = "2026-08-13 対抗戦・時間制限トグル・目標点フォーマット・ラック単位スコア対応";
+const APP_VERSION = "1.185";
+const BUILD_TIME = "2026-08-13 タイムラインの終了メニュー：あずきモードで時間切れ選択肢を非表示";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1179,7 +1179,9 @@ function TimelineSlotCard({
                 <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>結果を選ぶと、その時点で試合終了になります</div>
                 <button onClick={() => finishAs(0, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>🏆 {names[0]} の勝ちで終了</button>
                 <button onClick={() => finishAs(1, false)} disabled={saving} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>🏆 {names[1]} の勝ちで終了</button>
-                <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 時間切れで終了（両者とも届かず）</button>
+                {m.format !== "azuki" && (
+                  <button onClick={() => finishAs(null, true)} disabled={saving} style={{ ...menuBtn, borderColor: C.hill, color: C.hill }}>⏱ 時間切れで終了（両者とも届かず）</button>
+                )}
                 <button onClick={() => setMenu("edit")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
