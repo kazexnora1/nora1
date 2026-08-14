@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.192";
-const BUILD_TIME = "2026-08-13 設定＞その他にFirebase Console（DB直接編集）へのリンクを追加";
+const APP_VERSION = "1.193";
+const BUILD_TIME = "2026-08-13 メンバーDBから選ぶパネルにmembers.htmlへの編集リンクを追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2294,19 +2294,6 @@ function ConnectionTest() {
       {log && (
         <pre style={{ marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 1.7, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "monospace" }}>{log.join("\n")}</pre>
       )}
-      <a href={`https://console.firebase.google.com/project/${FIREBASE_CONFIG.projectId}/database/${FIREBASE_CONFIG.projectId}-default-rtdb/data`}
-        target="_blank" rel="noopener noreferrer"
-        style={{
-          display: "block", textAlign: "center", marginTop: 8, width: "100%", boxSizing: "border-box",
-          background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink,
-          fontSize: 13.5, fontWeight: 700, padding: "11px 0", textDecoration: "none", fontFamily: FONT,
-        }}>
-        🛠 データベースを直接編集する（Firebase Console）
-      </a>
-      <div style={{ ...HELP, marginTop: 6 }}>
-        壊れた値を直接直したい時など、上級者向けの最終手段です。誤って消すと元に戻せないので、
-        触る前に上の「バックアップ」を取っておくと安心です
-      </div>
     </div>
   );
 }
@@ -2934,10 +2921,14 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
 
   return (
     <div style={{ border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: 12, marginBottom: 14, background: "#F3F8FF" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: C.blue }}>👥 メンバーDBから選ぶ</div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.sub, fontSize: 20, cursor: "pointer", lineHeight: 1 }}>×</button>
       </div>
+      <a href="https://kazexnora1.github.io/nora1/members.html" target="_blank" rel="noopener noreferrer"
+        style={{ display: "inline-block", fontSize: 12.5, color: C.blue, fontWeight: 700, marginBottom: 8, textDecoration: "underline" }}>
+        ✏️ 名前やレートが違う時はメンバーDBを直接編集する
+      </a>
       {state === "loading" && <div style={{ fontSize: 13, color: C.sub, padding: "8px 0" }}>読み込み中…</div>}
       {state === "error" && <Notice>メンバーDBの読み込みに失敗しました（{errMsg}）</Notice>}
       {state === "ready" && list.length === 0 && <div style={{ fontSize: 13, color: C.sub, padding: "8px 0" }}>メンバーDBに登録がありません。</div>}
