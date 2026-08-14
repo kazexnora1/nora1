@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.189";
-const BUILD_TIME = "2026-08-13 決勝トーナメントの勝ち上がりを自動化（片方ずつ即反映、両方揃ったら呼び出し中に）";
+const APP_VERSION = "1.190";
+const BUILD_TIME = "2026-08-13 決勝トーナメント自動化の負荷を軽減（対象が無い時は即終了）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -416,7 +416,8 @@ function BracketAutoAdvance() {
 
   useEffect(() => {
     const bm = getBracketMatches(matches);
-    if (!bm.length) return;
+    if (!bm.length) return; // 決勝トーナメントの試合が無ければ何もしない（予選中はここで即終了）
+    if (!bm.some((m) => m.pending)) return; // 保留中の枠が1つも無ければ、もう埋めるものが無いので即終了
     const size = bm[0].bracketSize;
     const totalRounds = bracketTotalRounds(size);
     if (!(totalRounds >= 2)) return;
