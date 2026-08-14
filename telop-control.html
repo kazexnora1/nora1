@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テロップ操作</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    background: #111;
+    color: #eee;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; margin-bottom: 20px; }
+  .row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .col { flex: 1; }
+  label {
+    display: block;
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 4px;
+  }
+  input[type=text], input[type=number] {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #222;
+    color: #fff;
+  }
+  .label-row { margin-bottom: 14px; }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  button {
+    width: 100%;
+    padding: 16px;
+    font-size: 18px;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    background: #3478f6;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+  button.secondary {
+    background: #444;
+  }
+  #status {
+    font-size: 13px;
+    color: #6f6;
+    min-height: 18px;
+    margin-top: 6px;
+  }
+  #status.err { color: #f66; }
+  .config-note {
+    font-size: 11px;
+    color: #666;
+    margin-top: 30px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>🎱 テロップ操作</h1>
+
+<div class="label-row">
+  <label>見出し（例：準決勝／T1 など・任意）</label>
+  <input type="text" id="label" placeholder="例）準決勝">
+</div>
+
+<div class="row">
+  <div class="col">
+    <label>選手A 名前</label>
+    <input type="text" id="name1" placeholder="選手A">
+  </div>
+  <div class="col">
+    <label>点数</label>
+    <input type="number" id="score1" placeholder="0">
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <label>選手B 名前</label>
+    <input type="text" id="name2" placeholder="選手B">
+  </div>
+  <div class="col">
+    <label>点数</label>
+    <input type="number" id="score2" placeholder="0">
+  </div>
+</div>
+
+<button onclick="sendUpdate(true)">📤 反映する（表示ON）</button>
+<button class="secondary" onclick="sendUpdate(false)">🙈 テロップを隠す</button>
+
+<div id="status"></div>
+
+<div class="config-note">
+  ※ 初回のみ、このファイル内の FIREBASE_URL を自分のプロジェクトのURLに書き換えてください。<br>
+  ※ Firebase側で /telop パスへの読み書きを許可しておく必要があります（ルール未設定だと送信できません）。
+</div>
+
+<script>
+  // ▼▼▼ ここを自分のFirebase Realtime DatabaseのURLに書き換える ▼▼▼
+  // 例: "https://nora1kaze-xxxxx-default-rtdb.asia-southeast1.firebasedatabase.app"
+  const FIREBASE_URL = "https://nora1kaze-247f3-default-rtdb.asia-southeast1.firebasedatabase.app";
+  // ▲▲▲ ここまで ▲▲▲
+
+  async function sendUpdate(visible) {
+    const statusEl = document.getElementById('status');
+    const payload = {
+      label: document.getElementById('label').value || "",
+      name1: document.getElementById('name1').value || "",
+      score1: document.getElementById('score1').value || "0",
+      name2: document.getElementById('name2').value || "",
+      score2: document.getElementById('score2').value || "0",
+      visible: visible,
+      updatedAt: Date.now()
+    };
+
+    try {
+      const res = await fetch(`${FIREBASE_URL}/telop/current.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      statusEl.textContent = visible ? '✅ 反映しました' : '✅ 非表示にしました';
+      statusEl.className = '';
+    } catch (e) {
+      statusEl.textContent = '❌ 送信失敗: ' + e.message + '（FIREBASE_URLの設定とルールを確認）';
+      statusEl.className = 'err';
+    }
+  }
+</script>
+
+</body>
+</html>
