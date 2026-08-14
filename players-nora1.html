@@ -80,8 +80,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.003";
-const BUILD_TIME = "2026-08-13 ピンチズームで縮小もできるよう修正（縮小の下限指定漏れ）";
+const APP_VERSION = "1.004";
+const BUILD_TIME = "2026-08-13 バージョン表記を見やすく";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1682,7 +1682,7 @@ function ScorerEmpty({ onGoTimeline }) {
         padding: "20px 30px", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
         boxShadow: "0 4px 14px rgba(46,109,181,0.3)",
       }}>🗓 対戦表をひらく</button>
-      <div style={{ fontSize: 11.5, color: C.line, marginTop: 26 }}>v{APP_VERSION}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginTop: 26 }}>v{APP_VERSION}</div>
     </div>
   );
 }
