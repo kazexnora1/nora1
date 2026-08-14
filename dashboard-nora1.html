@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.190";
-const BUILD_TIME = "2026-08-13 決勝トーナメント自動化の負荷を軽減（対象が無い時は即終了）";
+const APP_VERSION = "1.191";
+const BUILD_TIME = "2026-08-13 決勝トーナメント自動化：予選中と終了後は監視自体を止めるように（バッテリー節約）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -410,24 +410,34 @@ function bracketWinnerInfo(m) {
    （＝タイムライン・卓の待機列で「呼び出し中」になる）。本部（B1）を開いている間、
    どのタブを見ていてもバックグラウンドで常時動く（画面には何も出さない） */
 function BracketAutoAdvance() {
+  // まず軽い1個のフラグ（config/bracketActive）だけを見る。決勝トーナメントが登録されていない
+  // 予選の間は、これだけ受け取って他には一切繋がない（対戦データ全部を常時受け取るのを避ける）
+  const [active, setActive] = useState(false);
+  useEffect(() => dbSubscribe("config/bracketActive", (v) => setActive(!!v), () => {}), []);
+
   const [matches, setMatches] = useState({});
-  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
+  useEffect(() => {
+    if (!active) { setMatches({}); return; }
+    return dbSubscribe("matches", (m) => setMatches(m || {}), () => {});
+  }, [active]);
   const busyRef = useRef(false);
 
   useEffect(() => {
+    if (!active) return;
     const bm = getBracketMatches(matches);
-    if (!bm.length) return; // 決勝トーナメントの試合が無ければ何もしない（予選中はここで即終了）
-    if (!bm.some((m) => m.pending)) return; // 保留中の枠が1つも無ければ、もう埋めるものが無いので即終了
+    if (!bm.length) return; // まだ届いていない、または削除済み
     const size = bm[0].bracketSize;
     const totalRounds = bracketTotalRounds(size);
     if (!(totalRounds >= 2)) return;
     const fmt = loadSettings().format || "jcl";
     const next = {};
+    let anyPending = false;
     for (let r = 2; r <= totalRounds; r++) {
       const curRound = bracketMatchesForRound(matches, r);
       const prevRound = bracketMatchesForRound(matches, r - 1);
       curRound.forEach((cur) => {
         if (!cur.pending) return; // すでに埋まっている試合には触らない
+        anyPending = true;
         const i = cur.bracketPos;
         const childA = prevRound[i * 2], childB = prevRound[i * 2 + 1];
         const winA = childA && isMatchFinished(childA) ? bracketWinnerInfo(childA) : null;
@@ -453,11 +463,16 @@ function BracketAutoAdvance() {
         }
       });
     }
+    // 決勝まで終わって、もう埋めるべき保留枠が無ければ、監視をここで止める（以降のバッテリー消費を防ぐ）
+    const finalMatch = bracketMatchesForRound(matches, totalRounds)[0];
+    if (!anyPending && finalMatch && isMatchFinished(finalMatch)) {
+      dbUpdate("config", { bracketActive: false });
+    }
     if (Object.keys(next).length && !busyRef.current) {
       busyRef.current = true;
       dbUpdate("matches", next).finally(() => { busyRef.current = false; });
     }
-  }, [matches]);
+  }, [matches, active]);
 
   return null;
 }
@@ -1856,6 +1871,9 @@ function BracketTab({ roster, format }) {
   const bracketMatches = useMemo(() => getBracketMatches(matches), [matches]);
   const totalRounds = bracketTotalRounds(size);
   const started = bracketMatches.length > 0;
+  // このタブ（決勝トーナメントの現在の状態が見えている場所）を開いた時に、
+  // 自動勝ち上がり用の軽量フラグを念のため確認・修復しておく（フラグが立っていなくても取りこぼさないように）
+  useEffect(() => { if (started) dbUpdate("config", { bracketActive: true }).catch(() => {}); }, [started]);
 
   const resetBracket = async () => {
     if (!window.confirm(`決勝トーナメントの対戦（${bracketMatches.length}試合）をすべて削除します。\n進行中・終了した試合も含めて消えます（バックアップからは戻せます）。\n\nよろしいですか？`)) return;
@@ -1866,6 +1884,7 @@ function BracketTab({ roster, format }) {
       const clearUpd = {};
       Object.entries(matches || {}).forEach(([id, m]) => { if (m && m.bracket) clearUpd[id] = null; });
       await dbUpdate("matches", clearUpd);
+      await dbUpdate("config", { bracketActive: false }); // 自動勝ち上がりの監視をここで止める（バッテリー消費を抑えるため）
       setMsg({ ok: true, text: "決勝トーナメントを削除しました" });
     } catch (e) {
       setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
@@ -1985,6 +2004,7 @@ function BracketTab({ roster, format }) {
       }
       await saveBackup("決勝トーナメントを登録する前");
       await dbUpdate("matches", next);
+      await dbUpdate("config", { bracketActive: true }); // 自動勝ち上がりの監視をここで有効にする
       setMsg({ ok: true, text: `全${totalMatches}試合を登録しました` });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
