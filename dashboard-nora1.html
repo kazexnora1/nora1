@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.186";
-const BUILD_TIME = "2026-08-13 終了メニューの時間切れ選択肢は時間制限トグルのON/OFFで判定（フォーマット非依存）";
+const APP_VERSION = "1.187";
+const BUILD_TIME = "2026-08-13 新バージョン検知バナーを追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -660,6 +660,7 @@ function App() {
 
   return (
     <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+      <UpdateBanner />
       {tabBarJsx}
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
@@ -2395,6 +2396,47 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
    自由に書ける文章。選手側（B2）の対戦表とスコアラーの左上のボタンから読める。
    JCL／あずき杯・モスカップでルールが違うので、フォーマットごとに別々に保存する（config/rules_jcl, config/rules_azuki）。
    まだ切替前の古い文言（config/rules）しか無い場合は、JCL側の初期表示にだけ一度取り込む（保存はユーザーが編集した時） */
+/* ========= 新しいバージョンの検知 =========
+   サーバー側の仕組みは不要。自分自身のURLをキャッシュ無視で定期的に取りに行き、
+   そこに埋め込まれたAPP_VERSIONの値が今動いているものと違えば「新しいバージョンがあります」と出す。
+   タップで即リロード（設定やロスターはFirebase／localStorageに残っているので、リロードしても失われない） */
+function useVersionCheck() {
+  const [newVersion, setNewVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(window.location.pathname + "?_=" + Date.now(), { cache: "no-store" });
+        const text = await res.text();
+        const m = text.match(/const APP_VERSION = "([^"]+)"/);
+        if (!cancelled && m && m[1] && m[1] !== APP_VERSION) setNewVersion(m[1]);
+      } catch {}
+    };
+    check();
+    const iv = setInterval(check, 90000); // 90秒おき
+    const onVis = () => { if (document.visibilityState === "visible") check(); }; // タブに戻ってきた時も確認
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  return newVersion;
+}
+function UpdateBanner() {
+  const newVersion = useVersionCheck();
+  const [dismissed, setDismissed] = useState(false);
+  if (!newVersion || dismissed) return null;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, background: C.blue, color: "#fff",
+      padding: "7px 12px", fontSize: 13, fontWeight: 800, flexShrink: 0,
+    }}>
+      <span onClick={() => window.location.reload()} style={{ flex: 1, cursor: "pointer" }}>
+        🔄 新しいバージョンがあります・タップで更新
+      </span>
+      <span onClick={() => setDismissed(true)} style={{ cursor: "pointer", opacity: 0.85, padding: "0 4px" }}>✕</span>
+    </div>
+  );
+}
+
 function RulesPanel({ format }) {
   const key = format === "azuki" ? "rules_azuki" : "rules_jcl";
   const [text, setText] = useState(null);
