@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.188";
-const BUILD_TIME = "2026-08-13 決勝トーナメント：勝ち上がり反映が実際には書き込まれないバグを修正";
+const APP_VERSION = "1.189";
+const BUILD_TIME = "2026-08-13 決勝トーナメントの勝ち上がりを自動化（片方ずつ即反映、両方揃ったら呼び出し中に）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -386,6 +386,80 @@ function bracketMatchesForRound(matches, round) {
   return getBracketMatches(matches).filter((m) => m.bracketRound === round).sort((a, b) => a.bracketPos - b.bracketPos);
 }
 function bracketTotalRounds(size) { return Math.round(Math.log2(size)); }
+
+// あずき杯／モスカップ用：ファーゴハンデを使わないので、回戦ごとに固定の目標点を使う
+// （決勝＝azukiFinal、準決勝＝azukiSemi、それより前の回戦＝azukiQuarter）
+function azukiTargetForRound(r, total) {
+  const s0 = loadSettings();
+  const azukiQuarter = parseInt(s0.azukiQuarter, 10) || 25;
+  const azukiSemi = parseInt(s0.azukiSemi, 10) || 30;
+  const azukiFinal = parseInt(s0.azukiFinal, 10) || 40;
+  const distFromFinal = total - r;
+  if (distFromFinal <= 0) return azukiFinal;
+  if (distFromFinal === 1) return azukiSemi;
+  return azukiQuarter;
+}
+function bracketWinnerInfo(m) {
+  const w = matchWinnerIndex(m);
+  if (w == null) return null;
+  return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0) };
+}
+/* ========= 決勝トーナメントの自動勝ち上がり =========
+   準決勝などの試合が終わるたびに動く。片方が先に終わったら、まずその勝者だけを次の枠に入れる
+   （もう一方はまだ「準決勝◯の勝者」のまま）。もう一方も終わったら目標点を計算してpendingを外す
+   （＝タイムライン・卓の待機列で「呼び出し中」になる）。本部（B1）を開いている間、
+   どのタブを見ていてもバックグラウンドで常時動く（画面には何も出さない） */
+function BracketAutoAdvance() {
+  const [matches, setMatches] = useState({});
+  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    const bm = getBracketMatches(matches);
+    if (!bm.length) return;
+    const size = bm[0].bracketSize;
+    const totalRounds = bracketTotalRounds(size);
+    if (!(totalRounds >= 2)) return;
+    const fmt = loadSettings().format || "jcl";
+    const next = {};
+    for (let r = 2; r <= totalRounds; r++) {
+      const curRound = bracketMatchesForRound(matches, r);
+      const prevRound = bracketMatchesForRound(matches, r - 1);
+      curRound.forEach((cur) => {
+        if (!cur.pending) return; // すでに埋まっている試合には触らない
+        const i = cur.bracketPos;
+        const childA = prevRound[i * 2], childB = prevRound[i * 2 + 1];
+        const winA = childA && isMatchFinished(childA) ? bracketWinnerInfo(childA) : null;
+        const winB = childB && isMatchFinished(childB) ? bracketWinnerInfo(childB) : null;
+        if (winA && cur.names[0] !== winA.name) {
+          next[cur.id + "/names/0"] = winA.name;
+          next[cur.id + "/r1"] = winA.r;
+        }
+        if (winB && cur.names[1] !== winB.name) {
+          next[cur.id + "/names/1"] = winB.name;
+          next[cur.id + "/r2"] = winB.r;
+        }
+        if (winA && winB) {
+          // 両方の勝者が決まった。目標点を計算して、呼び出し待ちの状態にする
+          const pct = cur.lenPct || 100;
+          const race = fmt === "azuki"
+            ? { rt1: azukiTargetForRound(r, totalRounds), rt2: azukiTargetForRound(r, totalRounds) }
+            : (winA.r > 0 && winB.r > 0 ? computeRace(winA.r, winB.r, pct) : { rt1: 0, rt2: 0 });
+          next[cur.id + "/raceTo"] = [race.rt1, race.rt2];
+          next[cur.id + "/pending"] = null;
+          next[cur.id + "/updatedAt"] = Date.now();
+          if (r === totalRounds && Number(cur.table) !== 1) next[cur.id + "/table"] = 1; // 決勝はT1
+        }
+      });
+    }
+    if (Object.keys(next).length && !busyRef.current) {
+      busyRef.current = true;
+      dbUpdate("matches", next).finally(() => { busyRef.current = false; });
+    }
+  }, [matches]);
+
+  return null;
+}
 function matchWinnerIndex(m) {
   if (m.bothLose) return null; // 両者負け
   if (m.winner === 0 || m.winner === 1) return m.winner;
@@ -667,6 +741,7 @@ function App() {
   return (
     <div style={{ height: "100%", background: C.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       <UpdateBanner />
+      <BracketAutoAdvance />
       {tabBarJsx}
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
