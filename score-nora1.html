@@ -78,8 +78,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
-const APP_VERSION = "1.000";
-const BUILD_TIME = "2026-08-13 対抗戦バナー・フォーマット別ヒル表記・ラック単位スコア対応";
+const APP_VERSION = "1.001";
+const BUILD_TIME = "2026-08-13 新バージョン検知バナーを追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -914,6 +914,47 @@ function RivalBannerAuto() {
   return <RivalBanner teamNames={teamNames} />;
 }
 
+/* ========= 新しいバージョンの検知 =========
+   サーバー側の仕組みは不要。自分自身のURLをキャッシュ無視で定期的に取りに行き、
+   そこに埋め込まれたAPP_VERSIONの値が今動いているものと違えば「新しいバージョンがあります」と出す。
+   タップで即リロード */
+function useVersionCheck() {
+  const [newVersion, setNewVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(window.location.pathname + "?_=" + Date.now(), { cache: "no-store" });
+        const text = await res.text();
+        const m = text.match(/const APP_VERSION = "([^"]+)"/);
+        if (!cancelled && m && m[1] && m[1] !== APP_VERSION) setNewVersion(m[1]);
+      } catch {}
+    };
+    check();
+    const iv = setInterval(check, 90000); // 90秒おき
+    const onVis = () => { if (document.visibilityState === "visible") check(); }; // タブに戻ってきた時も確認
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  return newVersion;
+}
+function UpdateBanner() {
+  const newVersion = useVersionCheck();
+  const [dismissed, setDismissed] = useState(false);
+  if (!newVersion || dismissed) return null;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, background: C.blue, color: "#fff",
+      padding: "7px 12px", fontSize: 13, fontWeight: 800, flexShrink: 0,
+    }}>
+      <span onClick={() => window.location.reload()} style={{ flex: 1, cursor: "pointer" }}>
+        🔄 新しいバージョンがあります・タップで更新
+      </span>
+      <span onClick={() => setDismissed(true)} style={{ cursor: "pointer", opacity: 0.85, padding: "0 4px" }}>✕</span>
+    </div>
+  );
+}
+
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
    進行中のラックは黄色の行で出し、点数が入ると5秒だけ点滅させる（他卓を横目で見ても気づけるように）。
@@ -1531,6 +1572,7 @@ function Shell() {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg }}>
+      <UpdateBanner />
       <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
         {TABS.map(([key, label]) => (
           <button key={key}
