@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.5, maximum-scale=5" />
 <title>JCL9Match B2テスト</title>
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; max-width: 100vw; overflow-x: hidden; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
@@ -80,8 +80,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.002";
-const BUILD_TIME = "2026-08-13 小さい画面でのはみ出し対策・ピンチズーム許可";
+const APP_VERSION = "1.003";
+const BUILD_TIME = "2026-08-13 ピンチズームで縮小もできるよう修正（縮小の下限指定漏れ）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
