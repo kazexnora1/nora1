@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.199";
-const BUILD_TIME = "2026-08-14 代打機能を対戦カードメニューに移設（その他パネルは廃止）";
+const APP_VERSION = "1.200";
+const BUILD_TIME = "2026-08-14 あずき杯モードでは参加予定リスト・決勝トーナメントメンバーのFargo表示を非表示に";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2187,7 +2187,7 @@ function BracketTab({ roster, format }) {
                   {roster.map((p, ri) => {
                     const s2 = standings.find((x) => x.name === p.name);
                     const rank = s2 && s2.played > 0 ? `${s2.rank}位 ` : "";
-                    return <option key={p.id} value={ri}>{rank}{p.name || "（無名）"}　{p.r ? `Fargo ${p.r}` : ""}</option>;
+                    return <option key={p.id} value={ri}>{rank}{p.name || "（無名）"}{fmt !== "azuki" && p.r ? `　Fargo ${p.r}` : ""}</option>;
                   })}
                 </select>
                 <input inputMode="numeric" value={drawNo[i] ?? ""}
@@ -2926,7 +2926,7 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
   );
 }
 
-function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday }) {
+function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -3019,10 +3019,11 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
         <div key={p.id} style={{ display: "flex", gap: 5, marginBottom: 6, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
             style={{ flex: 2, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 13.5, padding: "8px 8px", outline: "none", fontFamily: FONT }} />
-          <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            placeholder="Fargo"
-            style={{ width: 46, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 12.5, fontWeight: 700, padding: "8px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
-          <button onClick={() => remove(p.id)} style={{ width: 30, height: 34, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.sub, fontSize: 15, cursor: "pointer" }}>×</button>
+          {format !== "azuki" && (
+            <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+              placeholder="Fargo"
+              style={{ width: 46, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 12.5, fontWeight: 700, padding: "8px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+          )}          <button onClick={() => remove(p.id)} style={{ width: 30, height: 34, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.sub, fontSize: 15, cursor: "pointer" }}>×</button>
         </div>
       ))}
       {roster.length < 60 && (
@@ -3676,7 +3677,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
             🔗 メンバーDBを編集する
           </a>
           <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError}
-            onRemoveFromToday={removeFromToday} />
+            onRemoveFromToday={removeFromToday} format={fmt} />
         </div>
       </div>
 
