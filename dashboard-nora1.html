@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.201";
-const BUILD_TIME = "2026-08-14 代打候補は当日出場していない参加予定者だけに絞り込み";
+const APP_VERSION = "1.202";
+const BUILD_TIME = "2026-08-16 大会途中で人を追加して組み直す機能を追加（試合割りタブ）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3081,8 +3081,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
 /* ========= 試合割りタブ：総当たり風スケジュールを自動生成して一括登録 ========= */
 const BULK_TABLES = 3;
 
-function bulkMakePlan(N, G, relaxed) {
-  const total = (N * G) / 2;
+function bulkMakePlan(N, G, relaxed, totalOverride) {
+  const total = totalOverride != null ? totalOverride : (N * G) / 2;
   if (!Number.isInteger(total)) return { error: "人数と試合数の積が奇数です。総試合数が半端になります。" };
   const cap0 = Math.min(BULK_TABLES, Math.floor(N / 2));
   if (cap0 < 1) return { error: "人数が少なすぎて試合を組めません（最低3人必要です）。" };
@@ -3122,12 +3122,17 @@ function groupOf(x, groupSizes) {
    小さく抑える（そのまま乗せると終盤のコマ数不足で手詰まりを起こし、組めなくなることがあるため） */
 const LATE_WEIGHT = 4000;
 const LATE_SCORE_CAP = 8;
-function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, lateSet, rivalTeamA) {
+// 大会途中で人を追加して組み直す時、過去に対戦済みのペアをできるだけ避けるためのソフトペナルティ。
+// グループ回避(20)より少し重く、連投(1〜3)よりずっと重いが、ハード制約ではないので「組めることを優先」できる
+const HISTORY_WEIGHT = 30;
+function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, lateSet, rivalTeamA, opts) {
   const { total, slots, sizes } = plan;
+  const o = opts || {};
   const pos = [];
   for (let s = 0; s < slots; s++) for (let t = 0; t < sizes[s]; t++) pos.push([s, t]);
 
   const deg = new Int32Array(N + 1);
+  if (o.initialDeg) for (let x = 1; x <= N; x++) deg[x] = o.initialDeg[x] || 0;
   const used = new Set();
   const seat = Array.from({ length: slots }, () => new Map());
   const board = [];
@@ -3165,7 +3170,7 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
     for (let a = 1; a <= N; a++) {
       if (deg[a] >= G || here.has(a)) continue;
       for (let b = a + 1; b <= N; b++) {
-        if (deg[b] >= G || here.has(b) || used.has(a * 32 + b)) continue;
+        if (deg[b] >= G || here.has(b) || (!o.ignoreDedup && used.has(a * 32 + b))) continue;
         // 対抗戦：同チームの組み合わせは候補にすら入れない（ソフトなペナルティではなく完全除外）
         if (rivalTeamA && (a <= rivalTeamA) === (b <= rivalTeamA)) continue;
         let matchCost = 0, carryFlag = false, ok = true;
@@ -3209,6 +3214,8 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
           matchCost = carry;
           carryFlag = carry > 0;
         }
+        // 大会途中の組み直し：過去に対戦済みのペアはソフトに避ける（組めることを優先するのでハード制約にはしない）
+        if (o.historyPairs && o.historyPairs.has(a * 32 + b)) matchCost += HISTORY_WEIGHT;
         // 遅刻オプション：残りコマ数が多いほど（＝早いコマほど）ペナルティを大きくして、後のコマに寄せる（最優先）。
         // ただし探索の当たり付け（score）にそのまま乗せると、後半のコマ数が足りずに手詰まりを起こしやすいので、
         // 「どの組み合わせを採用するか」を決めるcostだけに強く効かせ、探索順序（score）への影響は小さく抑える
@@ -3248,14 +3255,14 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
   try { walk(0); } catch (e) { if (e.message !== "budget") throw e; }
   return best;
 }
-function bulkGenerate(N, G, relaxed, groupSizes, lateSet, rivalTeamA) {
-  const plan = bulkMakePlan(N, G, relaxed);
+function bulkGenerate(N, G, relaxed, groupSizes, lateSet, rivalTeamA, opts) {
+  const plan = bulkMakePlan(N, G, relaxed, opts && opts.totalOverride);
   if (plan.error) return { error: plan.error };
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
-    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet, rivalTeamA);
+    const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet, rivalTeamA, opts);
     if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && best.cost <= plan.lower) break; }
   }
   if (!best) return { error: relaxed ? (rivalTeamA ? "この人数・チーム分けでは対抗戦を組めませんでした。人数やチーム分けを変えてください。" : "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。") : "条件を満たす組み合わせが見つかりませんでした。" };
@@ -3263,11 +3270,17 @@ function bulkGenerate(N, G, relaxed, groupSizes, lateSet, rivalTeamA) {
 }
 // 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する。
 // 対抗戦（rivalTeamA指定）の場合は「同チーム対戦の禁止」だけは緩和モードでも常に維持する
-function bulkGenerateAuto(N, G, groupSizes, lateSet, rivalTeamA) {
-  const strict = bulkGenerate(N, G, false, groupSizes, lateSet, rivalTeamA);
+function bulkGenerateAuto(N, G, groupSizes, lateSet, rivalTeamA, opts) {
+  const strict = bulkGenerate(N, G, false, groupSizes, lateSet, rivalTeamA, opts);
   if (!strict.error) return { ...strict, usedRelaxed: false };
-  const relaxed = bulkGenerate(N, G, true, groupSizes, lateSet, rivalTeamA);
+  const relaxed = bulkGenerate(N, G, true, groupSizes, lateSet, rivalTeamA, opts);
   if (!relaxed.error) return { ...relaxed, usedRelaxed: true };
+  // 「組めることを優先」：それでも組めなければ、新規に組む分の中でのペア重複禁止まで緩めて最後まで試す
+  if (opts && opts.allowIgnoreDedupFallback) {
+    const ultra = bulkGenerate(N, G, true, groupSizes, lateSet, rivalTeamA, { ...opts, ignoreDedup: true });
+    if (!ultra.error) return { ...ultra, usedRelaxed: true, usedIgnoreDedup: true };
+    return { error: ultra.error || relaxed.error || strict.error };
+  }
   return { error: relaxed.error || strict.error };
 }
 
@@ -3674,6 +3687,11 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         }}>🗑 今の予選をリセット（{existingPrelimCount}試合を削除）</button>
       )}
 
+      {existingPrelimCount > 0 && (
+        <ExtendMidwayPanel existingMatches={existingMatches} roster={roster} setRoster={setRoster}
+          fmt={fmt} lenPct={lenPct} per100Min={per100Min} azukiPrelim={azukiPrelim} gamesDefault={games} />
+      )}
+
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
         {roundRobin ? (
@@ -3956,6 +3974,250 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         </>
       )}
     </div>
+  );
+}
+/* ========= 大会途中で人を追加して組み直す =========
+   進行中・終了した試合はそのまま。未着手（呼び出し中含む）の試合だけ削除して、
+   追加する人を含めた残り分を新しく組み直す。既にこなした試合数をdeg初期値として引き継ぎ、
+   目標試合数に足りない分だけを新規に配分する。過去に対戦済みのペアはソフトに避けるが、
+   「組めることを優先」なので、必要なら再戦も許容して必ず組み切る */
+function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, lenPct, per100Min, azukiPrelim, gamesDefault }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState("existing"); // "existing"=参加予定者から選ぶ／"new"=新しい人を追加
+  const [pickId, setPickId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newFargo, setNewFargo] = useState("");
+  const [targetGames, setTargetGames] = useState(gamesDefault || 4);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  // 現在の予選対戦から、参加済みの人（出現順）・各人の消化済み試合数・未着手の試合を洗い出す
+  const active = useMemo(() => {
+    const all = Object.entries(existingMatches || {})
+      .map(([id, m]) => ({ id, ...m }))
+      .filter((m) => m && !m.bracket && [1, 2, 3].includes(Number(m.table)));
+    const keep = [], future = [];
+    all.forEach((m) => { if (isMatchFinished(m) || m.startedAt) keep.push(m); else future.push(m); });
+    const order = [];
+    const seen = new Set();
+    [...keep, ...future].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach((m) => {
+      (m.names || []).forEach((n) => { if (n && !seen.has(n)) { seen.add(n); order.push(n); } });
+    });
+    const played = {};
+    order.forEach((n) => { played[n] = 0; });
+    keep.forEach((m) => { (m.names || []).forEach((n) => { if (played[n] != null) played[n]++; }); });
+    return { keep, future, order, played };
+  }, [existingMatches]);
+
+  const availableToAdd = useMemo(
+    () => roster.filter((p) => p.name && !active.order.includes(p.name)),
+    [roster, active.order]
+  );
+  const maxPlayed = active.order.reduce((mx, n) => Math.max(mx, active.played[n] || 0), 0);
+
+  const run = () => {
+    setMsg(null);
+    let addName = "", addFargo = "";
+    if (mode === "existing") {
+      const p = roster.find((r) => String(r.id) === String(pickId));
+      if (!p) { setResult({ error: "追加する人を選んでください" }); return; }
+      addName = p.name; addFargo = p.r || "";
+    } else {
+      addName = newName.trim();
+      if (!addName) { setResult({ error: "名前を入力してください" }); return; }
+      if (active.order.includes(addName) || roster.some((r) => r.name === addName)) {
+        setResult({ error: "同じ名前が既にいます" }); return;
+      }
+      addFargo = newFargo;
+    }
+    const T = Math.max(1, parseInt(targetGames, 10) || 1);
+    // まだ目標試合数に届いていない人だけを対象にする（既に届いている人は卓割りの分母から外し、組みやすくする）
+    const names = [...active.order, addName].filter((n) => (active.played[n] || 0) < T);
+    const N = names.length;
+    if (N < 2) { setResult({ error: "追加する人の相手がいません。目標試合数を増やしてください。" }); return; }
+    const initialDeg = new Array(N + 1).fill(0);
+    names.forEach((n, i) => { initialDeg[i + 1] = active.played[n] || 0; });
+    const historyPairs = new Set();
+    active.keep.forEach((m) => {
+      const ns = m.names || [];
+      if (ns.length !== 2) return;
+      const ia = names.indexOf(ns[0]), ib = names.indexOf(ns[1]);
+      if (ia < 0 || ib < 0 || ia === ib) return;
+      const a = Math.min(ia, ib) + 1, b = Math.max(ia, ib) + 1;
+      historyPairs.add(a * 32 + b);
+    });
+    const rawNeed = N * T - initialDeg.reduce((s, v) => s + v, 0);
+    if (rawNeed <= 0) {
+      setResult({ error: "全員すでに目標試合数に達しています。目標試合数を増やしてください。" });
+      return;
+    }
+    const totalOverride = Math.floor(rawNeed / 2);
+    setBusy(true);
+    setTimeout(() => {
+      const gen = bulkGenerateAuto(N, T, null, null, null, { initialDeg, historyPairs, totalOverride, allowIgnoreDedupFallback: true });
+      if (gen.error) { setResult({ error: gen.error }); setBusy(false); return; }
+      const base = Date.now();
+      const board = gen.board.map((m, i) => {
+        const n1 = names[m.a - 1], n2 = names[m.b - 1];
+        const p1 = roster.find((r) => r.name === n1) || (n1 === addName ? { name: addName, r: addFargo } : null);
+        const p2 = roster.find((r) => r.name === n2) || (n2 === addName ? { name: addName, r: addFargo } : null);
+        const R1 = parseInt(p1 && p1.r, 10), R2 = parseInt(p2 && p2.r, 10);
+        const race = fmt === "azuki"
+          ? { rt1: azukiPrelim, rt2: azukiPrelim }
+          : (R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : { rt1: 0, rt2: 0 });
+        const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
+        return {
+          table: m.table + 1, isRematch: historyPairs.has(m.a * 32 + m.b),
+          matchId: randomMatchId(), createdAt: base + i * 1000,
+          n1, n2, r1: R1 || 0, r2: R2 || 0, rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins,
+        };
+      });
+      setResult({ board, addName, addFargo, usedRelaxed: gen.usedRelaxed, usedIgnoreDedup: gen.usedIgnoreDedup });
+      setBusy(false);
+    }, 20);
+  };
+
+  const register = async () => {
+    if (!result || result.error || registering) return;
+    if (!window.confirm(`${result.addName}さんを追加し、未着手の試合${active.future.length}件を削除して新たに${result.board.length}件を登録します。\n進行中・終了した試合はそのままです。よろしいですか？`)) return;
+    setRegistering(true);
+    try {
+      await saveBackup("人を追加して組み直す前");
+      const upd = {};
+      active.future.forEach((m) => { upd[m.id] = null; });
+      result.board.forEach((m) => {
+        upd[m.matchId] = {
+          version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
+          balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+          lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
+          names: [m.n1, m.n2], table: m.table, slot: null,
+          r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
+          createdAt: m.createdAt, updatedAt: Date.now(), format: fmt,
+        };
+      });
+      await dbUpdate("matches", upd);
+      if (mode === "new" && !roster.some((r) => r.name === result.addName)) {
+        const nextRoster = [...roster, { id: nid(), name: result.addName, r: result.addFargo || "" }];
+        setRoster(nextRoster);
+        await saveRoster(nextRoster);
+      }
+      setMsg({ ok: true, text: `${result.addName}さんを追加し、${result.board.length}件を登録しました` });
+      setResult(null); setPickId(""); setNewName(""); setNewFargo("");
+    } catch (e) {
+      setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setRegistering(false);
+  };
+
+  if (!active.order.length) return null;
+
+  return (
+    <>
+      <button onClick={() => { setOpen(true); setResult(null); setMsg(null); }} style={{
+        width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 12,
+        color: C.blue, fontSize: 14.5, fontWeight: 800, padding: "13px 0", cursor: "pointer",
+        fontFamily: FONT, marginBottom: 16,
+      }}>🔀 人を追加して組み直す（未着手{active.future.length}試合が対象）</button>
+
+      {open && (
+        <Portal>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 5000 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{
+              background: "#fff", borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
+              maxWidth: 460, width: "100%", maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", fontFamily: FONT,
+            }}>
+              <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 12px" }} />
+              <div style={{ fontSize: 15, fontWeight: 900, textAlign: "center", marginBottom: 4 }}>人を追加して組み直す</div>
+              <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14, lineHeight: 1.7 }}>
+                進行中・終了した試合はそのまま。未着手の{active.future.length}試合を削除し、追加する人を含めて残りを組み直します。
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button onClick={() => setMode("existing")} disabled={!availableToAdd.length} style={{
+                  flex: 1, border: `2px solid ${mode === "existing" ? C.blue : C.line}`, background: mode === "existing" ? C.lightBlue : "#fff",
+                  borderRadius: 10, padding: "10px 0", fontSize: 13.5, fontWeight: 800, color: mode === "existing" ? C.blue : C.ink,
+                  cursor: availableToAdd.length ? "pointer" : "default", opacity: availableToAdd.length ? 1 : 0.5, fontFamily: FONT,
+                }}>参加予定者から選ぶ</button>
+                <button onClick={() => setMode("new")} style={{
+                  flex: 1, border: `2px solid ${mode === "new" ? C.blue : C.line}`, background: mode === "new" ? C.lightBlue : "#fff",
+                  borderRadius: 10, padding: "10px 0", fontSize: 13.5, fontWeight: 800, color: mode === "new" ? C.blue : C.ink,
+                  cursor: "pointer", fontFamily: FONT,
+                }}>新しい人を追加</button>
+              </div>
+
+              {mode === "existing" ? (
+                availableToAdd.length ? (
+                  <Field label="追加する人">
+                    <select value={pickId} onChange={(e) => setPickId(e.target.value)} style={selectStyle}>
+                      <option value="">選んでください</option>
+                      {availableToAdd.map((p) => <option key={p.id} value={p.id}>{p.name}　{p.r ? `Fargo ${p.r}` : ""}</option>)}
+                    </select>
+                  </Field>
+                ) : <Notice>参加予定者リストに、まだ組み込まれていない人がいません。「新しい人を追加」から入力してください</Notice>
+              ) : (
+                <>
+                  <Field label="名前">
+                    <input value={newName} onChange={(e) => setNewName(e.target.value.slice(0, 12))} placeholder="名前"
+                      style={{ ...selectStyle, padding: "10px 12px" }} />
+                  </Field>
+                  {fmt === "jcl" && (
+                    <Field label="ファーゴレート（任意）">
+                      <input inputMode="numeric" value={newFargo} onChange={(e) => setNewFargo(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+                        placeholder="未設定なら目標点0で作成されます" style={{ ...selectStyle, padding: "10px 12px" }} />
+                    </Field>
+                  )}
+                </>
+              )}
+
+              <div style={{ marginTop: 4 }}>
+                <BulkStepper label="1人の目標試合数（全体）" value={parseInt(targetGames, 10) || 1} min={Math.max(1, maxPlayed)} max={12} onChange={setTargetGames} />
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+                  既に終了・進行中の試合も含めた目標値です。この数以上こなしている人は追加なし、少ない人と追加する人はこの数に近づけます。人数の都合でぴったり揃わないこともあります。
+                </div>
+              </div>
+
+              <button onClick={run} disabled={busy || (mode === "existing" && !pickId) || (mode === "new" && !newName.trim())} style={{
+                width: "100%", marginTop: 14, background: busy ? C.line : C.ink, color: busy ? C.sub : "#fff", border: "none",
+                borderRadius: 12, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: FONT,
+              }}>{busy ? "計算中…" : "組み直す ▶"}</button>
+
+              {result && result.error && <Notice>{result.error}</Notice>}
+
+              {result && !result.error && (
+                <>
+                  {(result.usedRelaxed || result.usedIgnoreDedup) && (
+                    <Notice>人数の都合で条件を一部緩和して組みました（自動判定）{result.usedIgnoreDedup ? "。過去に対戦したペアの再戦を含みます" : ""}。</Notice>
+                  )}
+                  <div style={{ fontSize: 13, color: C.ink, textAlign: "center", margin: "10px 0", fontWeight: 700 }}>
+                    新たに{result.board.length}件を作成します
+                    {result.board.some((m) => m.isRematch) && <span style={{ color: C.hill }}>（うち再戦{result.board.filter((m) => m.isRematch).length}件）</span>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                    {result.board.map((m, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, width: 24 }}>T{m.table}</div>
+                        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{m.n1} 対 {m.n2}</div>
+                        {m.isRematch && <div style={{ fontSize: 10.5, fontWeight: 800, color: C.hill }}>再戦</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={register} disabled={registering} style={{
+                    width: "100%", background: registering ? C.line : C.blue, color: "#fff", border: "none", borderRadius: 14,
+                    padding: "15px 0", fontSize: 15.5, fontWeight: 800, cursor: registering ? "wait" : "pointer", fontFamily: FONT,
+                  }}>{registering ? "登録中…" : "▲ この内容で登録する"}</button>
+                </>
+              )}
+
+              {msg && <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus, marginTop: 10 }}>{msg.ok ? "✓ " : "✗ "}{msg.text}</div>}
+
+              <button onClick={() => setOpen(false)} style={{ marginTop: 12, width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+            </div>
+          </div>
+        </Portal>
+      )}
+    </>
   );
 }
 function BulkCard({ m }) {
