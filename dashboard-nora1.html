@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.200";
-const BUILD_TIME = "2026-08-14 あずき杯モードでは参加予定リスト・決勝トーナメントメンバーのFargo表示を非表示に";
+const APP_VERSION = "1.201";
+const BUILD_TIME = "2026-08-14 代打候補は当日出場していない参加予定者だけに絞り込み";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -922,6 +922,23 @@ function TimelineSlotCard({
   const [hist, setHist] = useState(null); // 復元候補（新しい順）
   const [editSide, setEditSide] = useState(null); // 対戦者を差し替える側（0 or 1）
   const [subSide, setSubSide] = useState(null); // 代打を出す側（0 or 1）
+  const [todayNames, setTodayNames] = useState(null); // null＝未取得。当日いずれかの試合に既に入っている名前の集合
+
+  // 代打候補を出す時、既に当日のどこかの試合に入っている人（＝もう出番がある人）を候補から除くため、
+  // 全試合の対戦者名をここで取得しておく（代打メニューを開いた時だけ）
+  useEffect(() => {
+    if (menu !== "substitute" || subSide == null) { return; }
+    let alive = true;
+    dbGet("matches").then((all) => {
+      if (!alive) return;
+      const names = new Set();
+      Object.values(all || {}).forEach((mm) => {
+        if (mm && Array.isArray(mm.names)) mm.names.forEach((n) => { if (n) names.add(n); });
+      });
+      setTodayNames(names);
+    }).catch(() => { if (alive) setTodayNames(new Set()); });
+    return () => { alive = false; };
+  }, [menu, subSide]);
 
   // 対戦者を差し替える。names[side] に相手の名前を入れるだけ
   const replacePlayer = async (side, newName) => {
@@ -965,6 +982,7 @@ function TimelineSlotCard({
       });
       await dbUpdate("matches", next);
       setSubSide(null);
+      setTodayNames(null);
       setMenu(null);
     } catch {}
     setSaving(false);
@@ -1303,11 +1321,20 @@ function TimelineSlotCard({
                 <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
                   {names[subSide]}の代打を選んでください
                 </div>
-                {(roster || []).filter((p) => p.name && p.name !== names[subSide]).map((p) => (
-                  <button key={p.id} onClick={() => substitutePlayer(names[subSide], p.name)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
-                    {p.name}{p.r ? <span style={{ color: C.sub, fontWeight: 700 }}>　Fargo {p.r}</span> : null}
-                  </button>
-                ))}
+                <div style={{ fontSize: 12, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  当日どこかの試合に既に入っている人は候補から除いています
+                </div>
+                {todayNames == null ? (
+                  <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "10px 0" }}>確認中…</div>
+                ) : (
+                  (roster || [])
+                    .filter((p) => p.name && p.name !== names[subSide] && !todayNames.has(p.name))
+                    .map((p) => (
+                      <button key={p.id} onClick={() => substitutePlayer(names[subSide], p.name)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
+                        {p.name}{p.r ? <span style={{ color: C.sub, fontWeight: 700 }}>　Fargo {p.r}</span> : null}
+                      </button>
+                    ))
+                )}
                 <button onClick={() => setSubSide(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
