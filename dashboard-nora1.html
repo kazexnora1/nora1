@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.198";
-const BUILD_TIME = "2026-08-14 その他に代打（まとめて入れ替え）機能を追加";
+const APP_VERSION = "1.199";
+const BUILD_TIME = "2026-08-14 代打機能を対戦カードメニューに移設（その他パネルは廃止）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -921,6 +921,7 @@ function TimelineSlotCard({
   const [saving, setSaving] = useState(false);
   const [hist, setHist] = useState(null); // 復元候補（新しい順）
   const [editSide, setEditSide] = useState(null); // 対戦者を差し替える側（0 or 1）
+  const [subSide, setSubSide] = useState(null); // 代打を出す側（0 or 1）
 
   // 対戦者を差し替える。names[side] に相手の名前を入れるだけ
   const replacePlayer = async (side, newName) => {
@@ -933,6 +934,37 @@ function TimelineSlotCard({
         names: nextNames, version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
       setEditSide(null);
+      setMenu(null);
+    } catch {}
+    setSaving(false);
+  };
+
+  // 代打：この試合だけでなく、その人が入っている「まだ終わっていない試合」を全部横断的に探して入れ替える。
+  // 進行中の試合はスコア・ラック履歴をそのまま引き継ぎ、名前だけが差し替わる
+  const substitutePlayer = async (fromName, toName) => {
+    if (!fromName || !toName || fromName === toName) return;
+    setSaving(true);
+    try {
+      const allMatches = (await dbGet("matches")) || {};
+      const affected = Object.entries(allMatches).filter(
+        ([id, mm]) => mm && Array.isArray(mm.names) && mm.names.includes(fromName) && !isMatchFinished(mm)
+      );
+      if (!affected.length) { setSaving(false); return; }
+      if (!window.confirm(`「${fromName}」を「${toName}」に、まだ終わっていない${affected.length}試合すべてで入れ替えます。\n進行中の試合はスコアをそのまま引き継ぎます。\n\nよろしいですか？`)) {
+        setSaving(false); return;
+      }
+      await saveBackup(`${fromName}→${toName}の代打の前`);
+      const now = Date.now();
+      const next = {};
+      affected.forEach(([id, mm]) => {
+        const nms = [...mm.names];
+        for (let i = 0; i < nms.length; i++) if (nms[i] === fromName) nms[i] = toName;
+        next[id + "/names"] = nms;
+        next[id + "/version"] = (mm.version || 1) + 1;
+        next[id + "/updatedAt"] = now;
+      });
+      await dbUpdate("matches", next);
+      setSubSide(null);
       setMenu(null);
     } catch {}
     setSaving(false);
@@ -1173,7 +1205,8 @@ function TimelineSlotCard({
             {menu === "edit" && m && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button onClick={openScore} style={menuBtn}>✏️ スコアを修正する</button>
-                <button onClick={() => setMenu("players")} style={menuBtn}>👥 対戦者を入れ替える</button>
+                <button onClick={() => setMenu("players")} style={menuBtn}>👥 この試合の対戦者を編集</button>
+                <button onClick={() => setMenu("substitute")} style={menuBtn}>🔁 選手に代打を出す</button>
                 {st !== "done" && <button onClick={() => setMenu("finish")} style={menuBtn}>🏁 この試合を終了にする</button>}
                 {st === "done" && <button onClick={reopen} disabled={saving} style={menuBtn}>↩︎ 終了を取り消して試合中に戻す</button>}
                 <button onClick={() => setMenu("create")} style={menuBtn}>🆕 試合を新規作成</button>
@@ -1244,6 +1277,38 @@ function TimelineSlotCard({
                   </button>
                 ))}
                 <button onClick={() => setEditSide(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+              </div>
+            )}
+
+            {menu === "substitute" && m && subSide == null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  代打を出す方を選んでください
+                </div>
+                <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 2, lineHeight: 1.6 }}>
+                  この試合だけでなく、選んだ人が入っている「まだ終わっていない試合」を全部まとめて差し替えます
+                </div>
+                <button onClick={() => setSubSide(0)} style={{ ...menuBtn, borderColor: C.blue, color: C.blue }}>
+                  青（左）：{names[0]}
+                </button>
+                <button onClick={() => setSubSide(1)} style={{ ...menuBtn, borderColor: C.red, color: C.red }}>
+                  赤（右）：{names[1]}
+                </button>
+                <button onClick={() => setMenu("edit")} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
+              </div>
+            )}
+
+            {menu === "substitute" && m && subSide != null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", marginBottom: 2 }}>
+                  {names[subSide]}の代打を選んでください
+                </div>
+                {(roster || []).filter((p) => p.name && p.name !== names[subSide]).map((p) => (
+                  <button key={p.id} onClick={() => substitutePlayer(names[subSide], p.name)} disabled={saving} style={{ ...menuBtn, textAlign: "left" }}>
+                    {p.name}{p.r ? <span style={{ color: C.sub, fontWeight: 700 }}>　Fargo {p.r}</span> : null}
+                  </button>
+                ))}
+                <button onClick={() => setSubSide(null)} style={{ ...menuBtn, background: C.zone, fontWeight: 700 }}>もどる</button>
               </div>
             )}
 
@@ -2479,9 +2544,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
           <ScheduleTab roster={roster} />
         </div>
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
-          <SubstitutePanel roster={roster} />
-        </div>
-        <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
           <BannerPanel />
         </div>
       </Section>
@@ -2614,91 +2676,6 @@ function RulesPanel({ format }) {
 /* ========= バナーの編集 =========
    1行に1つ書くと、待機中の卓やスコアラー画面の下にランダムで出る。
    config/banners に改行区切りで保存し、選手側の端末にはすぐ届く */
-/* ========= 代打：ある人が絡む「まだ終わっていない試合」を全部まとめて別の人に入れ替える =========
-   予選・決勝トーナメントを問わず、対象の人が入っている未終了の試合を横断的に検索して差し替える。
-   進行中の試合はスコア・ラック履歴はそのまま残り、名前だけが差し替わる（＝途中出場の代打） */
-function SubstitutePanel({ roster }) {
-  const [matches, setMatches] = useState({});
-  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
-  const [fromName, setFromName] = useState("");
-  const [toName, setToName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  const affected = useMemo(() => {
-    if (!fromName) return [];
-    return Object.entries(matches || {})
-      .filter(([id, m]) => m && Array.isArray(m.names) && m.names.includes(fromName) && !isMatchFinished(m))
-      .map(([id, m]) => ({ id, m }))
-      .sort((a, b) => (a.m.table || 0) - (b.m.table || 0) || (a.m.slot || 0) - (b.m.slot || 0));
-  }, [matches, fromName]);
-
-  const apply = async () => {
-    if (!fromName || !toName || fromName === toName || !affected.length) return;
-    if (!window.confirm(`「${fromName}」を「${toName}」に、まだ終わっていない${affected.length}試合すべてで入れ替えます。\n進行中の試合はスコアをそのまま引き継ぎます。\n\nよろしいですか？`)) return;
-    setBusy(true); setMsg(null);
-    try {
-      await saveBackup(`${fromName}→${toName}の一括代打の前`);
-      const now = Date.now();
-      const next = {};
-      affected.forEach(({ id, m }) => {
-        const names = [...m.names];
-        for (let i = 0; i < names.length; i++) if (names[i] === fromName) names[i] = toName;
-        next[id + "/names"] = names;
-        next[id + "/version"] = (m.version || 1) + 1;
-        next[id + "/updatedAt"] = now;
-      });
-      await dbUpdate("matches", next);
-      setMsg({ ok: true, text: `${affected.length}試合を入れ替えました` });
-      setFromName(""); setToName("");
-    } catch (e) {
-      setMsg({ ok: false, text: String(e && e.message ? e.message : e) });
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div style={{ marginTop: 18 }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🔁 代打（まとめて入れ替え）</div>
-      <div style={{ ...HELP, marginBottom: 10 }}>
-        ある人が入っている、まだ終わっていない試合（進行中も含む）を全部まとめて別の人に差し替えます。
-        終わった試合の結果は変わりません。1試合だけ直したい時は、対戦カードの「⋯」→「対戦者を入れ替える」を使ってください
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <select value={fromName} onChange={(e) => { setFromName(e.target.value); setMsg(null); }} style={{ ...selectStyle, flex: 1, minWidth: 0 }}>
-          <option value="">誰を（差し替え前）</option>
-          {roster.filter((p) => p.name).map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
-        </select>
-        <span style={{ fontSize: 16, color: C.sub, flexShrink: 0 }}>→</span>
-        <select value={toName} onChange={(e) => { setToName(e.target.value); setMsg(null); }} style={{ ...selectStyle, flex: 1, minWidth: 0 }}>
-          <option value="">誰に（差し替え後）</option>
-          {roster.filter((p) => p.name).map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
-        </select>
-      </div>
-      {fromName && (
-        <div style={{ fontSize: 13, color: C.sub, marginBottom: 8 }}>
-          対象：まだ終わっていない<b style={{ color: C.ink }}>{affected.length}試合</b>
-          {affected.length > 0 && (
-            <div style={{ marginTop: 6 }}>
-              {affected.map(({ id, m }) => (
-                <div key={id} style={{ fontSize: 12.5, color: C.sub, padding: "2px 0" }}>
-                  T{m.table}　{m.names[0]} 対 {m.names[1]}{m.startedAt ? "（進行中）" : ""}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {msg && <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
-      <button onClick={apply} disabled={busy || !fromName || !toName || fromName === toName || !affected.length} style={{
-        width: "100%", background: (busy || !fromName || !toName || fromName === toName || !affected.length) ? C.line : C.ink,
-        color: (busy || !fromName || !toName || fromName === toName || !affected.length) ? C.sub : "#fff",
-        border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800,
-        cursor: (busy || !fromName || !toName || fromName === toName || !affected.length) ? "default" : "pointer", fontFamily: FONT,
-      }}>{busy ? "入れ替え中…" : `${affected.length || ""}試合まとめて入れ替える`}</button>
-    </div>
-  );
-}
 
 function BannerPanel() {
   const [text, setText] = useState(null);
