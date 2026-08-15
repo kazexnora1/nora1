@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.195";
-const BUILD_TIME = "2026-08-14 参加者選択を2カラムに再設計（A=左・タップして選ぶ固定枠、B=右・自由な候補リスト）";
+const APP_VERSION = "1.197";
+const BUILD_TIME = "2026-08-14 レート反映パネル廃止・常連追加ボタンを新設（メンバーDBのregularフラグ参照）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2781,106 +2781,6 @@ function BackupPanel() {
    試合の合間にその値を直しても、既に組まれた対戦の目標点は作成時に確定しているので変わらない。
    ここで「まだ始まっていない試合」だけを、今のメンバーリストのレートで組み直す。
    進行中・終了した試合には一切触らない（途中で目標点が動くと不公平になるため） */
-function RateApplyPanel({ roster }) {
-  const [scanning, setScanning] = useState(false);
-  const [diffs, setDiffs] = useState(null);
-  const [msg, setMsg] = useState(null);
-
-  const rateOf = (name) => {
-    const p = roster.find((x) => x.name === name);
-    const v = p ? parseInt(p.r, 10) : NaN;
-    return isNaN(v) ? 0 : v;
-  };
-
-  const scan = async () => {
-    setScanning(true); setMsg(null); setDiffs(null);
-    try {
-      const matches = (await dbGet("matches")) || {};
-      const list = [];
-      for (const id in matches) {
-        const m = matches[id];
-        if (!m || m.startedAt || isMatchFinished(m)) continue; // 進行中・終了済みは対象外
-        const names = m.names || ["", ""];
-        const R1 = rateOf(names[0]), R2 = rateOf(names[1]);
-        if (!(R1 > 0 && R2 > 0)) continue; // レート未入力の対戦は組み直せない
-        const lenPct = m.lenPct || 100;
-        const race = computeRace(R1, R2, lenPct);
-        const cur = m.raceTo || [0, 0];
-        if (race.rt1 === cur[0] && race.rt2 === cur[1]) continue;
-        list.push({ id, table: m.table, names, before: [cur[0], cur[1]], after: [race.rt1, race.rt2],
-                    R1, R2, lenPct, version: m.version || 1 });
-      }
-      list.sort((a, b) => (a.table - b.table));
-      setDiffs(list);
-      if (list.length === 0) setMsg({ ok: true, text: "組み直しが必要な試合はありません" });
-    } catch (e) {
-      setMsg({ ok: false, text: String(e && e.message ? e.message : e) });
-    }
-    setScanning(false);
-  };
-
-  const apply = async () => {
-    if (!diffs || !diffs.length) return;
-    if (!window.confirm(`${diffs.length}試合の目標点を組み直します。よろしいですか？\n（進行中・終了した試合は変わりません）`)) return;
-    setScanning(true);
-    try {
-      const now = Date.now();
-      const upd = {};
-      diffs.forEach((d) => {
-        upd[d.id + "/raceTo"] = d.after;
-        upd[d.id + "/r1"] = d.R1;
-        upd[d.id + "/r2"] = d.R2;
-        upd[d.id + "/updatedAt"] = now;
-        upd[d.id + "/version"] = d.version + 1; // 選手の端末（B2）に確実に届くよう版を上げる
-      });
-      await saveBackup("レートを試合に反映する前");
-      await dbUpdate("matches", upd);
-      setMsg({ ok: true, text: `${diffs.length}試合の目標点を組み直しました` });
-      setDiffs(null);
-    } catch (e) {
-      setMsg({ ok: false, text: String(e && e.message ? e.message : e) });
-    }
-    setScanning(false);
-  };
-
-  return (
-    <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
-      <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 7 }}>レート変更を試合に反映</div>
-      <div style={{ ...HELP, marginBottom: 12 }}>
-        上でレートを直したあとに押してください。<b>まだ始まっていない試合</b>だけを、今のレートで組み直します。
-        進行中・終了した試合の目標点は変わりません。
-      </div>
-      <button onClick={scan} disabled={scanning} style={{
-        width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
-        color: C.blue, fontSize: 16, fontWeight: 800, padding: "14px 0", cursor: "pointer", fontFamily: FONT,
-        opacity: scanning ? 0.5 : 1,
-      }}>{scanning ? "確認中…" : "🔍 変わる試合を確認する"}</button>
-
-      {msg && <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
-
-      {diffs && diffs.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 6 }}>{diffs.length}試合が変わります</div>
-          {diffs.map((d) => (
-            <div key={d.id} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: "7px 10px", marginBottom: 6 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>T{d.table}　{d.names[0]} 対 {d.names[1]}</div>
-              <div style={{ fontSize: 13, color: C.sub, fontVariantNumeric: "tabular-nums" }}>
-                目標点 <s>{d.before[0]} / {d.before[1]}</s>
-                <b style={{ color: C.ink, marginLeft: 8 }}>→ {d.after[0]} / {d.after[1]}</b>
-              </div>
-            </div>
-          ))}
-          <button onClick={apply} disabled={scanning} style={{
-            width: "100%", marginTop: 4, background: C.win, color: "#fff", border: "none", borderRadius: 10,
-            fontSize: 14.5, fontWeight: 800, padding: "12px 0", cursor: "pointer", fontFamily: FONT,
-            opacity: scanning ? 0.5 : 1,
-          }}>この内容で組み直す</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ========= メンバーDB（nora-members）から選んで一括登録するパネル ========= */
 function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
   const [state, setState] = useState("loading"); // loading | ready | error
@@ -3006,6 +2906,32 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
     persist(true);
   };
 
+  // 常連追加：メンバーDBで「常連」フラグが付いている人をまとめて追加する。
+  // 既に参加予定者リストに（同じ名前で）入っている人は対象から自動的に外れる
+  const [regularList, setRegularList] = useState(null); // null＝まだ読み込み中
+  const [regularBusy, setRegularBusy] = useState(false);
+  const [regularMsg, setRegularMsg] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    membersDbGet("members").then((v) => {
+      if (alive) setRegularList(Array.isArray(v) ? v.filter((p) => p && p.name && p.regular) : []);
+    }).catch(() => { if (alive) setRegularList([]); });
+    return () => { alive = false; };
+  }, []);
+  const existingNamesSet = new Set(roster.map((p) => (p.name || "").trim()).filter(Boolean));
+  const pendingRegulars = (regularList || []).filter((p) => !existingNamesSet.has((p.name || "").trim()));
+  const addRegulars = () => {
+    if (!pendingRegulars.length) return;
+    setRegularBusy(true);
+    setRoster((rs) => [
+      ...rs,
+      ...pendingRegulars.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "" })),
+    ]);
+    persist();
+    setRegularMsg(`常連${pendingRegulars.length}人を追加しました`);
+    setRegularBusy(false);
+  };
+
   return (
     <div style={{ color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 10 }}>
@@ -3037,6 +2963,16 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
           <button onClick={add} style={{ background: "#fff", border: `2px dashed ${C.blue}`, borderRadius: 9, color: C.blue, fontSize: 13, fontWeight: 700, padding: "10px 0", cursor: "pointer", fontFamily: FONT }}>＋ 新規追加</button>
           <button onClick={() => setShowPicker((v) => !v)} style={{ background: showPicker ? C.blue : "#fff", border: `2px solid ${C.blue}`, borderRadius: 9, color: showPicker ? "#fff" : C.blue, fontSize: 13, fontWeight: 700, padding: "10px 0", cursor: "pointer", fontFamily: FONT }}>👥 DBから追加</button>
+          <button onClick={addRegulars} disabled={regularBusy || !pendingRegulars.length} title={regularList === null ? "常連リストを読み込み中…" : !pendingRegulars.length ? "追加できる常連がいません（未登録、または全員追加済み）" : ""}
+            style={{
+              background: pendingRegulars.length ? "#FFF7E0" : "#fff",
+              border: `2px solid ${pendingRegulars.length ? C.hill : C.line}`, borderRadius: 9,
+              color: pendingRegulars.length ? "#7A4B0B" : C.line, fontSize: 13, fontWeight: 700, padding: "10px 0",
+              cursor: pendingRegulars.length ? "pointer" : "default", fontFamily: FONT,
+            }}>
+            ⭐ 常連追加{pendingRegulars.length ? `（${pendingRegulars.length}人）` : ""}
+          </button>
+          {regularMsg && <div style={{ fontSize: 11.5, color: C.sub, textAlign: "center" }}>{regularMsg}</div>}
         </div>
       )}
       {showPicker && (
@@ -3044,8 +2980,6 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
           <PickFromMembersPanel roster={roster} setRoster={setRoster} persist={persist} onClose={() => setShowPicker(false)} />
         </div>
       )}
-
-      <RateApplyPanel roster={roster} />
     </div>
   );
 }
@@ -3307,7 +3241,7 @@ function perTableRoundRobinGenerate(N) {
    人数（枠）はBulkScheduleTab側で固定、常にplayers個の枠がある（空きも含む）。
    各枠をタップ（＝ドロップダウンを開く）すると、他の枠で使われていない候補だけが出る。
    名前とファーゴレート、細かい編集は右の「参加予定者リスト（B）」で行う（ここでは名前だけ表示） */
-function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onToggleLate, onShuffle }) {
+function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onToggleLate, onShuffle, onClearAll, rowGroupLabels }) {
   const filled = todayIds.filter(Boolean).length;
   return (
     <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 14, padding: "12px 10px" }}>
@@ -3323,28 +3257,40 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onT
         const p = id ? roster.find((x) => x.id === id) : null;
         const usedElsewhere = new Set(todayIds.filter((x, idx) => idx !== i && x));
         const options = roster.filter((r) => !usedElsewhere.has(r.id));
+        const label = rowGroupLabels ? rowGroupLabels[i] : null;
+        const showDivider = label && label !== (i > 0 ? rowGroupLabels[i - 1] : null);
         return (
-          <div key={i} style={{
-            display: "flex", alignItems: "center", gap: 4, marginBottom: 5, padding: "6px 6px",
-            background: "#fff", border: `1px solid ${p ? C.line : C.blue}`, borderRadius: 9,
-          }}>
-            <div style={{ width: 16, textAlign: "center", fontSize: 11.5, fontWeight: 800, color: p ? C.blue : C.sub, flexShrink: 0 }}>{i + 1}</div>
-            <select value={id || ""} onChange={(e) => onSetSlot(i, e.target.value ? parseInt(e.target.value, 10) : null)}
-              style={{
-                flex: 1, minWidth: 0, background: "transparent", border: "none", color: p ? C.ink : C.sub,
-                fontSize: 13, fontWeight: p ? 700 : 500, padding: "4px 0", outline: "none", fontFamily: FONT,
+          <React.Fragment key={i}>
+            {showDivider && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6, margin: i === 0 ? "0 0 5px" : "10px 0 5px",
+                borderTop: i === 0 ? "none" : `1.5px dashed ${C.blue}`, paddingTop: i === 0 ? 0 : 8,
               }}>
-              <option value="">空き</option>
-              {options.map((o) => <option key={o.id} value={o.id}>{o.name || "（無名）"}</option>)}
-            </select>
-            {p && (
-              <button onClick={() => onToggleLate(p.id)} title="遅刻予定" style={{
-                width: 24, height: 24, flexShrink: 0, background: todayLate[p.id] ? C.hill : "#fff",
-                border: `1px solid ${todayLate[p.id] ? C.hill : C.line}`, borderRadius: 7,
-                color: todayLate[p.id] ? "#fff" : C.sub, fontSize: 11.5, cursor: "pointer", padding: 0,
-              }}>⏰</button>
+                <span style={{ fontSize: 11, fontWeight: 800, color: C.blue }}>▾ {label}</span>
+              </div>
             )}
-          </div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 4, marginBottom: 5, padding: "6px 6px",
+              background: "#fff", border: `1px solid ${p ? C.line : C.blue}`, borderRadius: 9,
+            }}>
+              <div style={{ width: 16, textAlign: "center", fontSize: 11.5, fontWeight: 800, color: p ? C.blue : C.sub, flexShrink: 0 }}>{i + 1}</div>
+              <select value={id || ""} onChange={(e) => onSetSlot(i, e.target.value ? parseInt(e.target.value, 10) : null)}
+                style={{
+                  flex: 1, minWidth: 0, background: "transparent", border: "none", color: p ? C.ink : C.sub,
+                  fontSize: 13, fontWeight: p ? 700 : 500, padding: "4px 0", outline: "none", fontFamily: FONT,
+                }}>
+                <option value="">空き</option>
+                {options.map((o) => <option key={o.id} value={o.id}>{o.name || "（無名）"}</option>)}
+              </select>
+              {p && (
+                <button onClick={() => onToggleLate(p.id)} title="遅刻予定" style={{
+                  width: 24, height: 24, flexShrink: 0, background: todayLate[p.id] ? C.hill : "#fff",
+                  border: `1px solid ${todayLate[p.id] ? C.hill : C.line}`, borderRadius: 7,
+                  color: todayLate[p.id] ? "#fff" : C.sub, fontSize: 11.5, cursor: "pointer", padding: 0,
+                }}>⏰</button>
+              )}
+            </div>
+          </React.Fragment>
         );
       })}
       <button onClick={onShuffle} disabled={filled < 2} style={{
@@ -3352,6 +3298,12 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onT
         border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12.5, fontWeight: 800,
         cursor: filled < 2 ? "default" : "pointer", fontFamily: FONT,
       }}>🎲 シャッフル</button>
+      <button onClick={() => { if (filled && window.confirm(`当日参加者リストの${filled}人を全員クリアします。よろしいですか？`)) onClearAll(); }}
+        disabled={!filled} style={{
+          width: "100%", marginTop: 6, background: "#fff", color: filled ? C.minus : C.line,
+          border: `1px solid ${filled ? C.minus : C.line}`, borderRadius: 9, padding: "9px 0", fontSize: 12.5, fontWeight: 800,
+          cursor: filled ? "pointer" : "default", fontFamily: FONT,
+        }}>🗑 枠内オールクリア</button>
     </div>
   );
 }
@@ -3454,6 +3406,18 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       return arr;
     });
   };
+  const clearAllToday = () => { setTodayIds(Array.from({ length: players }, () => null)); setTodayLate({}); };
+  // グループ分け（グループを避けて組む／対抗戦）の時、当日参加者リストの枠の位置がどのグループになるかを、
+  // 実際の組み合わせ生成アルゴリズム（groupOf／rivalTeamA判定）と同じ基準でラベル化する
+  const rowGroupLabels = useMemo(() => {
+    if (rivalMode && rivalTeamA) {
+      return Array.from({ length: players }, (_, i) => (i < rivalTeamA ? (rivalNameA || "Aチーム") : (rivalNameB || "Bチーム")));
+    }
+    if (avoidGroups) {
+      return Array.from({ length: players }, (_, i) => (i < group1 ? "Aグループ" : i < group1 + group2 ? "Bグループ" : "Cグループ"));
+    }
+    return null;
+  }, [rivalMode, rivalTeamA, rivalNameA, rivalNameB, avoidGroups, group1, group2, players]);
   // 遅刻オプション：当日参加者リスト（A）の並び順＝選手番号として遅刻フラグを拾う
   const lateSet = useMemo(() => {
     const s = new Set();
@@ -3633,7 +3597,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
         <div style={{ flex: "0 0 42%", minWidth: 0 }}>
           <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate}
-            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onShuffle={shuffleToday} />
+            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onShuffle={shuffleToday} onClearAll={clearAllToday}
+            rowGroupLabels={rowGroupLabels} />
         </div>
         <div style={{ flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
