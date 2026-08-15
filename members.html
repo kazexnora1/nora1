@@ -34,8 +34,8 @@
 const { useState, useEffect, useRef, useMemo } = React;
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "1.000";
-const BUILD_TIME = "2026-08-12 新規作成";
+const APP_VERSION = "1.001";
+const BUILD_TIME = "2026-08-14 常連トグルを追加（B1の常連追加ボタンと連携）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -113,6 +113,11 @@ function MemberRow({ p, onUpdate, onRemove, isNew, onSettle, nameInputRef }) {
           onChange={(e) => onUpdate(p.id, "name", e.target.value.slice(0, 16))}
           placeholder="名前"
           style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${isNew ? C.win : C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
+        <button onClick={() => onUpdate(p.id, "regular", !p.regular)} title="常連（NORAによく来る人）" style={{
+          width: 40, height: 40, flexShrink: 0, borderRadius: 10, fontSize: 18, cursor: "pointer", fontFamily: FONT,
+          background: p.regular ? C.hillBg : "#fff", border: `1.5px solid ${p.regular ? C.hill : C.line}`,
+          color: p.regular ? C.hill : C.sub,
+        }}>{p.regular ? "⭐" : "☆"}</button>
         <button onClick={() => onRemove(p.id)} style={{ width: 40, height: 40, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -157,6 +162,7 @@ function App() {
   const [saveMsg, setSaveMsg] = useState(null);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState("name"); // name | fargo | jpa
+  const [onlyRegular, setOnlyRegular] = useState(false);
   const [newId, setNewId] = useState(null); // 直近で「＋追加」した人のid（並びを固定し目立たせる）
   const membersRef = useRef(members);
   membersRef.current = members;
@@ -221,13 +227,14 @@ function App() {
   const filtered = useMemo(() => {
     let list = members.filter((p) => p.id !== newId);
     if (q.trim()) list = list.filter((p) => (p.name || "").includes(q.trim()));
+    if (onlyRegular) list = list.filter((p) => p.regular);
     list = [...list].sort((a, b) => {
       if (sortKey === "fargo") return (parseInt(b.fargo, 10) || -1) - (parseInt(a.fargo, 10) || -1);
       if (sortKey === "jpa") return (parseInt(b.jpa, 10) || -1) - (parseInt(a.jpa, 10) || -1);
       return (a.name || "").localeCompare(b.name || "", "ja");
     });
     return list;
-  }, [members, q, sortKey, newId]);
+  }, [members, q, sortKey, newId, onlyRegular]);
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 40px", color: C.ink, fontFamily: FONT }}>
@@ -259,6 +266,11 @@ function App() {
           <option value="jpa">JPA順</option>
         </select>
       </div>
+      <button onClick={() => setOnlyRegular((v) => !v)} style={{
+        display: "flex", alignItems: "center", gap: 6, marginBottom: 12, background: onlyRegular ? C.hillBg : "#fff",
+        border: `1.5px solid ${onlyRegular ? C.hill : C.line}`, borderRadius: 10, color: onlyRegular ? C.hill : C.sub,
+        fontSize: 13, fontWeight: 700, padding: "8px 12px", cursor: "pointer", fontFamily: FONT,
+      }}>{onlyRegular ? "⭐" : "☆"} 常連のみ表示</button>
 
       {newRow && (
         <div>
