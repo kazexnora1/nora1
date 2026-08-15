@@ -34,8 +34,8 @@
 const { useState, useEffect, useRef, useMemo } = React;
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "1.001";
-const BUILD_TIME = "2026-08-14 常連トグルを追加（B1の常連追加ボタンと連携）";
+const APP_VERSION = "1.002";
+const BUILD_TIME = "2026-08-14 一覧を1行1人のコンパクト表示に変更（画面あたりの表示人数を増やす）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -95,61 +95,58 @@ function Notice({ children }) {
 }
 
 function MemberRow({ p, onUpdate, onRemove, isNew, onSettle, nameInputRef }) {
+  const [showNote, setShowNote] = useState(!!p.note);
   return (
     <div style={{
       border: isNew ? `2px solid ${C.win}` : `1px solid ${C.line}`,
-      borderRadius: 12, padding: 10, marginBottom: 10,
+      borderRadius: 10, padding: "6px 7px", marginBottom: 6,
       background: isNew ? "#EEF8F0" : "#fff",
-      boxShadow: isNew ? "0 0 0 3px rgba(46,125,70,0.12)" : "none",
       position: "relative",
     }}>
       {isNew && (
-        <div style={{ position: "absolute", top: -10, left: 10, background: C.win, color: "#fff", fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999 }}>
-          🆕 新規（未保存の名前）
+        <div style={{ position: "absolute", top: -9, left: 8, background: C.win, color: "#fff", fontSize: 9.5, fontWeight: 800, padding: "1px 7px", borderRadius: 999 }}>
+          🆕 新規
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, marginTop: isNew ? 4 : 0 }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: isNew ? 5 : 0 }}>
+        <button onClick={() => onUpdate(p.id, "regular", !p.regular)} title="常連（NORAによく来る人）" style={{
+          width: 28, height: 30, flexShrink: 0, borderRadius: 7, fontSize: 14, cursor: "pointer", fontFamily: FONT,
+          background: p.regular ? C.hillBg : "#fff", border: `1.5px solid ${p.regular ? C.hill : C.line}`,
+          color: p.regular ? C.hill : C.sub, padding: 0,
+        }}>{p.regular ? "⭐" : "☆"}</button>
         <input ref={isNew ? nameInputRef : null} value={p.name}
           onChange={(e) => onUpdate(p.id, "name", e.target.value.slice(0, 16))}
           placeholder="名前"
-          style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${isNew ? C.win : C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, fontWeight: 700, padding: "10px 12px", outline: "none", fontFamily: FONT }} />
-        <button onClick={() => onUpdate(p.id, "regular", !p.regular)} title="常連（NORAによく来る人）" style={{
-          width: 40, height: 40, flexShrink: 0, borderRadius: 10, fontSize: 18, cursor: "pointer", fontFamily: FONT,
-          background: p.regular ? C.hillBg : "#fff", border: `1.5px solid ${p.regular ? C.hill : C.line}`,
-          color: p.regular ? C.hill : C.sub,
-        }}>{p.regular ? "⭐" : "☆"}</button>
-        <button onClick={() => onRemove(p.id)} style={{ width: 40, height: 40, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.sub, fontSize: 18, cursor: "pointer" }}>×</button>
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ display: "flex", gap: 4 }}>
+          style={{ flex: 1, minWidth: 0, background: "#fff", border: `1px solid ${isNew ? C.win : C.line}`, borderRadius: 7, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "6px 8px", outline: "none", fontFamily: FONT }} />
+        <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
           {CLASS_OPTIONS.map((cl) => (
             <button key={cl} onClick={() => onUpdate(p.id, "cls", p.cls === cl ? "" : cl)}
               style={{
-                width: 34, height: 34, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                width: 24, height: 30, borderRadius: 6, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, padding: 0,
                 background: p.cls === cl ? C.blue : "#fff", color: p.cls === cl ? "#fff" : C.sub,
                 border: `1.5px solid ${p.cls === cl ? C.blue : C.line}`,
               }}>{cl}</button>
           ))}
         </div>
-        <div style={{ width: 1, alignSelf: "stretch", background: C.line }} />
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div style={{ fontSize: 10, color: C.sub, fontWeight: 700 }}>Fargo</div>
-          <input inputMode="numeric" value={p.fargo || ""} onChange={(e) => onUpdate(p.id, "fargo", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            placeholder="―"
-            style={{ width: 56, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 14, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div style={{ fontSize: 10, color: C.sub, fontWeight: 700 }}>JPA</div>
-          <select value={p.jpa || ""} onChange={(e) => onUpdate(p.id, "jpa", e.target.value)}
-            style={{ width: 56, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 14, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }}>
-            <option value="">―</option>
-            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
+        <input inputMode="numeric" value={p.fargo || ""} onChange={(e) => onUpdate(p.id, "fargo", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+          placeholder="Fg"
+          style={{ width: 36, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 6, color: C.ink, fontSize: 12, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }} />
+        <select value={p.jpa || ""} onChange={(e) => onUpdate(p.id, "jpa", e.target.value)}
+          style={{ width: 40, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 6, color: C.ink, fontSize: 12, fontWeight: 700, padding: "6px 0", textAlign: "center", outline: "none", fontFamily: FONT }}>
+          <option value="">JPA</option>
+          {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <button onClick={() => setShowNote((v) => !v)} title="備考" style={{
+          width: 26, height: 30, flexShrink: 0, borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: FONT, padding: 0,
+          background: p.note ? C.zone : "#fff", border: `1px solid ${C.line}`, color: C.sub,
+        }}>📝</button>
+        <button onClick={() => onRemove(p.id)} style={{ width: 26, height: 30, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 6, color: C.sub, fontSize: 15, cursor: "pointer", padding: 0 }}>×</button>
       </div>
-      <input value={p.note || ""} onChange={(e) => onUpdate(p.id, "note", e.target.value.slice(0, 60))}
-        placeholder="備考（任意）"
-        style={{ width: "100%", boxSizing: "border-box", marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 12.5, padding: "7px 10px", outline: "none", fontFamily: FONT }} />
+      {showNote && (
+        <input value={p.note || ""} onChange={(e) => onUpdate(p.id, "note", e.target.value.slice(0, 60))}
+          placeholder="備考（任意）"
+          style={{ width: "100%", boxSizing: "border-box", marginTop: 5, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 6, color: C.ink, fontSize: 11.5, padding: "5px 8px", outline: "none", fontFamily: FONT }} />
+      )}
     </div>
   );
 }
