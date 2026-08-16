@@ -80,8 +80,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.004";
-const BUILD_TIME = "2026-08-13 バージョン表記を見やすく";
+const APP_VERSION = "1.005";
+const BUILD_TIME = "2026-08-16 JCLのメインスコア表示を全画面でラック確定分のみに統一（テーブルタブ・スコアラー画面）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1013,8 +1013,11 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
   // ヒルヒル＝両者とも残りヒル閾値以下（確定分で判定）。JCLだけの概念で、あずき杯には無い
   const hillHill = !finished && m.phase === "play" && ruleset.hillThreshold != null &&
     raceTo[0] > 0 && raceTo[1] > 0 && raceTo[0] - tot[0] <= ruleset.hillThreshold && raceTo[1] - tot[1] <= ruleset.hillThreshold;
-  // 得点は台上の球を含めて常にライブ更新する。ヒルヒルに入ったら、その9番で決着が付くまで確定分で止める
-  const disp = (m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot;
+  // 得点：JCLはラック確定分（tot）のみを表示し、台上の球ではライブ更新しない（ヒル計算がずれるため）。
+  // あずき杯／モスカップは従来どおり台上の球も含めて常時ライブ更新
+  const disp = ruleset.hillThreshold != null
+    ? tot
+    : ((m.phase === "play" && !hillHill) ? [tot[0] + live[0], tot[1] + live[1]] : tot);
 
   const rateOf = (i) => (raceTo[i] > 0 ? Math.min(1, tot[i] / raceTo[i]) : 0);
   const badgeOf = (i) => {
@@ -1958,8 +1961,11 @@ function MatchScreen({ setupInfo, onExit }) {
   const hillHill = ruleset.hillThreshold != null
     ? rt(0) > 0 && rt(1) > 0 && rt(0) - tot[0] <= ruleset.hillThreshold && rt(1) - tot[1] <= ruleset.hillThreshold
     : false;
-  // JCL: ヒルヒル中は確定分のみ表示（9番落とすまで得点確定しないため）。あずき杯: 常時ライブ更新
-  const disp = (phase === "play" && !hillHill) ? liveTot : [tot[0], tot[1]];
+  // 得点：JCLはラック確定分（tot）のみを表示し、台上の球ではライブ更新しない（ヒル計算がずれるため）。
+  // あずき杯／モスカップは従来どおり台上の球も含めて常時ライブ更新
+  const disp = ruleset.hillThreshold != null
+    ? [tot[0], tot[1]]
+    : ((phase === "play" && !hillHill) ? liveTot : [tot[0], tot[1]]);
 
   // ===== 持ち時間タイマー =====
   // deadline はタイマー開始時に確定した「時間切れ時刻」（絶対時刻）。以後はこれを基準に逆算するだけで、
