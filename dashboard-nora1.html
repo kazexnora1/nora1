@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.203";
-const BUILD_TIME = "2026-08-16 PC/印刷用の成績表にも対抗戦（団体戦）成績をプレイヤー個人成績と別枠で表示";
+const APP_VERSION = "1.204";
+const BUILD_TIME = "2026-08-16 予選を組むに「早退」オプションを追加（遅刻の逆、できるだけ早いコマに寄せる）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3144,6 +3144,9 @@ function groupOf(x, groupSizes) {
    小さく抑える（そのまま乗せると終盤のコマ数不足で手詰まりを起こし、組めなくなることがあるため） */
 const LATE_WEIGHT = 4000;
 const LATE_SCORE_CAP = 8;
+// 早退オプション（遅刻の逆）：できるだけ早いコマに寄せる
+const EARLY_WEIGHT = 4000;
+const EARLY_SCORE_CAP = 8;
 // 大会途中で人を追加して組み直す時、過去に対戦済みのペアをできるだけ避けるためのソフトペナルティ。
 // グループ回避(20)より少し重く、連投(1〜3)よりずっと重いが、ハード制約ではないので「組めることを優先」できる
 const HISTORY_WEIGHT = 30;
@@ -3246,10 +3249,16 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
           const lateCount = (lateSet.has(a) ? 1 : 0) + (lateSet.has(b) ? 1 : 0);
           if (lateCount) lateCost = lateCount * (slots - 1 - s) * LATE_WEIGHT;
         }
-        const totalCost = matchCost + lateCost;
+        // 早退オプション：残りコマ数が少ないほど（＝遅いコマほど）ペナルティを大きくして、早いコマに寄せる（遅刻と同じ最優先の扱い）
+        let earlyCost = 0;
+        if (o.earlySet && o.earlySet.size) {
+          const earlyCount = (o.earlySet.has(a) ? 1 : 0) + (o.earlySet.has(b) ? 1 : 0);
+          if (earlyCount) earlyCost = earlyCount * s * EARLY_WEIGHT;
+        }
+        const totalCost = matchCost + lateCost + earlyCost;
         if (cost + totalCost >= ceiling) continue;
         const scoreCost = (groupSizes || rivalTeamA) ? matchCost * 100 : matchCost * 1000;
-        const lateScoreNudge = Math.min(lateCost, LATE_SCORE_CAP);
+        const lateScoreNudge = Math.min(lateCost, LATE_SCORE_CAP) + Math.min(earlyCost, EARLY_SCORE_CAP);
         cands.push({ a, b, cost: totalCost, carryFlag, score: scoreCost - (2 * G - deg[a] - deg[b]) * 10 + rng() * 5 + lateScoreNudge });
       }
     }
@@ -3280,15 +3289,16 @@ function bulkAttempt(N, G, plan, rng, ceiling, nodeLimit, relaxed, groupSizes, l
 function bulkGenerate(N, G, relaxed, groupSizes, lateSet, rivalTeamA, opts) {
   const plan = bulkMakePlan(N, G, relaxed, opts && opts.totalOverride);
   if (plan.error) return { error: plan.error };
+  const hasEarly = !!(opts && opts.earlySet && opts.earlySet.size);
   let best = null, ceiling = Infinity;
   const start = Date.now();
   for (let r = 0; r < 400; r++) {
     if (Date.now() - start > 2500) break;
     const got = bulkAttempt(N, G, plan, bulkMulberry(r * 7919 + 13), ceiling, 40000, relaxed, groupSizes, lateSet, rivalTeamA, opts);
-    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && best.cost <= plan.lower) break; }
+    if (got && got.cost < ceiling) { best = got; ceiling = got.cost; if (!groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && !hasEarly && best.cost <= plan.lower) break; }
   }
   if (!best) return { error: relaxed ? (rivalTeamA ? "この人数・チーム分けでは対抗戦を組めませんでした。人数やチーム分けを変えてください。" : "条件を緩和しても組み合わせが見つかりませんでした。人数か試合数を変えてください。") : "条件を満たす組み合わせが見つかりませんでした。" };
-  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && best.cost <= plan.lower };
+  return { plan, board: best.board, cost: best.cost, optimal: !groupSizes && !rivalTeamA && !(lateSet && lateSet.size) && !hasEarly && best.cost <= plan.lower };
 }
 // 条件（同卓縛り・3連投禁止）はまず厳密に組もうとし、成立しなければ自動的に緩和して再試行する。
 // 対抗戦（rivalTeamA指定）の場合は「同チーム対戦の禁止」だけは緩和モードでも常に維持する
@@ -3370,7 +3380,7 @@ function perTableRoundRobinGenerate(N) {
    人数（枠）はBulkScheduleTab側で固定、常にplayers個の枠がある（空きも含む）。
    各枠をタップ（＝ドロップダウンを開く）すると、他の枠で使われていない候補だけが出る。
    名前とファーゴレート、細かい編集は右の「参加予定者リスト（B）」で行う（ここでは名前だけ表示） */
-function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onToggleLate, onShuffle, onClearAll, rowGroupLabels }) {
+function TodayRosterPanel({ players, roster, todayIds, todayLate, todayEarly, onSetSlot, onToggleLate, onToggleEarly, onShuffle, onClearAll, rowGroupLabels }) {
   const filled = todayIds.filter(Boolean).length;
   return (
     <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 14, padding: "12px 10px" }}>
@@ -3417,6 +3427,13 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, onSetSlot, onT
                   border: `1px solid ${todayLate[p.id] ? C.hill : C.line}`, borderRadius: 7,
                   color: todayLate[p.id] ? "#fff" : C.sub, fontSize: 11.5, cursor: "pointer", padding: 0,
                 }}>⏰</button>
+              )}
+              {p && (
+                <button onClick={() => onToggleEarly(p.id)} title="早退予定" style={{
+                  width: 24, height: 24, flexShrink: 0, background: todayEarly[p.id] ? C.win : "#fff",
+                  border: `1px solid ${todayEarly[p.id] ? C.win : C.line}`, borderRadius: 7,
+                  color: todayEarly[p.id] ? "#fff" : C.sub, fontSize: 11.5, cursor: "pointer", padding: 0,
+                }}>🏃</button>
               )}
             </div>
           </React.Fragment>
@@ -3474,13 +3491,15 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   // 配列の長さは常にplayersと同じ（空き枠はnull）。並び順＝抽選番号
   const [todayIds, setTodayIds] = useState(() => (Array.isArray(s0.todayIds) ? s0.todayIds : []));
   const [todayLate, setTodayLate] = useState(() => (s0.todayLate && typeof s0.todayLate === "object" ? s0.todayLate : {}));
+  // 早退予定：遅刻の逆で、できるだけ早いコマに寄せる
+  const [todayEarly, setTodayEarly] = useState(() => (s0.todayEarly && typeof s0.todayEarly === "object" ? s0.todayEarly : {}));
 
   const perTableEligible = players % 3 === 0 && players / 3 >= 2;
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
   // 「テーブル毎に総当たり」は人数が3で割り切れる時だけ使える。対象外になったら自動でOFFにする
   useEffect(() => {
     if (perTableRR && !perTableEligible) setPerTableRR(false);
@@ -3523,8 +3542,10 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const removeFromToday = (id) => {
     setTodayIds((ids) => ids.map((x) => (x === id ? null : x)));
     setTodayLate((m) => { const { [id]: _drop, ...rest } = m; return rest; });
+    setTodayEarly((m) => { const { [id]: _drop, ...rest } = m; return rest; });
   };
   const toggleLate = (id) => setTodayLate((m) => ({ ...m, [id]: !m[id] }));
+  const toggleEarly = (id) => setTodayEarly((m) => ({ ...m, [id]: !m[id] }));
   const shuffleToday = () => {
     setTodayIds((ids) => {
       const arr = [...ids];
@@ -3535,7 +3556,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       return arr;
     });
   };
-  const clearAllToday = () => { setTodayIds(Array.from({ length: players }, () => null)); setTodayLate({}); };
+  const clearAllToday = () => { setTodayIds(Array.from({ length: players }, () => null)); setTodayLate({}); setTodayEarly({}); };
   // グループ分け（グループを避けて組む／対抗戦）の時、当日参加者リストの枠の位置がどのグループになるかを、
   // 実際の組み合わせ生成アルゴリズム（groupOf／rivalTeamA判定）と同じ基準でラベル化する
   const rowGroupLabels = useMemo(() => {
@@ -3554,6 +3575,13 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
     return s;
   }, [todayRoster, todayLate]);
   const lateCountInPlay = lateSet.size;
+  // 早退オプション：遅刻の逆で、できるだけ早いコマに寄せる
+  const earlySet = useMemo(() => {
+    const s = new Set();
+    todayRoster.forEach((p, i) => { if (todayEarly[p.id]) s.add(i + 1); });
+    return s;
+  }, [todayRoster, todayEarly]);
+  const earlyCountInPlay = earlySet.size;
 
   useEffect(() => dbSubscribe("matches", (m) => setExistingMatches(m || {}), () => {}), []);
   const existingPrelimCount = useMemo(
@@ -3625,7 +3653,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA));
+      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
       setBusy(false);
     }, 20);
   };
@@ -3730,8 +3758,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
         <div style={{ flex: "0 0 42%", minWidth: 0 }}>
-          <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate}
-            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onShuffle={shuffleToday} onClearAll={clearAllToday}
+          <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate} todayEarly={todayEarly}
+            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onToggleEarly={toggleEarly} onShuffle={shuffleToday} onClearAll={clearAllToday}
             rowGroupLabels={rowGroupLabels} />
         </div>
         <div style={{ flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
@@ -3922,6 +3950,16 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#7A4B0B",
         }}>
           ⏰ 遅刻設定の{lateCountInPlay}人を、できるだけ後の試合になるよう最優先で調整します
+          {usePerTableRR && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（総当たりモードでは全員が毎ラウンド対戦するため、実際には反映されません）</span>}
+        </div>
+      )}
+
+      {earlyCountInPlay > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, background: "#E8F5E9", border: `1px solid ${C.win}`,
+          borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#1B5E20",
+        }}>
+          🏃 早退設定の{earlyCountInPlay}人を、できるだけ早い試合になるよう最優先で調整します
           {usePerTableRR && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（総当たりモードでは全員が毎ラウンド対戦するため、実際には反映されません）</span>}
         </div>
       )}
