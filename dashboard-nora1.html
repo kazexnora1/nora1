@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.204";
-const BUILD_TIME = "2026-08-16 予選を組むに「早退」オプションを追加（遅刻の逆、できるだけ早いコマに寄せる）";
+const APP_VERSION = "1.205";
+const BUILD_TIME = "2026-08-16 代打を出す時にファーゴレート(r1/r2)と目標点(raceTo)も代打側の値で組み直すよう修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -957,7 +957,7 @@ function TimelineSlotCard({
   };
 
   // 代打：この試合だけでなく、その人が入っている「まだ終わっていない試合」を全部横断的に探して入れ替える。
-  // 進行中の試合はスコア・ラック履歴をそのまま引き継ぎ、名前だけが差し替わる
+  // 進行中の試合はスコア・ラック履歴をそのまま引き継ぎ、名前と（ファーゴを使うフォーマットなら）ファーゴレート・目標点を差し替える
   const substitutePlayer = async (fromName, toName) => {
     if (!fromName || !toName || fromName === toName) return;
     setSaving(true);
@@ -967,7 +967,13 @@ function TimelineSlotCard({
         ([id, mm]) => mm && Array.isArray(mm.names) && mm.names.includes(fromName) && !isMatchFinished(mm)
       );
       if (!affected.length) { setSaving(false); return; }
-      if (!window.confirm(`「${fromName}」を「${toName}」に、まだ終わっていない${affected.length}試合すべてで入れ替えます。\n進行中の試合はスコアをそのまま引き継ぎます。\n\nよろしいですか？`)) {
+      const subP = roster.find((r) => r.name === toName);
+      const subFargo = parseInt(subP && subP.r, 10) || 0;
+      const usesFargo = affected.some(([, mm]) => mm.format !== "azuki");
+      const fargoWarn = usesFargo && !subFargo
+        ? `\n※「${toName}」さんはファーゴレートが未設定のため、目標点が0（未算出）になります。あとで参加予定者リストでレートを入れてから、もう一度代打を出すか手動で目標点を調整してください。`
+        : "";
+      if (!window.confirm(`「${fromName}」を「${toName}」に、まだ終わっていない${affected.length}試合すべてで入れ替えます。\n進行中の試合はスコアをそのまま引き継ぎます。ファーゴハンデを使うフォーマットの試合は、目標点も「${toName}」さんのレートで組み直します。${fargoWarn}\n\nよろしいですか？`)) {
         setSaving(false); return;
       }
       await saveBackup(`${fromName}→${toName}の代打の前`);
@@ -975,10 +981,22 @@ function TimelineSlotCard({
       const next = {};
       affected.forEach(([id, mm]) => {
         const nms = [...mm.names];
-        for (let i = 0; i < nms.length; i++) if (nms[i] === fromName) nms[i] = toName;
+        const sides = [];
+        for (let i = 0; i < nms.length; i++) if (nms[i] === fromName) { nms[i] = toName; sides.push(i); }
         next[id + "/names"] = nms;
         next[id + "/version"] = (mm.version || 1) + 1;
         next[id + "/updatedAt"] = now;
+        if (mm.format !== "azuki") {
+          // ファーゴハンデを使うフォーマット：代打側のr1/r2を差し替えて、目標点(raceTo)も組み直す
+          let R1 = mm.r1 || 0, R2 = mm.r2 || 0;
+          sides.forEach((i) => {
+            if (i === 0) R1 = subFargo; else R2 = subFargo;
+            next[id + "/r" + (i + 1)] = subFargo;
+          });
+          const pct = mm.lenPct || 100;
+          const race = R1 > 0 && R2 > 0 ? computeRace(R1, R2, pct) : { rt1: 0, rt2: 0 };
+          next[id + "/raceTo"] = [race.rt1, race.rt2];
+        }
       });
       await dbUpdate("matches", next);
       setSubSide(null);
