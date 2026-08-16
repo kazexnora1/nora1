@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.202";
-const BUILD_TIME = "2026-08-16 大会途中で人を追加して組み直す機能を追加（試合割りタブ）";
+const APP_VERSION = "1.203";
+const BUILD_TIME = "2026-08-16 PC/印刷用の成績表にも対抗戦（団体戦）成績をプレイヤー個人成績と別枠で表示";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1821,6 +1821,7 @@ function PcStandingsTab() {
 
   const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
   const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster, "prelim"), [matches, roster]);
+  const teamRows = useMemo(() => buildTeamStandings(matches), [matches]);
   const rowCount = Math.max(1, stRows.length);
   const gCell = { border: `1px solid ${C.line}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 4px" };
   const tournamentName = loadSettings().tournamentName || "";
@@ -1845,6 +1846,27 @@ function PcStandingsTab() {
           cursor: hasBracket ? "pointer" : "default", fontFamily: FONT,
         }}>🏆 決勝トーナメント{!hasBracket ? "（未登録）" : ""}</button>
       </div>
+
+      {view === "prelim" && teamRows.length > 0 && (
+        <div style={{ flexShrink: 0, marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 6 }}>🏳️ 団体戦成績（対抗戦）</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {teamRows.map((t) => (
+              <div key={t.name} style={{
+                flex: 1, background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 10,
+                padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: C.win }}>{t.win}勝</span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: C.sub }}>{t.loss}敗</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>（得失点 {t.diff > 0 ? `+${t.diff}` : t.diff}）</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {view === "bracket" ? (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
