@@ -80,8 +80,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.005";
-const BUILD_TIME = "2026-08-16 JCLのメインスコア表示を全画面でラック確定分のみに統一（テーブルタブ・スコアラー画面）";
+const APP_VERSION = "1.006";
+const BUILD_TIME = "2026-08-16 「テーブル」タブの次の試合表示：バンキング遷移中に次の次を表示していた不具合を修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1212,8 +1212,14 @@ function TablesTab() {
 
   const queues = [1, 2, 3].map((t) => getQueueForTable(matches, t));
   const display = [1, 2, 3].map((t) => pickDisplayMatch(matches, t));
+  // 「次の試合」＝今表示している試合の1つ後ろ。ただし直前の試合が終わってバンキング中の間は
+  // pickDisplayMatchが直近の終了試合を表示し続けるため、その間はqueue[0]（バンキング中の本当の次戦）を出す
   const nextMatches = queues
-    .map((q, i) => (q[1] ? { ...q[1], tableNum: i + 1 } : null))
+    .map((q, i) => {
+      const isBankingTransition = display[i] && q[0] && display[i].id !== q[0].id;
+      const nx = isBankingTransition ? q[0] : q[1];
+      return nx ? { ...nx, tableNum: i + 1 } : null;
+    })
     .filter(Boolean);
   const rivalTeamNames = useMemo(() => {
     for (const id in matches) {
