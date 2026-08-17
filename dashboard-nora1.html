@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.208";
-const BUILD_TIME = "2026-08-17 グループ分けして総当たりを3で割り切れない人数にも対応（グループ数を選択可能に。例：15人→3or5グループ、16人→2/4/8グループ）。決勝進出は各グループ1位＋達成率上位で4or8人まで自動選出";
+const APP_VERSION = "1.209";
+const BUILD_TIME = "2026-08-17 グループ分けして総当たりに「グループでテーブル固定」オプションを追加（3グループの時のみ、G1〜G3をT1〜T3に固定して組める）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -3606,7 +3606,7 @@ function validGroupCounts(N) {
   }
   return opts;
 }
-function perGroupRoundRobinGenerate(N, G) {
+function perGroupRoundRobinGenerate(N, G, opts) {
   const g = G || 3;
   if (g < 2) return { error: "グループ数は2以上にしてください。" };
   if (N % g !== 0) return { error: `人数(${N})がグループ数(${g})で割り切れないため組めません。` };
@@ -3614,35 +3614,58 @@ function perGroupRoundRobinGenerate(N, G) {
   if (M < 2) return { error: "1グループあたりの人数が少なすぎます（2人以上必要です）。" };
   const groups = Array.from({ length: g }, (_, i) => Array.from({ length: M }, (_, j) => j + 1 + i * M));
   const roundsPerGroup = groups.map((grp) => circleMethodRounds(grp));
-  const maxRounds = Math.max(...roundsPerGroup.map((r) => r.length));
-  // ラウンド（レベル）順に、その回で各グループが消化する対戦をキューへ積む
-  const queue = [];
-  for (let r = 0; r < maxRounds; r++) {
-    for (let gi = 0; gi < g; gi++) {
-      const round = roundsPerGroup[gi][r];
-      if (!round) continue;
-      round.forEach((pair) => queue.push({ grp: gi + 1, a: pair[0], b: pair[1] }));
+  // グループでテーブル固定モード：3グループの時だけ選べる。グループ1〜3をそのままT1〜T3に固定し、
+  // 卓をまたいだ振り分けをしない（グループ＝卓なので、選手はその大会中ずっと同じ卓に留まる）
+  const fixedTables = !!(opts && opts.fixedTables && g === 3);
+
+  let board;
+  if (fixedTables) {
+    const pairsPerGroup = roundsPerGroup.map((rounds) => {
+      const flat = [];
+      rounds.forEach((round) => round.forEach((pair) => flat.push(pair)));
+      return flat;
+    });
+    const slotsN = Math.max(...pairsPerGroup.map((p) => p.length));
+    board = [];
+    for (let s = 0; s < slotsN; s++) {
+      for (let gi = 0; gi < g; gi++) {
+        const pair = pairsPerGroup[gi][s];
+        if (!pair) continue;
+        board.push({ slot: s, table: gi, a: pair[0], b: pair[1], grp: gi + 1 });
+      }
     }
+  } else {
+    const maxRounds = Math.max(...roundsPerGroup.map((r) => r.length));
+    // ラウンド（レベル）順に、その回で各グループが消化する対戦をキューへ積む
+    const queue = [];
+    for (let r = 0; r < maxRounds; r++) {
+      for (let gi = 0; gi < g; gi++) {
+        const round = roundsPerGroup[gi][r];
+        if (!round) continue;
+        round.forEach((pair) => queue.push({ grp: gi + 1, a: pair[0], b: pair[1] }));
+      }
+    }
+    // その時点で試合数が一番少ない卓へ順に入れて、3卓の負荷をなるべく揃える
+    const perTableCount = [0, 0, 0];
+    board = queue.map((q) => {
+      let table = 0;
+      for (let t = 1; t < 3; t++) if (perTableCount[t] < perTableCount[table]) table = t;
+      const slot = perTableCount[table]++;
+      return { slot, table, a: q.a, b: q.b, grp: q.grp };
+    });
   }
-  // その時点で試合数が一番少ない卓へ順に入れて、3卓の負荷をなるべく揃える
-  const perTableCount = [0, 0, 0];
-  const board = queue.map((q) => {
-    let table = 0;
-    for (let t = 1; t < 3; t++) if (perTableCount[t] < perTableCount[table]) table = t;
-    const slot = perTableCount[table]++;
-    return { slot, table, a: q.a, b: q.b, grp: q.grp };
-  });
   // 表示用：直前の同卓コマと選手が重なっていたら「連投」バッジを付ける
   board.forEach((m) => {
     const prev = board.find((x) => x.table === m.table && x.slot === m.slot - 1);
     m.carry = prev && (prev.a === m.a || prev.a === m.b || prev.b === m.a || prev.b === m.b) ? 1 : 0;
     m.sameGroup = false;
   });
-  const slots = Math.max(...perTableCount);
+  const perTableFinal = [0, 1, 2].map((t) => board.filter((x) => x.table === t).length);
+  const slots = Math.max(...perTableFinal);
   const total = board.length;
   return {
     plan: { total, slots, sizes: null, lower: 0 },
-    board, cost: 0, optimal: true, usedRelaxed: false, groupCount: g, groupSize: M, groupGames: M - 1,
+    board, cost: 0, optimal: true, usedRelaxed: false, groupCount: g, groupSize: M, groupGames: M - 1, fixedTables,
   };
 }
 
@@ -3747,6 +3770,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const [group2, setGroup2] = useState(s0.group2 || 5);
   const [perTableRR, setPerTableRR] = useState(!!s0.perTableRR);
   const [groupCount, setGroupCount] = useState(s0.groupCount || 3);
+  const [fixedGroupTable, setFixedGroupTable] = useState(!!s0.fixedGroupTable);
   const [existingMatches, setExistingMatches] = useState({});
   // 対抗戦（団体戦）：参加者リストの前半／後半で2チームに分け、必ず違うチーム同士だけを組む
   const [rivalMode, setRivalMode] = useState(!!s0.rivalMode);
@@ -3771,8 +3795,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
   // 「グループ分けして総当たり」は、有効なグループ数の候補が無くなったら自動でOFFにする
   useEffect(() => {
     if (perTableRR && !perTableEligible) setPerTableRR(false);
@@ -3784,6 +3808,10 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
       setGroupCount(groupOptions.includes(3) ? 3 : groupOptions[0]);
     }
   }, [groupOptions]);
+  // 「グループでテーブル固定」は3グループの時だけ使える。3グループでなくなったら自動でOFFにする
+  useEffect(() => {
+    if (fixedGroupTable && groupCount !== 3) setFixedGroupTable(false);
+  }, [fixedGroupTable, groupCount]);
   // 「グループを避けて組む」と「対抗戦」は"グループ"の定義が異なるため同時には使えない（相互排他）
   useEffect(() => { if (rivalMode && avoidGroups) setAvoidGroups(false); }, [rivalMode]);
   useEffect(() => { if (avoidGroups && rivalMode) setRivalMode(false); }, [avoidGroups]);
@@ -3933,7 +3961,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perGroupRoundRobinGenerate(players, groupCount) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
+      setResult(usePerTableRR ? perGroupRoundRobinGenerate(players, groupCount, { fixedTables: fixedGroupTable }) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
       setBusy(false);
     }, 20);
   };
@@ -4077,7 +4105,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
               <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループ分けして総当たり（リーグ戦）</div>
               <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
                 {perTableEligible
-                  ? `全体を${groupCount}等分し、G1〜G${groupCount}それぞれのグループの中だけで${players / groupCount}人が総当たりします（1人${Math.max(0, players / groupCount - 1)}試合）。グループをまたいだ対戦は組みません。試合は3卓に均等に振り分けます`
+                  ? `全体を${groupCount}等分し、G1〜G${groupCount}それぞれのグループの中だけで${players / groupCount}人が総当たりします（1人${Math.max(0, players / groupCount - 1)}試合）。グループをまたいだ対戦は組みません。${
+                      perTableRR && fixedGroupTable ? "グループ1〜3をそのままT1〜T3に固定して組みます" : "試合は3卓に均等に振り分けます"
+                    }`
                   : "人数を2グループ以上・1グループ2人以上に均等分割できる時だけ使えます（例：15人なら3or5グループ、16人なら2/4/8グループ）"}
               </div>
               {perTableEligible && (
@@ -4091,6 +4121,21 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
                       cursor: perTableRR ? "pointer" : "default", fontFamily: FONT, opacity: perTableRR ? 1 : 0.5,
                     }}>{g}グループ（1組{players / g}人）</button>
                   ))}
+                </div>
+              )}
+              {perTableRR && groupCount === 3 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginTop: 10 }}>
+                  <div style={{ fontSize: 12.5, color: "#3F4A55", lineHeight: 1.6, paddingRight: 8 }}>
+                    グループでテーブル固定
+                    <div style={{ fontSize: 11, color: C.sub, marginTop: 1 }}>ONにすると、G1→T1・G2→T2・G3→T3で固定（大会中ずっと同じ卓）</div>
+                  </div>
+                  <button onClick={() => setFixedGroupTable((v) => !v)} style={{
+                    background: fixedGroupTable ? C.blue : C.line, color: fixedGroupTable ? "#fff" : C.sub,
+                    border: "none", borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 800,
+                    cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+                  }}>
+                    {fixedGroupTable ? "ON" : "OFF"}
+                  </button>
                 </div>
               )}
             </div>
@@ -4277,7 +4322,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
             <span>連戦 <b style={{ color: C.ink }}>{rows.filter((m) => m.carry).length}</b>件{!avoidGroups && !usePerTableRR && <> / 下限 {result.plan.lower}</>}</span>
             {avoidGroups && <span>同グループ対戦 <b style={{ color: rows.filter((m) => m.sameGroup).length ? C.hill : C.win }}>{rows.filter((m) => m.sameGroup).length}</b>件</span>}
             {rivalMode && <span style={{ color: C.win, fontWeight: 800 }}>対抗戦（{rivalNameA} 対 {rivalNameB}）</span>}
-            {usePerTableRR && <span style={{ color: C.win, fontWeight: 800 }}>グループ分けリーグ戦（{groupCount}グループ）</span>}
+            {usePerTableRR && <span style={{ color: C.win, fontWeight: 800 }}>グループ分けリーグ戦（{groupCount}グループ{fixedGroupTable ? "・卓固定" : ""}）</span>}
             {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
           </div>
 
