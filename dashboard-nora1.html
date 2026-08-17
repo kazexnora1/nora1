@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.207";
-const BUILD_TIME = "2026-08-17 グループ分けして総当たり用に、対戦表をT1〜T3の3枚に分割表示、予選成績もテーブル別の順位表＋達成率ランキングに対応";
+const APP_VERSION = "1.208";
+const BUILD_TIME = "2026-08-17 グループ分けして総当たりを3で割り切れない人数にも対応（グループ数を選択可能に。例：15人→3or5グループ、16人→2/4/8グループ）。決勝進出は各グループ1位＋達成率上位で4or8人まで自動選出";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -563,30 +563,33 @@ function buildStandings(matches, roster, scope) {
 }
 const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
 
-// グループ分けして総当たり（テーブル毎に総当たり＝リーグ戦）用：予選の対戦をtable（1/2/3）ごとに分け、
-// 各リーグ内だけでbuildStandingsと同じ基準（勝ち数→達成率→得失点差）で順位付けする
-function buildGroupStandings(matches, roster) {
+// グループ分けして総当たり（リーグ戦）用：予選の対戦をgrp（1..G）ごとに分け、
+// 各グループ内だけでbuildStandingsと同じ基準（勝ち数→達成率→得失点差）で順位付けする
+function buildGroupStandings(matches, roster, groupCount) {
+  const G = groupCount || 3;
   const groups = {};
-  [1, 2, 3].forEach((t) => {
+  for (let t = 1; t <= G; t++) {
     const ms = {};
     let i = 0;
     Object.values(matches || {}).forEach((m) => {
       if (!m || m.bracket) return;
-      if (Number(m.table) !== t) return;
+      if (Number(m.grp) !== t) return;
       ms["g" + (i++)] = m;
     });
     const names = new Set();
     Object.values(ms).forEach((m) => (m.names || []).forEach((n) => n && names.add(n)));
     const groupRoster = roster.filter((p) => names.has(p.name));
     groups[t] = buildStandings(ms, groupRoster, "prelim");
-  });
-  return groups; // { 1: rows, 2: rows, 3: rows }（各リーグの成績、rows[0]がそのリーグの1位）
+  }
+  return groups; // { 1: rows, 2: rows, ... G: rows }（各グループの成績、rows[0]がそのグループの1位）
 }
 
-// グループ分けして総当たり用：各テーブルの1位を除いた全員を、達成率（avgRate、全勝は最上位扱い）の高い順に並べる
-function buildGroupRateRanking(groups) {
-  const winnerNames = new Set([1, 2, 3].map((t) => groups[t] && groups[t][0] && groups[t][0].name).filter(Boolean));
-  const candidates = [1, 2, 3].flatMap((t) => (groups[t] || []).filter((r) => !winnerNames.has(r.name) && r.played > 0));
+// グループ分けして総当たり用：各グループの1位を除いた全員を、達成率（avgRate、全勝は最上位扱い）の高い順に並べる
+function buildGroupRateRanking(groups, groupCount) {
+  const G = groupCount || 3;
+  const tables = Array.from({ length: G }, (_, i) => i + 1);
+  const winnerNames = new Set(tables.map((t) => groups[t] && groups[t][0] && groups[t][0].name).filter(Boolean));
+  const candidates = tables.flatMap((t) => (groups[t] || []).filter((r) => !winnerNames.has(r.name) && r.played > 0));
   const rateOf = (r) => (r.avgRate == null ? 2 : r.avgRate); // 全勝（avgRateなし）は最上位扱い
   const sorted = [...candidates].sort((a, b) => {
     const ar = rateOf(a), br = rateOf(b);
@@ -604,14 +607,16 @@ function buildGroupRateRanking(groups) {
   return sorted;
 }
 
-// グループ分けして総当たりの決勝進出者選出：各リーグの1位（3人）＋
-// リーグ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が最も高い1人＝計4人
-function pickGroupFinalists(matches, roster) {
-  const groups = buildGroupStandings(matches, roster);
-  const winners = [1, 2, 3].map((t) => (groups[t] && groups[t][0]) || null);
-  if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false, rateRanking: [] };
-  const rateRanking = buildGroupRateRanking(groups);
-  return { winners, wildcard: rateRanking[0] || null, groups, ready: true, rateRanking };
+// グループ分けして総当たりの決勝進出者選出：各グループの1位（G人）＋
+// グループ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が高い順に、決勝の枠が埋まるまで採用
+function pickGroupFinalists(matches, roster, groupCount) {
+  const G = groupCount || 3;
+  const groups = buildGroupStandings(matches, roster, G);
+  const tables = Array.from({ length: G }, (_, i) => i + 1);
+  const winners = tables.map((t) => (groups[t] && groups[t][0]) || null);
+  if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false, rateRanking: [], groupCount: G };
+  const rateRanking = buildGroupRateRanking(groups, G);
+  return { winners, wildcard: rateRanking[0] || null, groups, ready: true, rateRanking, groupCount: G };
 }
 
 // 対抗戦（団体戦）成績集計：m.rival && m.teamNames が付いた試合だけを対象に、チーム名ごとに勝敗・得失点を集計する。
@@ -709,7 +714,8 @@ function App() {
   const [rosterError, setRosterError] = useState(null);
   const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
   const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
-  const groupMode = useMemo(() => !!loadSettings().perTableRR, []); // グループ分けして総当たり（T1〜T3のリーグ戦）中かどうか
+  const groupMode = useMemo(() => !!loadSettings().perTableRR, []); // グループ分けして総当たり中かどうか
+  const groupCount = useMemo(() => loadSettings().groupCount || 3, []); // 何グループに分けたか
   const [pcPlayerView, setPcPlayerView] = useState("matrix"); // "matrix" | "standings"（PC表示・総当たりモード時のみ使用）
   const isPc = deviceMode === "pc";
   const fillScrollRef = useRef(null);
@@ -783,7 +789,7 @@ function App() {
             }}>個人成績</button>
           </div>
           <div ref={fillTargetRef} style={{ height: "100vh", boxSizing: "border-box", padding: "12px 20px 20px", maxWidth: 1600, margin: "0 auto" }}>
-            {pcPlayerView === "matrix" ? (groupMode ? <GroupRoundRobinMatrix fill /> : <RoundRobinMatrix fill />) : <PcStandingsTab />}
+            {pcPlayerView === "matrix" ? (groupMode ? <GroupRoundRobinMatrix fill groupCount={groupCount} /> : <RoundRobinMatrix fill />) : <PcStandingsTab />}
           </div>
         </div>
       ) : null
@@ -795,7 +801,7 @@ function App() {
       {roundRobin && (
         <div style={{ padding: "16px 12px 0" }}>
           <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, marginBottom: 8 }}>対戦表（総当たり）</div>
-          {groupMode ? <GroupRoundRobinMatrix compact /> : <RoundRobinMatrix compact />}
+          {groupMode ? <GroupRoundRobinMatrix compact groupCount={groupCount} /> : <RoundRobinMatrix compact />}
         </div>
       )}
       <StandingsTab />
@@ -1549,10 +1555,12 @@ function ScopeToggle({ view, onChange, hasBracket }) {
   );
 }
 
-/* ========= グループ分けして総当たり用：T1〜T3それぞれの成績表＋達成率ランキング（各テーブル1位を除く）
+/* ========= グループ分けして総当たり用：各グループの成績表＋達成率ランキング（各グループ1位を除く）
    StandingsTab（スマホ）・PcStandingsTab（PC）の両方から呼ばれる、行の見た目だけを返す部品 ========= */
-function GroupStandingsBlocks({ matches, roster, dense }) {
-  const pick = useMemo(() => pickGroupFinalists(matches, roster), [matches, roster]);
+function GroupStandingsBlocks({ matches, roster, groupCount, dense }) {
+  const G = groupCount || 3;
+  const tables = useMemo(() => Array.from({ length: G }, (_, i) => i + 1), [G]);
+  const pick = useMemo(() => pickGroupFinalists(matches, roster, G), [matches, roster, G]);
   const rowH = dense ? "9px 10px" : "15px 12px";
   const cols = "38px 1fr 48px 48px 76px";
   const Row = ({ label, r, highlight }) => (
@@ -1570,11 +1578,11 @@ function GroupStandingsBlocks({ matches, roster, dense }) {
   );
   return (
     <>
-      {[1, 2, 3].map((t) => {
+      {tables.map((t) => {
         const rows = (pick.groups[t] || []).filter((r) => r.played > 0);
         return (
           <div key={t} style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
             <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
               <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
             </div>
@@ -1585,7 +1593,7 @@ function GroupStandingsBlocks({ matches, roster, dense }) {
       })}
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🎯 達成率ランキング</div>
-        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各テーブルの1位を除いた全員が対象。1位が決勝ワイルドカード枠</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各グループの1位を除いた全員が対象。上位が決勝のワイルドカード候補</div>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
           <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
         </div>
@@ -1593,7 +1601,7 @@ function GroupStandingsBlocks({ matches, roster, dense }) {
         {pick.rateRanking.map((r) => <Row key={r.name} label={`${r.rateRank}位`} r={r} highlight={r.rateRank === 1} />)}
       </div>
       <div style={{ fontSize: 13.5, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
-        各テーブルの並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。達成率ランキングも同じ基準で、各テーブルの1位のみ除いて並べています。
+        各グループの並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。達成率ランキングも同じ基準で、各グループの1位のみ除いて並べています。
       </div>
     </>
   );
@@ -1606,6 +1614,7 @@ function StandingsTab() {
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
   const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
+  const groupCount = useMemo(() => loadSettings().groupCount || 3, []);
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -1621,7 +1630,7 @@ function StandingsTab() {
       {view === "bracket" ? (
         <BracketReadOnlyView matches={matches} />
       ) : groupMode ? (
-        <GroupStandingsBlocks matches={matches} roster={roster} />
+        <GroupStandingsBlocks matches={matches} roster={roster} groupCount={groupCount} />
       ) : (
         <>
       {teamRows.length > 0 && (
@@ -1687,9 +1696,9 @@ function StandingsTab() {
 
 /* ========= 総当たり表：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）。
    単体でも他タブに埋め込んでも使えるよう、自前でデータ購読する ========= */
-function buildMatrixData(matches, roster, tableFilter) {
+function buildMatrixData(matches, roster, filterFn) {
   const all = Object.values(matches || {})
-    .filter((m) => m && !m.bracket && (tableFilter == null || Number(m.table) === tableFilter))
+    .filter((m) => m && !m.bracket && (filterFn == null || filterFn(m)))
     .map((m) => normalizeMatch(m));
   const names = [];
   const seen = new Set();
@@ -1790,11 +1799,13 @@ function RoundRobinMatrix({ compact, fill }) {
   );
 }
 
-/* ========= グループ分けして総当たり用：T1〜T3それぞれの総当たり表を3枚に分けて表示 ========= */
-function GroupRoundRobinMatrix({ compact, fill }) {
+/* ========= グループ分けして総当たり用：G1〜GGそれぞれのグループの総当たり表を分けて表示
+   （グループは物理卓とは独立しているため、各グループの対戦はgrpフィールドで判定する） ========= */
+function GroupRoundRobinMatrix({ compact, fill, groupCount }) {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
+  const G = groupCount || 3;
 
   useEffect(() => dbSubscribe("matches",
     (m) => { setMatches(m || {}); setErr(null); },
@@ -1803,16 +1814,17 @@ function GroupRoundRobinMatrix({ compact, fill }) {
     (r) => setRoster(Array.isArray(r) ? r : []),
     () => {}), []);
 
-  const matrices = useMemo(() => [1, 2, 3].map((t) => buildMatrixData(matches, roster, t)), [matches, roster]);
+  const tables = useMemo(() => Array.from({ length: G }, (_, i) => i + 1), [G]);
+  const matrices = useMemo(() => tables.map((t) => buildMatrixData(matches, roster, (m) => Number(m.grp) === t)), [matches, roster, tables]);
 
   return (
-    <div style={{ display: "flex", flexDirection: fill ? "row" : "column", gap: fill ? 14 : 22, height: fill ? "100%" : "auto" }}>
+    <div style={{ display: "flex", flexDirection: fill ? "row" : "column", flexWrap: fill ? "wrap" : "nowrap", gap: fill ? 14 : 22, height: fill ? "100%" : "auto" }}>
       {err && <div style={{ color: C.minus, fontSize: 12 }}>同期エラー: {err}</div>}
-      {[1, 2, 3].map((t, i) => (
-        <div key={t} style={{ flex: fill ? 1 : undefined, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: compact ? 13 : 15, fontWeight: 800, color: C.blue, marginBottom: 6, flexShrink: 0 }}>T{t}</div>
+      {tables.map((t, i) => (
+        <div key={t} style={{ flex: fill ? "1 1 0" : undefined, minWidth: fill ? 260 : 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: compact ? 13 : 15, fontWeight: 800, color: C.blue, marginBottom: 6, flexShrink: 0 }}>G{t}</div>
           <div style={{ flex: fill ? 1 : undefined, minHeight: 0 }}>
-            <MatrixGrid matrix={matrices[i]} compact={compact} fill={fill} emptyLabel={`T${t}：対戦がまだ登録されていません`} />
+            <MatrixGrid matrix={matrices[i]} compact={compact} fill={fill} emptyLabel={`G${t}：対戦がまだ登録されていません`} />
           </div>
         </div>
       ))}
@@ -1980,6 +1992,7 @@ function PcStandingsTab() {
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
   const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
+  const groupCount = useMemo(() => loadSettings().groupCount || 3, []);
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -2040,7 +2053,7 @@ function PcStandingsTab() {
         </div>
       ) : groupMode ? (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <GroupStandingsBlocks matches={matches} roster={roster} />
+          <GroupStandingsBlocks matches={matches} roster={roster} groupCount={groupCount} />
         </div>
       ) : (
       <div className="print-fit" style={{
@@ -2100,11 +2113,13 @@ function BracketTab({ roster, format }) {
     lastResult: null, hist: [], format: fmt, ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
-  // グループ分けして総当たり（テーブル毎に総当たり＝T1〜T3のリーグ戦）で予選を組んだ大会は、
-  // 決勝トーナメントも「各リーグ1位3人＋達成率1位の1人」の計4人で固定する
+  // グループ分けして総当たりで予選を組んだ大会は、決勝トーナメントも
+  // 「各グループ1位（グループ数ぶん）＋達成率上位で枠を埋める」方式で固定する
   const groupMode = !!s0.perTableRR;
-  const [size, setSize] = useState(groupMode ? 4 : (s0.bracketSize === 4 ? 4 : 8));
-  useEffect(() => { if (groupMode && size !== 4) setSize(4); }, [groupMode]);
+  const groupCount = s0.groupCount || 3;
+  const groupBracketSize = groupCount <= 4 ? 4 : 8; // グループ数が収まる最小のブラケットサイズ（4 or 8）
+  const [size, setSize] = useState(groupMode ? groupBracketSize : (s0.bracketSize === 4 ? 4 : 8));
+  useEffect(() => { if (groupMode && size !== groupBracketSize) setSize(groupBracketSize); }, [groupMode, groupBracketSize]);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
   const [drawNo, setDrawNo] = useState(() => Array.from({ length: 8 }, (_, i) => String(i + 1))); // 各人が引いた抽選番号
   // 予選と同じ長さを基準に、勝ち上がるほど1試合を長くする（決勝がいちばん長い）
@@ -2193,22 +2208,27 @@ function BracketTab({ roster, format }) {
     return idx;
   }, [standings, roster]);
 
-  // グループ分けして総当たり用：各リーグの成績と、決勝進出4人（リーグ1位3人＋達成率1位1人）
-  const groupPick = useMemo(() => (groupMode ? pickGroupFinalists(matches, roster) : null), [groupMode, matches, roster]);
+  // グループ分けして総当たり用：各グループの成績と、決勝進出者（各グループ1位＋達成率上位で枠が埋まるまで）
+  const groupPick = useMemo(() => (groupMode ? pickGroupFinalists(matches, roster, groupCount) : null), [groupMode, matches, roster, groupCount]);
   const groupRankedIdx = useMemo(() => {
     if (!groupPick || !groupPick.ready) return null;
-    const names = [...groupPick.winners.map((w) => w.name), groupPick.wildcard ? groupPick.wildcard.name : null].filter(Boolean);
+    const winnerNames = groupPick.winners.map((w) => w.name);
+    const wcNeeded = Math.max(0, size - winnerNames.length);
+    const wcNames = groupPick.rateRanking.slice(0, wcNeeded).map((r) => r.name);
+    const names = [...winnerNames, ...wcNames];
     const idx = names.map((n) => roster.findIndex((p) => p.name === n)).filter((i) => i >= 0);
-    return idx.length === 4 ? idx : null;
-  }, [groupPick, roster]);
-  // 各出場者が「T◯ 1位」なのか「達成率1位（ワイルドカード）」なのかのラベル（グループ分け表示用）
+    return idx.length === names.length && names.length > 0 ? idx : null;
+  }, [groupPick, roster, size]);
+  // 各出場者が「G◯ 1位」なのか「達成率◯位（ワイルドカード）」なのかのラベル（グループ分け表示用）
   const groupSourceLabel = useMemo(() => {
     if (!groupPick || !groupPick.ready) return {};
     const map = {};
-    groupPick.winners.forEach((w, t) => { if (w) map[w.name] = `T${t + 1} 1位`; });
-    if (groupPick.wildcard) map[groupPick.wildcard.name] = "達成率1位";
+    groupPick.winners.forEach((w, t) => { if (w) map[w.name] = `G${t + 1} 1位`; });
+    const wcNeeded = Math.max(0, size - groupPick.winners.length);
+    const wcList = groupPick.rateRanking.slice(0, wcNeeded);
+    wcList.forEach((r, i) => { map[r.name] = wcList.length > 1 ? `達成率${i + 1}位` : "達成率1位"; });
     return map;
-  }, [groupPick]);
+  }, [groupPick, size]);
 
   const filledRef = useRef("");
 
@@ -2407,9 +2427,11 @@ function BracketTab({ roster, format }) {
         <>
           {groupMode ? (
             <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🔀 グループ分け方式（4人固定）</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🔀 グループ分け方式（{groupBracketSize}人固定）</div>
               <div style={{ fontSize: 13, color: "#3F4A55", lineHeight: 1.7 }}>
-                T1〜T3のリーグ戦（予選）から、各リーグ1位の3人＋達成率1位の1人＝計4人が決勝トーナメントに進みます
+                {groupCount}グループのリーグ戦（予選）から、各グループ1位の{groupCount}人
+                {groupBracketSize > groupCount ? `＋達成率上位${groupBracketSize - groupCount}人＝計${groupBracketSize}人` : `＝計${groupCount}人`}
+                が決勝トーナメントに進みます
               </div>
             </div>
           ) : (
@@ -2422,19 +2444,19 @@ function BracketTab({ roster, format }) {
 
           {groupMode && groupPick && !groupPick.ready && (
             <div style={{ background: "#FFF6E5", border: `1.5px solid ${C.hill}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: "#7A5A00", lineHeight: 1.7 }}>
-              まだいずれかのリーグ（T1〜T3）の予選成績が揃っていないため、自動選出できていません。下の欄は仮の並びです。全リーグの予選が終わってから選出し直されます
+              まだいずれかのグループ（G1〜G{groupCount}）の予選成績が揃っていないため、自動選出できていません。下の欄は仮の並びです。全グループの予選が終わってから選出し直されます
             </div>
           )}
 
           {groupMode && groupPick && groupPick.ready && (
             <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>各リーグの成績</div>
-              {[1, 2, 3].map((t) => (
-                <div key={t} style={{ marginBottom: t < 3 ? 10 : 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.blue, marginBottom: 3 }}>T{t}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>各グループの成績</div>
+              {Array.from({ length: groupCount }, (_, i) => i + 1).map((t) => (
+                <div key={t} style={{ marginBottom: t < groupCount ? 10 : 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.blue, marginBottom: 3 }}>G{t}</div>
                   {(groupPick.groups[t] || []).filter((r) => r.played > 0).map((r) => (
                     <div key={r.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "2px 0", fontWeight: r.rank === 1 ? 800 : 500, color: r.rank === 1 ? C.win : C.ink }}>
-                      <span>{r.rank}位　{r.name}{groupPick.wildcard && groupPick.wildcard.name === r.name ? "（達成率1位）" : ""}</span>
+                      <span>{r.rank}位　{r.name}{groupSourceLabel[r.name] && groupSourceLabel[r.name].startsWith("達成率") ? `（${groupSourceLabel[r.name]}）` : ""}</span>
                       <span style={{ color: C.sub, fontWeight: 500 }}>{r.win}勝{r.loss}敗　達成率{fmtRate(r.avgRate)}</span>
                     </div>
                   ))}
@@ -2446,7 +2468,7 @@ function BracketTab({ roster, format }) {
           <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>出場者と抽選番号</div>
           <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 8, lineHeight: 1.75 }}>
             {groupMode
-              ? "上記の4人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜4）。1番と2番、3番と4番が1回戦で当たります"
+              ? <>上記の{groupBracketSize}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{groupBracketSize}）。1番と2番、3番と4番…が1回戦で当たります</>
               : <>予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。1番と2番、3番と4番…が1回戦で当たります</>}
           </div>
           {Array.from({ length: size }, (_, i) => {
@@ -3545,12 +3567,12 @@ function bulkGenerateAuto(N, G, groupSizes, lateSet, rivalTeamA, opts) {
   return { error: relaxed.error || strict.error };
 }
 
-/* ========= テーブル毎に総当たり（リーグ戦） =========
-   3つの卓に均等に分けたグループごとに、その卓だけで全員が1回ずつ当たる総当たりを組む。
-   標準的な円卓法（サークルメソッド）でラウンドを作り、そのままの順で並べる。
-   ラウンド内は同じ人が重複しないので、3連戦（3コマ連続で同じ人）は原理的に起こらない
-   （起こり得るのはラウンドの継ぎ目で2連続になる程度で、これは同卓なので許容範囲） */
-function circleMethodPairs(players) {
+/* ========= グループ分けして総当たり（リーグ戦） =========
+   人数をG等分したグループごとに、そのグループ内だけで全員が1回ずつ当たる総当たりを組む
+   （標準的な円卓法＝サークルメソッドでラウンドを作る。ラウンド内は同じ人が重複しない）。
+   グループ数は卓数（3）と独立に選べる。グループ同士は出場者が重ならないため、
+   ラウンド（レベル）順に各グループの対戦を並べてから、3卓へ試合数が均等になるよう振り分ける */
+function circleMethodRounds(players) {
   const arr = players.slice();
   const hasBye = arr.length % 2 !== 0;
   if (hasBye) arr.push(null); // 奇数人数の場合の空き番
@@ -3569,39 +3591,58 @@ function circleMethodPairs(players) {
     rest.unshift(rest.pop());
     cur = [fixed, ...rest];
   }
+  return rounds; // ラウンドごとの配列（ラウンド内はペアの重複なし）
+}
+function circleMethodPairs(players) {
   const flat = [];
-  rounds.forEach((round) => round.forEach((pair) => flat.push(pair)));
+  circleMethodRounds(players).forEach((round) => round.forEach((pair) => flat.push(pair)));
   return flat;
 }
-function perTableRoundRobinGenerate(N) {
-  if (N % 3 !== 0) return { error: "人数が3で割り切れないため、テーブル毎の総当たりは組めません。" };
-  const M = N / 3;
-  if (M < 2) return { error: "1卓あたりの人数が少なすぎます。" };
-  const groups = [
-    Array.from({ length: M }, (_, i) => i + 1),
-    Array.from({ length: M }, (_, i) => i + 1 + M),
-    Array.from({ length: M }, (_, i) => i + 1 + 2 * M),
-  ];
-  const perTablePairs = groups.map((g) => circleMethodPairs(g));
-  const slots = Math.max(...perTablePairs.map((p) => p.length));
-  const board = [];
-  for (let s = 0; s < slots; s++) {
-    for (let t = 0; t < 3; t++) {
-      const pair = perTablePairs[t][s];
-      if (!pair) continue;
-      board.push({ slot: s, table: t, a: pair[0], b: pair[1] });
+// N人をG等分できるグループ数の候補（2以上、1グループ2人以上）を返す
+function validGroupCounts(N) {
+  const opts = [];
+  for (let g = 2; g <= Math.floor(N / 2); g++) {
+    if (N % g === 0) opts.push(g);
+  }
+  return opts;
+}
+function perGroupRoundRobinGenerate(N, G) {
+  const g = G || 3;
+  if (g < 2) return { error: "グループ数は2以上にしてください。" };
+  if (N % g !== 0) return { error: `人数(${N})がグループ数(${g})で割り切れないため組めません。` };
+  const M = N / g;
+  if (M < 2) return { error: "1グループあたりの人数が少なすぎます（2人以上必要です）。" };
+  const groups = Array.from({ length: g }, (_, i) => Array.from({ length: M }, (_, j) => j + 1 + i * M));
+  const roundsPerGroup = groups.map((grp) => circleMethodRounds(grp));
+  const maxRounds = Math.max(...roundsPerGroup.map((r) => r.length));
+  // ラウンド（レベル）順に、その回で各グループが消化する対戦をキューへ積む
+  const queue = [];
+  for (let r = 0; r < maxRounds; r++) {
+    for (let gi = 0; gi < g; gi++) {
+      const round = roundsPerGroup[gi][r];
+      if (!round) continue;
+      round.forEach((pair) => queue.push({ grp: gi + 1, a: pair[0], b: pair[1] }));
     }
   }
-  // 表示用：直前の同卓コマと選手が重なっていたら「連投」バッジを付ける（3連戦は円卓法の性質上起こらない）
+  // その時点で試合数が一番少ない卓へ順に入れて、3卓の負荷をなるべく揃える
+  const perTableCount = [0, 0, 0];
+  const board = queue.map((q) => {
+    let table = 0;
+    for (let t = 1; t < 3; t++) if (perTableCount[t] < perTableCount[table]) table = t;
+    const slot = perTableCount[table]++;
+    return { slot, table, a: q.a, b: q.b, grp: q.grp };
+  });
+  // 表示用：直前の同卓コマと選手が重なっていたら「連投」バッジを付ける
   board.forEach((m) => {
     const prev = board.find((x) => x.table === m.table && x.slot === m.slot - 1);
     m.carry = prev && (prev.a === m.a || prev.a === m.b || prev.b === m.a || prev.b === m.b) ? 1 : 0;
     m.sameGroup = false;
   });
+  const slots = Math.max(...perTableCount);
   const total = board.length;
   return {
     plan: { total, slots, sizes: null, lower: 0 },
-    board, cost: 0, optimal: true, usedRelaxed: false, perTableM: M, perTableGames: M - 1,
+    board, cost: 0, optimal: true, usedRelaxed: false, groupCount: g, groupSize: M, groupGames: M - 1,
   };
 }
 
@@ -3705,6 +3746,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const [group1, setGroup1] = useState(s0.group1 || 5);
   const [group2, setGroup2] = useState(s0.group2 || 5);
   const [perTableRR, setPerTableRR] = useState(!!s0.perTableRR);
+  const [groupCount, setGroupCount] = useState(s0.groupCount || 3);
   const [existingMatches, setExistingMatches] = useState({});
   // 対抗戦（団体戦）：参加者リストの前半／後半で2チームに分け、必ず違うチーム同士だけを組む
   const [rivalMode, setRivalMode] = useState(!!s0.rivalMode);
@@ -3723,16 +3765,25 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   // 早退予定：遅刻の逆で、できるだけ早いコマに寄せる
   const [todayEarly, setTodayEarly] = useState(() => (s0.todayEarly && typeof s0.todayEarly === "object" ? s0.todayEarly : {}));
 
-  const perTableEligible = players % 3 === 0 && players / 3 >= 2;
+  // 「グループ分けして総当たり」で選べるグループ数の候補（人数を割り切れて、1グループ2人以上になる組み合わせ）
+  const groupOptions = useMemo(() => validGroupCounts(players), [players]);
+  const perTableEligible = groupOptions.length > 0;
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
-  // 「テーブル毎に総当たり」は人数が3で割り切れる時だけ使える。対象外になったら自動でOFFにする
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
+  // 「グループ分けして総当たり」は、有効なグループ数の候補が無くなったら自動でOFFにする
   useEffect(() => {
     if (perTableRR && !perTableEligible) setPerTableRR(false);
   }, [perTableRR, perTableEligible]);
+  // 人数が変わってグループ数の候補が変わったら、選んでいたグループ数が候補から外れていないか確認する。
+  // 外れていたら3人数（既定）→候補の先頭の順で選び直す
+  useEffect(() => {
+    if (groupOptions.length > 0 && !groupOptions.includes(groupCount)) {
+      setGroupCount(groupOptions.includes(3) ? 3 : groupOptions[0]);
+    }
+  }, [groupOptions]);
   // 「グループを避けて組む」と「対抗戦」は"グループ"の定義が異なるため同時には使えない（相互排他）
   useEffect(() => { if (rivalMode && avoidGroups) setAvoidGroups(false); }, [rivalMode]);
   useEffect(() => { if (avoidGroups && rivalMode) setRivalMode(false); }, [avoidGroups]);
@@ -3875,14 +3926,14 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   }, [result, startH, startM, endH, endM, changeoverMin, per100Min]);
 
   // 総当たりモードの時は「1人の試合数」を使わず、全員と1回ずつ当たる総当たり戦として組む。
-  // テーブル毎に総当たりの時は、卓ごとのグループ内（players/3人）で1回ずつ当たる
-  const usePerTableRR = roundRobin && perTableRR && perTableEligible;
-  const effectiveGames = usePerTableRR ? Math.max(0, players / 3 - 1) : roundRobin ? players - 1 : games;
+  // グループ分けして総当たりの時は、各グループ内（players/groupCount人）で1回ずつ当たる
+  const usePerTableRR = roundRobin && perTableRR && perTableEligible && groupOptions.includes(groupCount);
+  const effectiveGames = usePerTableRR ? Math.max(0, players / groupCount - 1) : roundRobin ? players - 1 : games;
 
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perTableRoundRobinGenerate(players) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
+      setResult(usePerTableRR ? perGroupRoundRobinGenerate(players, groupCount) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
       setBusy(false);
     }, 20);
   };
@@ -3925,7 +3976,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
           balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
-          names: [m.n1, m.n2], table: m.table + 1, slot: m.slot,
+          names: [m.n1, m.n2], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: now, format: fmt,
           ...(rivalTeamA ? { rival: true, teamNames: [rivalNameA || "Aチーム", rivalNameB || "Bチーム"] } : {}),
@@ -3977,7 +4028,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, textAlign: "center" }}>
-              {usePerTableRR ? `テーブル毎（${effectiveGames}）` : `総当たり戦（${players - 1}）`}
+              {usePerTableRR ? `グループ毎（${effectiveGames}）` : `総当たり戦（${players - 1}）`}
             </div>
           </div>
         ) : (
@@ -4023,12 +4074,25 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         <div style={{ background: perTableRR ? C.lightBlue : C.zone, border: `1.5px solid ${perTableRR ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, opacity: perTableEligible ? 1 : 0.5 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>テーブル毎に総当たり（リーグ戦）</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループ分けして総当たり（リーグ戦）</div>
               <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
                 {perTableEligible
-                  ? `全体を3等分し、T1・T2・T3それぞれの卓の中だけで${players / 3}人が総当たりします（1人${Math.max(0, players / 3 - 1)}試合）。卓をまたいだ対戦は組みません`
-                  : "人数が3で割り切れる時だけ使えます（例：12人なら1卓4人）"}
+                  ? `全体を${groupCount}等分し、G1〜G${groupCount}それぞれのグループの中だけで${players / groupCount}人が総当たりします（1人${Math.max(0, players / groupCount - 1)}試合）。グループをまたいだ対戦は組みません。試合は3卓に均等に振り分けます`
+                  : "人数を2グループ以上・1グループ2人以上に均等分割できる時だけ使えます（例：15人なら3or5グループ、16人なら2/4/8グループ）"}
               </div>
+              {perTableEligible && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {groupOptions.map((g) => (
+                    <button key={g} onClick={() => perTableRR && setGroupCount(g)} disabled={!perTableRR} style={{
+                      background: perTableRR && groupCount === g ? C.blue : "#fff",
+                      color: perTableRR && groupCount === g ? "#fff" : C.ink,
+                      border: `1.5px solid ${perTableRR && groupCount === g ? C.blue : C.line}`,
+                      borderRadius: 10, padding: "6px 12px", fontSize: 13, fontWeight: 800,
+                      cursor: perTableRR ? "pointer" : "default", fontFamily: FONT, opacity: perTableRR ? 1 : 0.5,
+                    }}>{g}グループ（1組{players / g}人）</button>
+                  ))}
+                </div>
+              )}
             </div>
             <button onClick={() => perTableEligible && setPerTableRR((v) => !v)} disabled={!perTableEligible} style={{
               background: perTableRR ? C.blue : C.line, color: perTableRR ? "#fff" : C.sub,
@@ -4213,7 +4277,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
             <span>連戦 <b style={{ color: C.ink }}>{rows.filter((m) => m.carry).length}</b>件{!avoidGroups && !usePerTableRR && <> / 下限 {result.plan.lower}</>}</span>
             {avoidGroups && <span>同グループ対戦 <b style={{ color: rows.filter((m) => m.sameGroup).length ? C.hill : C.win }}>{rows.filter((m) => m.sameGroup).length}</b>件</span>}
             {rivalMode && <span style={{ color: C.win, fontWeight: 800 }}>対抗戦（{rivalNameA} 対 {rivalNameB}）</span>}
-            {usePerTableRR && <span style={{ color: C.win, fontWeight: 800 }}>テーブル毎リーグ戦</span>}
+            {usePerTableRR && <span style={{ color: C.win, fontWeight: 800 }}>グループ分けリーグ戦（{groupCount}グループ）</span>}
             {result.optimal && <span style={{ color: C.win, fontWeight: 800 }}>最小</span>}
           </div>
 
@@ -4514,6 +4578,7 @@ function BulkCard({ m }) {
     <div style={{ background: m.carry ? C.lightBlue : C.zone, border: `1.5px solid ${m.carry ? C.blue : C.line}`, borderRadius: 14, padding: "8px 5px", position: "relative" }}>
       {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
       {m.sameGroup && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.hill }}>同G</div>}
+      {m.grp != null && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.win }}>G{m.grp}</div>}
       <div style={{ display: "flex", gap: 3 }}>
         {[[m.n1, m.rt1, C.blue], [m.n2, m.rt2, C.red]].map(([name, rt, col], i) => (
           <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
