@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.205";
-const BUILD_TIME = "2026-08-16 代打を出す時にファーゴレート(r1/r2)と目標点(raceTo)も代打側の値で組み直すよう修正";
+const APP_VERSION = "1.206";
+const BUILD_TIME = "2026-08-17 グループ分けして総当たり（テーブル毎に総当たり）の決勝進出者を各リーグ1位3人＋達成率1位1人の自動選出に対応";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -562,6 +562,44 @@ function buildStandings(matches, roster, scope) {
   return rows;
 }
 const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
+
+// グループ分けして総当たり（テーブル毎に総当たり＝リーグ戦）用：予選の対戦をtable（1/2/3）ごとに分け、
+// 各リーグ内だけでbuildStandingsと同じ基準（勝ち数→達成率→得失点差）で順位付けする
+function buildGroupStandings(matches, roster) {
+  const groups = {};
+  [1, 2, 3].forEach((t) => {
+    const ms = {};
+    let i = 0;
+    Object.values(matches || {}).forEach((m) => {
+      if (!m || m.bracket) return;
+      if (Number(m.table) !== t) return;
+      ms["g" + (i++)] = m;
+    });
+    const names = new Set();
+    Object.values(ms).forEach((m) => (m.names || []).forEach((n) => n && names.add(n)));
+    const groupRoster = roster.filter((p) => names.has(p.name));
+    groups[t] = buildStandings(ms, groupRoster, "prelim");
+  });
+  return groups; // { 1: rows, 2: rows, 3: rows }（各リーグの成績、rows[0]がそのリーグの1位）
+}
+
+// グループ分けして総当たりの決勝進出者選出：各リーグの1位（3人）＋
+// リーグ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が最も高い1人＝計4人
+function pickGroupFinalists(matches, roster) {
+  const groups = buildGroupStandings(matches, roster);
+  const winners = [1, 2, 3].map((t) => (groups[t] && groups[t][0]) || null);
+  if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false };
+  const winnerNames = new Set(winners.map((w) => w.name));
+  const candidates = [1, 2, 3].flatMap((t) => groups[t].filter((r) => !winnerNames.has(r.name) && r.played > 0));
+  const rateOf = (r) => (r.avgRate == null ? 2 : r.avgRate); // 全勝（avgRateなし）は最上位扱い
+  const sorted = [...candidates].sort((a, b) => {
+    const ar = rateOf(a), br = rateOf(b);
+    if (br !== ar) return br - ar;
+    if (b.win !== a.win) return b.win - a.win;
+    return (b.pf - b.pa) - (a.pf - a.pa);
+  });
+  return { winners, wildcard: sorted[0] || null, groups, ready: true };
+}
 
 // 対抗戦（団体戦）成績集計：m.rival && m.teamNames が付いた試合だけを対象に、チーム名ごとに勝敗・得失点を集計する。
 // names[0]側が常にteamNames[0]（Aチーム）、names[1]側が常にteamNames[1]（Bチーム）
@@ -1948,7 +1986,11 @@ function BracketTab({ roster, format }) {
     lastResult: null, hist: [], format: fmt, ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
-  const [size, setSize] = useState(s0.bracketSize === 4 ? 4 : 8);
+  // グループ分けして総当たり（テーブル毎に総当たり＝T1〜T3のリーグ戦）で予選を組んだ大会は、
+  // 決勝トーナメントも「各リーグ1位3人＋達成率1位の1人」の計4人で固定する
+  const groupMode = !!s0.perTableRR;
+  const [size, setSize] = useState(groupMode ? 4 : (s0.bracketSize === 4 ? 4 : 8));
+  useEffect(() => { if (groupMode && size !== 4) setSize(4); }, [groupMode]);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
   const [drawNo, setDrawNo] = useState(() => Array.from({ length: 8 }, (_, i) => String(i + 1))); // 各人が引いた抽選番号
   // 予選と同じ長さを基準に、勝ち上がるほど1試合を長くする（決勝がいちばん長い）
@@ -2036,21 +2078,41 @@ function BracketTab({ roster, format }) {
     roster.forEach((p, i) => { if (!idx.includes(i)) idx.push(i); }); // 予選未消化の人は後ろに
     return idx;
   }, [standings, roster]);
+
+  // グループ分けして総当たり用：各リーグの成績と、決勝進出4人（リーグ1位3人＋達成率1位1人）
+  const groupPick = useMemo(() => (groupMode ? pickGroupFinalists(matches, roster) : null), [groupMode, matches, roster]);
+  const groupRankedIdx = useMemo(() => {
+    if (!groupPick || !groupPick.ready) return null;
+    const names = [...groupPick.winners.map((w) => w.name), groupPick.wildcard ? groupPick.wildcard.name : null].filter(Boolean);
+    const idx = names.map((n) => roster.findIndex((p) => p.name === n)).filter((i) => i >= 0);
+    return idx.length === 4 ? idx : null;
+  }, [groupPick, roster]);
+  // 各出場者が「T◯ 1位」なのか「達成率1位（ワイルドカード）」なのかのラベル（グループ分け表示用）
+  const groupSourceLabel = useMemo(() => {
+    if (!groupPick || !groupPick.ready) return {};
+    const map = {};
+    groupPick.winners.forEach((w, t) => { if (w) map[w.name] = `T${t + 1} 1位`; });
+    if (groupPick.wildcard) map[groupPick.wildcard.name] = "達成率1位";
+    return map;
+  }, [groupPick]);
+
   const filledRef = useRef("");
 
   // 成績が揃った時点で、上位から順に枠へ入れておく。人数を変えた時も入れ直す。
   // 一度セットしたあとに手で並べ替えた分は、上書きしない
   useEffect(() => {
-    if (started || rankedIdx.length === 0) return;
-    const key = `${size}:${rankedIdx.slice(0, size).join(",")}`;
+    if (started) return;
+    const effIdx = groupMode ? groupRankedIdx : rankedIdx;
+    if (!effIdx || effIdx.length === 0) return;
+    const key = `${groupMode ? "g" : "r"}:${size}:${effIdx.slice(0, size).join(",")}`;
     if (filledRef.current === key) return;
     filledRef.current = key;
     setSlotIdx((arr) => {
       const next = [...arr];
-      for (let i = 0; i < 8; i++) next[i] = rankedIdx[i] != null ? rankedIdx[i] : 0;
+      for (let i = 0; i < 8; i++) next[i] = effIdx[i] != null ? effIdx[i] : 0;
       return next;
     });
-  }, [rankedIdx, size, started]);
+  }, [rankedIdx, groupRankedIdx, groupMode, size, started]);
 
 
   const winnerInfo = (m) => {
@@ -2229,26 +2291,61 @@ function BracketTab({ roster, format }) {
 
       {!started && (
         <>
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            {[4, 8].map((n) => (
-              <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
-            ))}
-          </div>
+          {groupMode ? (
+            <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🔀 グループ分け方式（4人固定）</div>
+              <div style={{ fontSize: 13, color: "#3F4A55", lineHeight: 1.7 }}>
+                T1〜T3のリーグ戦（予選）から、各リーグ1位の3人＋達成率1位の1人＝計4人が決勝トーナメントに進みます
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {[4, 8].map((n) => (
+                <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
+              ))}
+            </div>
+          )}
+
+          {groupMode && groupPick && !groupPick.ready && (
+            <div style={{ background: "#FFF6E5", border: `1.5px solid ${C.hill}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: "#7A5A00", lineHeight: 1.7 }}>
+              まだいずれかのリーグ（T1〜T3）の予選成績が揃っていないため、自動選出できていません。下の欄は仮の並びです。全リーグの予選が終わってから選出し直されます
+            </div>
+          )}
+
+          {groupMode && groupPick && groupPick.ready && (
+            <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>各リーグの成績</div>
+              {[1, 2, 3].map((t) => (
+                <div key={t} style={{ marginBottom: t < 3 ? 10 : 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.blue, marginBottom: 3 }}>T{t}</div>
+                  {(groupPick.groups[t] || []).filter((r) => r.played > 0).map((r) => (
+                    <div key={r.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "2px 0", fontWeight: r.rank === 1 ? 800 : 500, color: r.rank === 1 ? C.win : C.ink }}>
+                      <span>{r.rank}位　{r.name}{groupPick.wildcard && groupPick.wildcard.name === r.name ? "（達成率1位）" : ""}</span>
+                      <span style={{ color: C.sub, fontWeight: 500 }}>{r.win}勝{r.loss}敗　達成率{fmtRate(r.avgRate)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 2 }}>出場者と抽選番号</div>
           <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 8, lineHeight: 1.75 }}>
-            予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。
-            1番と2番、3番と4番…が1回戦で当たります
+            {groupMode
+              ? "上記の4人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜4）。1番と2番、3番と4番が1回戦で当たります"
+              : <>予選の上位{size}人を入れてあります。カードを引いたら、その番号を右の欄に入れてください（1〜{size}）。1番と2番、3番と4番…が1回戦で当たります</>}
           </div>
           {Array.from({ length: size }, (_, i) => {
-            const st = standings.find((x) => x.name === (roster[slotIdx[i]] || {}).name);
+            const rowName = (roster[slotIdx[i]] || {}).name;
+            const st = standings.find((x) => x.name === rowName);
+            const groupLabel = groupMode ? groupSourceLabel[rowName] : null;
             const no = parseInt(drawNo[i], 10);
             const dup = no >= 1 && no <= size && drawNo.slice(0, size).filter((v) => parseInt(v, 10) === no).length > 1;
             const bad = !(no >= 1 && no <= size) || dup;
             return (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={{ width: 34, textAlign: "center", fontSize: 12.5, fontWeight: 800, color: C.sub, flexShrink: 0 }}>
-                  {st && st.played > 0 ? `${st.rank}位` : "－"}
+                <div style={{ width: groupMode ? 58 : 34, textAlign: "center", fontSize: groupMode ? 11 : 12.5, fontWeight: 800, color: C.sub, flexShrink: 0 }}>
+                  {groupMode ? (groupLabel || "－") : (st && st.played > 0 ? `${st.rank}位` : "－")}
                 </div>
                 <select value={slotIdx[i] ?? 0} onChange={(e) => setSlotIdx((arr) => { const next = [...arr]; next[i] = +e.target.value; return next; })} style={{ ...selectStyle, flex: 1, minWidth: 0 }}>
                   {roster.map((p, ri) => {
