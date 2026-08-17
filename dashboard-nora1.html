@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.206";
-const BUILD_TIME = "2026-08-17 グループ分けして総当たり（テーブル毎に総当たり）の決勝進出者を各リーグ1位3人＋達成率1位1人の自動選出に対応";
+const APP_VERSION = "1.207";
+const BUILD_TIME = "2026-08-17 グループ分けして総当たり用に、対戦表をT1〜T3の3枚に分割表示、予選成績もテーブル別の順位表＋達成率ランキングに対応";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -583,14 +583,10 @@ function buildGroupStandings(matches, roster) {
   return groups; // { 1: rows, 2: rows, 3: rows }（各リーグの成績、rows[0]がそのリーグの1位）
 }
 
-// グループ分けして総当たりの決勝進出者選出：各リーグの1位（3人）＋
-// リーグ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が最も高い1人＝計4人
-function pickGroupFinalists(matches, roster) {
-  const groups = buildGroupStandings(matches, roster);
-  const winners = [1, 2, 3].map((t) => (groups[t] && groups[t][0]) || null);
-  if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false };
-  const winnerNames = new Set(winners.map((w) => w.name));
-  const candidates = [1, 2, 3].flatMap((t) => groups[t].filter((r) => !winnerNames.has(r.name) && r.played > 0));
+// グループ分けして総当たり用：各テーブルの1位を除いた全員を、達成率（avgRate、全勝は最上位扱い）の高い順に並べる
+function buildGroupRateRanking(groups) {
+  const winnerNames = new Set([1, 2, 3].map((t) => groups[t] && groups[t][0] && groups[t][0].name).filter(Boolean));
+  const candidates = [1, 2, 3].flatMap((t) => (groups[t] || []).filter((r) => !winnerNames.has(r.name) && r.played > 0));
   const rateOf = (r) => (r.avgRate == null ? 2 : r.avgRate); // 全勝（avgRateなし）は最上位扱い
   const sorted = [...candidates].sort((a, b) => {
     const ar = rateOf(a), br = rateOf(b);
@@ -598,7 +594,24 @@ function pickGroupFinalists(matches, roster) {
     if (b.win !== a.win) return b.win - a.win;
     return (b.pf - b.pa) - (a.pf - a.pa);
   });
-  return { winners, wildcard: sorted[0] || null, groups, ready: true };
+  sorted.forEach((r, i) => {
+    if (i > 0) {
+      const p = sorted[i - 1];
+      const same = rateOf(p) === rateOf(r) && p.win === r.win && (p.pf - p.pa) === (r.pf - r.pa);
+      r.rateRank = same ? p.rateRank : i + 1;
+    } else r.rateRank = 1;
+  });
+  return sorted;
+}
+
+// グループ分けして総当たりの決勝進出者選出：各リーグの1位（3人）＋
+// リーグ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が最も高い1人＝計4人
+function pickGroupFinalists(matches, roster) {
+  const groups = buildGroupStandings(matches, roster);
+  const winners = [1, 2, 3].map((t) => (groups[t] && groups[t][0]) || null);
+  if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false, rateRanking: [] };
+  const rateRanking = buildGroupRateRanking(groups);
+  return { winners, wildcard: rateRanking[0] || null, groups, ready: true, rateRanking };
 }
 
 // 対抗戦（団体戦）成績集計：m.rival && m.teamNames が付いた試合だけを対象に、チーム名ごとに勝敗・得失点を集計する。
@@ -696,6 +709,7 @@ function App() {
   const [rosterError, setRosterError] = useState(null);
   const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
   const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
+  const groupMode = useMemo(() => !!loadSettings().perTableRR, []); // グループ分けして総当たり（T1〜T3のリーグ戦）中かどうか
   const [pcPlayerView, setPcPlayerView] = useState("matrix"); // "matrix" | "standings"（PC表示・総当たりモード時のみ使用）
   const isPc = deviceMode === "pc";
   const fillScrollRef = useRef(null);
@@ -769,7 +783,7 @@ function App() {
             }}>個人成績</button>
           </div>
           <div ref={fillTargetRef} style={{ height: "100vh", boxSizing: "border-box", padding: "12px 20px 20px", maxWidth: 1600, margin: "0 auto" }}>
-            {pcPlayerView === "matrix" ? <RoundRobinMatrix fill /> : <PcStandingsTab />}
+            {pcPlayerView === "matrix" ? (groupMode ? <GroupRoundRobinMatrix fill /> : <RoundRobinMatrix fill />) : <PcStandingsTab />}
           </div>
         </div>
       ) : null
@@ -781,7 +795,7 @@ function App() {
       {roundRobin && (
         <div style={{ padding: "16px 12px 0" }}>
           <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, marginBottom: 8 }}>対戦表（総当たり）</div>
-          <RoundRobinMatrix compact />
+          {groupMode ? <GroupRoundRobinMatrix compact /> : <RoundRobinMatrix compact />}
         </div>
       )}
       <StandingsTab />
@@ -1535,12 +1549,63 @@ function ScopeToggle({ view, onChange, hasBracket }) {
   );
 }
 
+/* ========= グループ分けして総当たり用：T1〜T3それぞれの成績表＋達成率ランキング（各テーブル1位を除く）
+   StandingsTab（スマホ）・PcStandingsTab（PC）の両方から呼ばれる、行の見た目だけを返す部品 ========= */
+function GroupStandingsBlocks({ matches, roster, dense }) {
+  const pick = useMemo(() => pickGroupFinalists(matches, roster), [matches, roster]);
+  const rowH = dense ? "9px 10px" : "15px 12px";
+  const cols = "38px 1fr 48px 48px 76px";
+  const Row = ({ label, r, highlight }) => (
+    <div style={{
+      display: "grid", gridTemplateColumns: cols, gap: 6, alignItems: "center",
+      background: highlight ? C.lightBlue : "#fff", border: `1.5px solid ${highlight ? C.blue : C.line}`,
+      borderRadius: 12, padding: rowH, marginBottom: 6,
+    }}>
+      <div style={{ fontSize: dense ? 15 : 21, fontWeight: 900, color: highlight ? C.blue : C.sub }}>{label}</div>
+      <div style={{ fontSize: dense ? 15 : 21, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+      <div style={{ textAlign: "center", fontSize: dense ? 17 : 25, fontWeight: 900, color: C.win }}>{r.win}</div>
+      <div style={{ textAlign: "center", fontSize: dense ? 17 : 25, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+      <div style={{ textAlign: "right", fontSize: dense ? 14 : 19, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink }}>{fmtRate(r.avgRate)}</div>
+    </div>
+  );
+  return (
+    <>
+      {[1, 2, 3].map((t) => {
+        const rows = (pick.groups[t] || []).filter((r) => r.played > 0);
+        return (
+          <div key={t} style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
+            <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+              <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+            </div>
+            {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "14px 0" }}>まだ結果がありません</div>}
+            {rows.map((r) => <Row key={r.name} label={`${r.rank}位`} r={r} highlight={r.rank === 1} />)}
+          </div>
+        );
+      })}
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🎯 達成率ランキング</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各テーブルの1位を除いた全員が対象。1位が決勝ワイルドカード枠</div>
+        <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+          <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+        </div>
+        {pick.rateRanking.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "14px 0" }}>まだ結果がありません</div>}
+        {pick.rateRanking.map((r) => <Row key={r.name} label={`${r.rateRank}位`} r={r} highlight={r.rateRank === 1} />)}
+      </div>
+      <div style={{ fontSize: 13.5, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
+        各テーブルの並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。達成率ランキングも同じ基準で、各テーブルの1位のみ除いて並べています。
+      </div>
+    </>
+  );
+}
+
 /* ========= 成績タブ：勝ち数→負け試合の達成率平均の順に並べる ========= */
 function StandingsTab() {
   const [matches, setMatches] = useState({});
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
+  const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -1555,6 +1620,8 @@ function StandingsTab() {
       <ScopeToggle view={view} onChange={setView} hasBracket={hasBracket} />
       {view === "bracket" ? (
         <BracketReadOnlyView matches={matches} />
+      ) : groupMode ? (
+        <GroupStandingsBlocks matches={matches} roster={roster} />
       ) : (
         <>
       {teamRows.length > 0 && (
@@ -1620,52 +1687,42 @@ function StandingsTab() {
 
 /* ========= 総当たり表：a×bの正方マトリクス。行＝自分、列＝相手。セルはその視点でのスコア（勝ちは色付け）。
    単体でも他タブに埋め込んでも使えるよう、自前でデータ購読する ========= */
-function RoundRobinMatrix({ compact, fill }) {
-  const [matches, setMatches] = useState({});
-  const [roster, setRoster] = useState([]);
-  const [err, setErr] = useState(null);
+function buildMatrixData(matches, roster, tableFilter) {
+  const all = Object.values(matches || {})
+    .filter((m) => m && !m.bracket && (tableFilter == null || Number(m.table) === tableFilter))
+    .map((m) => normalizeMatch(m));
+  const names = [];
+  const seen = new Set();
+  roster.forEach((p) => {
+    if (p && p.name && !seen.has(p.name) && all.some((m) => (m.names || []).includes(p.name))) {
+      names.push(p.name); seen.add(p.name);
+    }
+  });
+  all.forEach((m) => (m.names || []).forEach((n) => { if (n && !seen.has(n)) { names.push(n); seen.add(n); } }));
+  const idx = new Map(names.map((n, i) => [n, i]));
+  const grid = names.map(() => names.map(() => null));
+  all.forEach((m) => {
+    const [n1, n2] = m.names || [];
+    if (idx.has(n1) && idx.has(n2)) {
+      const i = idx.get(n1), j = idx.get(n2);
+      grid[i][j] = { m, mine: 0 };
+      grid[j][i] = { m, mine: 1 };
+    }
+  });
+  return { names, grid };
+}
 
-  useEffect(() => dbSubscribe("matches",
-    (m) => { setMatches(m || {}); setErr(null); },
-    (e) => setErr(e)), []);
-  useEffect(() => dbSubscribe("roster",
-    (r) => setRoster(Array.isArray(r) ? r : []),
-    () => {}), []);
-
-  const matrix = useMemo(() => {
-    const all = Object.values(matches || {}).filter((m) => m && !m.bracket).map((m) => normalizeMatch(m));
-    const names = [];
-    const seen = new Set();
-    roster.forEach((p) => {
-      if (p && p.name && !seen.has(p.name) && all.some((m) => (m.names || []).includes(p.name))) {
-        names.push(p.name); seen.add(p.name);
-      }
-    });
-    all.forEach((m) => (m.names || []).forEach((n) => { if (n && !seen.has(n)) { names.push(n); seen.add(n); } }));
-    const idx = new Map(names.map((n, i) => [n, i]));
-    const grid = names.map(() => names.map(() => null));
-    all.forEach((m) => {
-      const [n1, n2] = m.names || [];
-      if (idx.has(n1) && idx.has(n2)) {
-        const i = idx.get(n1), j = idx.get(n2);
-        grid[i][j] = { m, mine: 0 };
-        grid[j][i] = { m, mine: 1 };
-      }
-    });
-    return { names, grid };
-  }, [matches, roster]);
-
+function MatrixGrid({ matrix, compact, fill, emptyLabel }) {
   const cellH = compact ? 30 : 40;
   const cellFont = compact ? 12 : 16;
   const headFont = compact ? 11 : 13;
 
   if (matrix.names.length === 0) {
-    return <div style={{ color: C.sub, fontSize: 14, textAlign: "center", padding: "20px 0" }}>対戦がまだ登録されていません</div>;
+    return <div style={{ color: C.sub, fontSize: 14, textAlign: "center", padding: "20px 0" }}>{emptyLabel || "対戦がまだ登録されていません"}</div>;
   }
 
   return (
     <div style={{ overflowX: "auto", height: fill ? "100%" : "auto", boxSizing: "border-box" }}>
-      {err && <div style={{ color: C.minus, fontSize: 12, marginBottom: 6 }}>同期エラー: {err}</div>}
       <div style={{
         display: "grid", height: fill ? "100%" : "auto",
         gridTemplateColumns: `${compact ? 60 : 84}px repeat(${matrix.names.length}, minmax(${compact ? 44 : 64}px, 1fr))`,
@@ -1707,6 +1764,58 @@ function RoundRobinMatrix({ compact, fill }) {
           </React.Fragment>
         ))}
       </div>
+    </div>
+  );
+}
+
+function RoundRobinMatrix({ compact, fill }) {
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => dbSubscribe("matches",
+    (m) => { setMatches(m || {}); setErr(null); },
+    (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("roster",
+    (r) => setRoster(Array.isArray(r) ? r : []),
+    () => {}), []);
+
+  const matrix = useMemo(() => buildMatrixData(matches, roster, null), [matches, roster]);
+
+  return (
+    <div style={{ height: fill ? "100%" : "auto" }}>
+      {err && <div style={{ color: C.minus, fontSize: 12, marginBottom: 6 }}>同期エラー: {err}</div>}
+      <MatrixGrid matrix={matrix} compact={compact} fill={fill} />
+    </div>
+  );
+}
+
+/* ========= グループ分けして総当たり用：T1〜T3それぞれの総当たり表を3枚に分けて表示 ========= */
+function GroupRoundRobinMatrix({ compact, fill }) {
+  const [matches, setMatches] = useState({});
+  const [roster, setRoster] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => dbSubscribe("matches",
+    (m) => { setMatches(m || {}); setErr(null); },
+    (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("roster",
+    (r) => setRoster(Array.isArray(r) ? r : []),
+    () => {}), []);
+
+  const matrices = useMemo(() => [1, 2, 3].map((t) => buildMatrixData(matches, roster, t)), [matches, roster]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: fill ? "row" : "column", gap: fill ? 14 : 22, height: fill ? "100%" : "auto" }}>
+      {err && <div style={{ color: C.minus, fontSize: 12 }}>同期エラー: {err}</div>}
+      {[1, 2, 3].map((t, i) => (
+        <div key={t} style={{ flex: fill ? 1 : undefined, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: compact ? 13 : 15, fontWeight: 800, color: C.blue, marginBottom: 6, flexShrink: 0 }}>T{t}</div>
+          <div style={{ flex: fill ? 1 : undefined, minHeight: 0 }}>
+            <MatrixGrid matrix={matrices[i]} compact={compact} fill={fill} emptyLabel={`T${t}：対戦がまだ登録されていません`} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1870,6 +1979,7 @@ function PcStandingsTab() {
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
+  const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -1927,6 +2037,10 @@ function PcStandingsTab() {
       {view === "bracket" ? (
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <BracketReadOnlyView matches={matches} wide />
+        </div>
+      ) : groupMode ? (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <GroupStandingsBlocks matches={matches} roster={roster} />
         </div>
       ) : (
       <div className="print-fit" style={{
