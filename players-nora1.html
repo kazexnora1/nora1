@@ -80,8 +80,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.006";
-const BUILD_TIME = "2026-08-16 「テーブル」タブの次の試合表示：バンキング遷移中に次の次を表示していた不具合を修正";
+const APP_VERSION = "1.007";
+const BUILD_TIME = "2026-08-17 あずき杯／モスカップで9番確定後に出る「次ブレイク」表示が交互ブレイク前提のままで誤表示していた不具合を修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2337,10 +2337,11 @@ function MatchScreen({ setupInfo, onExit }) {
               </div>
               {hi.txt && <div style={{ display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" }}>{hi.txt}</div>}
               {/* ラックが終わっている間は、次のラックでブレイクする側に「次ブレイク」を出す。
-                  次のラックに入ったら通常の「ブレイク」表示に戻る */}
+                  次のラックに入ったら通常の「ブレイク」表示に戻る。
+                  次に誰がブレイクするかはルールセットのnextBrk（JCL＝交互／あずき杯・モスカップ＝勝者ブレイク）で判定する */}
               <div style={{ minHeight: 18, marginTop: 4 }}>
                 {matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (
-                  (1 - brk) === i && (
+                  ruleset.nextBrk(lastResult, brk) === i && (
                     <span style={{ color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 }}>● 次ブレイク</span>
                   )
                 ) : brk === i && (
