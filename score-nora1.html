@@ -21,6 +21,7 @@
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
@@ -78,8 +79,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
-const APP_VERSION = "1.001";
-const BUILD_TIME = "2026-08-13 新バージョン検知バナーを追加";
+const APP_VERSION = "1.002";
+const BUILD_TIME = "2026-08-18 匿名ログインを追加（画面表示は変わらない）。DBのルールを「ログイン済みのみ」に絞るための第一段階";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -102,6 +103,22 @@ const FIREBASE_CONFIG = {
 };
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
+
+/* ========= 匿名ログイン =========
+   画面には何も出ないが、開いた瞬間に裏で「名無しの利用者」としてログインする。
+   これでデータベース側のルールを「ログインした人だけ読み書きできる」に絞れるようになり、
+   公開状態のFirebaseを自動で探し回るスクリプトからデータを守れる。
+   ※匿名ログインをまだ有効にしていない段階でも、失敗を握りつぶして今までどおり動く。
+     B1〜B3すべてを差し替えてから、最後にルールを厳しくする手順にすること。
+   このファイルは db.ref(...) をあちこちで直接呼んでいるので、
+   ログインが済むまで画面自体を出さない形で待たせている（下のReactDOM.createRootを参照）。 */
+const authReady = (async () => {
+  try {
+    if (!firebase.auth().currentUser) await firebase.auth().signInAnonymously();
+  } catch (e) {
+    console.warn("[auth] 匿名ログインに失敗", (e && e.code) || e);
+  }
+})();
 
 /* Firebaseは空の配列・空のオブジェクトを保存しない（キーごと消える）。
    読み込んだ直後にここで補っておかないと、hist などが undefined のまま使われて落ちる */
@@ -1625,11 +1642,14 @@ function App() {
 }
 
 
-try {
-  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-} catch (e) {
-  showCrash(e.message + "\n" + (e.stack || ""));
-}
+// 匿名ログインが済んでから画面を出す。先に出すと、最初の読み込みだけ権限エラーになることがある
+authReady.then(() => {
+  try {
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  } catch (e) {
+    showCrash(e.message + "\n" + (e.stack || ""));
+  }
+});
 </script>
 </body>
 </html>
