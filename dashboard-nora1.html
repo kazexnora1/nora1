@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.209";
-const BUILD_TIME = "2026-08-17 グループ分けして総当たりに「グループでテーブル固定」オプションを追加（3グループの時のみ、G1〜G3をT1〜T3に固定して組める）";
+const APP_VERSION = "1.210";
+const BUILD_TIME = "2026-08-18 グループ分けして総当たりの決勝ワイルドカード選出順を、達成率優先→勝ち数優先に変更（各グループ1位を除いた中で勝ち数が多い順、同数なら達成率が高い順）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -584,7 +584,7 @@ function buildGroupStandings(matches, roster, groupCount) {
   return groups; // { 1: rows, 2: rows, ... G: rows }（各グループの成績、rows[0]がそのグループの1位）
 }
 
-// グループ分けして総当たり用：各グループの1位を除いた全員を、達成率（avgRate、全勝は最上位扱い）の高い順に並べる
+// グループ分けして総当たり用：各グループの1位を除いた全員を、勝ち数の多い順→達成率（avgRate、全勝は最上位扱い）の高い順に並べる
 function buildGroupRateRanking(groups, groupCount) {
   const G = groupCount || 3;
   const tables = Array.from({ length: G }, (_, i) => i + 1);
@@ -592,9 +592,9 @@ function buildGroupRateRanking(groups, groupCount) {
   const candidates = tables.flatMap((t) => (groups[t] || []).filter((r) => !winnerNames.has(r.name) && r.played > 0));
   const rateOf = (r) => (r.avgRate == null ? 2 : r.avgRate); // 全勝（avgRateなし）は最上位扱い
   const sorted = [...candidates].sort((a, b) => {
+    if (b.win !== a.win) return b.win - a.win;
     const ar = rateOf(a), br = rateOf(b);
     if (br !== ar) return br - ar;
-    if (b.win !== a.win) return b.win - a.win;
     return (b.pf - b.pa) - (a.pf - a.pa);
   });
   sorted.forEach((r, i) => {
@@ -608,7 +608,7 @@ function buildGroupRateRanking(groups, groupCount) {
 }
 
 // グループ分けして総当たりの決勝進出者選出：各グループの1位（G人）＋
-// グループ1位を除いた全員の中で達成率（avgRate、全勝は最上位扱い）が高い順に、決勝の枠が埋まるまで採用
+// グループ1位を除いた全員の中で勝ち数の多い順→達成率（avgRate、全勝は最上位扱い）が高い順に、決勝の枠が埋まるまで採用
 function pickGroupFinalists(matches, roster, groupCount) {
   const G = groupCount || 3;
   const groups = buildGroupStandings(matches, roster, G);
@@ -1592,8 +1592,8 @@ function GroupStandingsBlocks({ matches, roster, groupCount, dense }) {
         );
       })}
       <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🎯 達成率ランキング</div>
-        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各グループの1位を除いた全員が対象。上位が決勝のワイルドカード候補</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🎯 ワイルドカードランキング</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各グループの1位を除いた全員が対象。勝ち数が多い順、同数なら達成率が高い順で、上位が決勝のワイルドカード候補</div>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
           <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
         </div>
@@ -1601,7 +1601,7 @@ function GroupStandingsBlocks({ matches, roster, groupCount, dense }) {
         {pick.rateRanking.map((r) => <Row key={r.name} label={`${r.rateRank}位`} r={r} highlight={r.rateRank === 1} />)}
       </div>
       <div style={{ fontSize: 13.5, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
-        各グループの並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。達成率ランキングも同じ基準で、各グループの1位のみ除いて並べています。
+        各グループの並び順：勝ち数 → 負け試合の達成率（取得点÷目標点）の平均 → 得失点差。ワイルドカードランキングは、各グループの1位のみ除いて「勝ち数 → 達成率 → 得失点差」の順で並べています。
       </div>
     </>
   );
@@ -2114,7 +2114,7 @@ function BracketTab({ roster, format }) {
   });
   const s0 = useMemo(() => loadSettings(), []);
   // グループ分けして総当たりで予選を組んだ大会は、決勝トーナメントも
-  // 「各グループ1位（グループ数ぶん）＋達成率上位で枠を埋める」方式で固定する
+  // 「各グループ1位（グループ数ぶん）＋勝ち数（同数なら達成率）上位で枠を埋める」方式で固定する
   const groupMode = !!s0.perTableRR;
   const groupCount = s0.groupCount || 3;
   const groupBracketSize = groupCount <= 4 ? 4 : 8; // グループ数が収まる最小のブラケットサイズ（4 or 8）
@@ -2208,7 +2208,7 @@ function BracketTab({ roster, format }) {
     return idx;
   }, [standings, roster]);
 
-  // グループ分けして総当たり用：各グループの成績と、決勝進出者（各グループ1位＋達成率上位で枠が埋まるまで）
+  // グループ分けして総当たり用：各グループの成績と、決勝進出者（各グループ1位＋勝ち数（同数なら達成率）上位で枠が埋まるまで）
   const groupPick = useMemo(() => (groupMode ? pickGroupFinalists(matches, roster, groupCount) : null), [groupMode, matches, roster, groupCount]);
   const groupRankedIdx = useMemo(() => {
     if (!groupPick || !groupPick.ready) return null;
@@ -2219,14 +2219,14 @@ function BracketTab({ roster, format }) {
     const idx = names.map((n) => roster.findIndex((p) => p.name === n)).filter((i) => i >= 0);
     return idx.length === names.length && names.length > 0 ? idx : null;
   }, [groupPick, roster, size]);
-  // 各出場者が「G◯ 1位」なのか「達成率◯位（ワイルドカード）」なのかのラベル（グループ分け表示用）
+  // 各出場者が「G◯ 1位」なのか「勝数◯位（ワイルドカード）」なのかのラベル（グループ分け表示用）
   const groupSourceLabel = useMemo(() => {
     if (!groupPick || !groupPick.ready) return {};
     const map = {};
     groupPick.winners.forEach((w, t) => { if (w) map[w.name] = `G${t + 1} 1位`; });
     const wcNeeded = Math.max(0, size - groupPick.winners.length);
     const wcList = groupPick.rateRanking.slice(0, wcNeeded);
-    wcList.forEach((r, i) => { map[r.name] = wcList.length > 1 ? `達成率${i + 1}位` : "達成率1位"; });
+    wcList.forEach((r, i) => { map[r.name] = wcList.length > 1 ? `勝数${i + 1}位` : "勝数1位"; });
     return map;
   }, [groupPick, size]);
 
@@ -2430,7 +2430,7 @@ function BracketTab({ roster, format }) {
               <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🔀 グループ分け方式（{groupBracketSize}人固定）</div>
               <div style={{ fontSize: 13, color: "#3F4A55", lineHeight: 1.7 }}>
                 {groupCount}グループのリーグ戦（予選）から、各グループ1位の{groupCount}人
-                {groupBracketSize > groupCount ? `＋達成率上位${groupBracketSize - groupCount}人＝計${groupBracketSize}人` : `＝計${groupCount}人`}
+                {groupBracketSize > groupCount ? `＋勝ち数（同数なら達成率）上位${groupBracketSize - groupCount}人＝計${groupBracketSize}人` : `＝計${groupCount}人`}
                 が決勝トーナメントに進みます
               </div>
             </div>
