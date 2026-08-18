@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.210";
-const BUILD_TIME = "2026-08-18 グループ分けして総当たりの決勝ワイルドカード選出順を、達成率優先→勝ち数優先に変更（各グループ1位を除いた中で勝ち数が多い順、同数なら達成率が高い順）";
+const APP_VERSION = "1.211";
+const BUILD_TIME = "2026-08-18 試合の設定を整理：まず「骨組み（得点方式→予選の組み方→決勝の進出方式）」を決め、その後「予選を組む」で必要な項目だけを順に入力する流れに変更";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -707,6 +707,45 @@ function saveSettings(patch) {
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
 }
 
+/* ========= 試合の骨組み（得点方式 → 予選の組み方 → 決勝の進出方式） =========
+   これまで「総当たりモード」「グループ分けして総当たり」「グループを避けて組む」「対抗戦」の
+   4つのトグルが独立していて、組み合わせによっては意味の通らない状態が作れてしまっていた。
+   ここで排他的な1つの選択（prelimMode）にまとめ、従来のフラグは互換のため保存時に併記する。 */
+const PRELIM_MODES = [
+  { id: "rr_all",     kind: "league", label: "全員で総当たり",             sub: "参加者全員と1回ずつ対戦します" },
+  { id: "rr_group",   kind: "league", label: "グループに分けて総当たり",   sub: "均等なグループに分け、グループ内だけで総当たり（リーグ戦）" },
+  { id: "rand_all",   kind: "random", label: "全体からランダム",           sub: "決めた試合数ぶん、全体から相手を割り当てます" },
+  { id: "rand_group", kind: "random", label: "グループ内を避けてランダム", sub: "A/B/Cの3グループに分け、同じグループ同士をできるだけ避けます" },
+  { id: "rand_rival", kind: "random", label: "対抗戦（必ず相手チーム）",   sub: "2チームに分け、必ず違うチームの相手とだけ対戦します" },
+];
+const prelimModeInfo = (id) => PRELIM_MODES.find((m) => m.id === id) || PRELIM_MODES[2];
+// 旧バージョンの設定（バラバラのフラグ）からも正しく復元できるようにしておく
+function loadPrelimMode(s) {
+  const st = s || loadSettings();
+  if (st.prelimMode && PRELIM_MODES.some((m) => m.id === st.prelimMode)) return st.prelimMode;
+  if (st.roundRobinMode) return st.perTableRR ? "rr_group" : "rr_all";
+  if (st.rivalMode) return "rand_rival";
+  if (st.avoidGroups) return "rand_group";
+  return "rand_all";
+}
+// prelimModeから、既存のロジックが読んでいる従来フラグを組み立てる
+function prelimModeFlags(id) {
+  return {
+    roundRobinMode: id === "rr_all" || id === "rr_group",
+    perTableRR: id === "rr_group",
+    avoidGroups: id === "rand_group",
+    rivalMode: id === "rand_rival",
+  };
+}
+/* 決勝の進出方式
+   "group"   … 各グループ1位＋勝ち数（同数なら達成率）上位で枠を埋める（グループ分け総当たりの時だけ選べる）
+   "overall" … 全体の勝ち数（同数なら達成率）上位4人／8人 */
+function loadFinalMode(s) {
+  const st = s || loadSettings();
+  if (st.finalMode === "group" || st.finalMode === "overall") return st.finalMode;
+  return st.perTableRR ? "group" : "overall"; // 旧バージョンからの引き継ぎ
+}
+
 function App() {
   const [tab, setTab] = useState("home");
   const [roster, setRoster] = useState([]);
@@ -714,8 +753,9 @@ function App() {
   const [rosterError, setRosterError] = useState(null);
   const [deviceMode, setDeviceMode] = useState(() => (loadSettings().deviceMode === "pc" ? "pc" : "mobile"));
   const [roundRobin, setRoundRobin] = useState(() => !!loadSettings().roundRobinMode);
-  const groupMode = useMemo(() => !!loadSettings().perTableRR, []); // グループ分けして総当たり中かどうか
-  const groupCount = useMemo(() => loadSettings().groupCount || 3, []); // 何グループに分けたか
+  // 骨組みの選択は設定タブでいつでも変えられるので、毎回読み直す（リロードしなくても表示が追従するように）
+  const groupMode = !!loadSettings().perTableRR; // グループ分けして総当たり中かどうか
+  const groupCount = loadSettings().groupCount || 3; // 何グループに分けたか
   const [pcPlayerView, setPcPlayerView] = useState("matrix"); // "matrix" | "standings"（PC表示・総当たりモード時のみ使用）
   const isPc = deviceMode === "pc";
   const fillScrollRef = useRef(null);
@@ -1613,8 +1653,8 @@ function StandingsTab() {
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
-  const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
-  const groupCount = useMemo(() => loadSettings().groupCount || 3, []);
+  const groupMode = !!loadSettings().perTableRR;
+  const groupCount = loadSettings().groupCount || 3;
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -1991,8 +2031,8 @@ function PcStandingsTab() {
   const [roster, setRoster] = useState([]);
   const [err, setErr] = useState(null);
   const [view, setView] = useState("prelim");
-  const groupMode = useMemo(() => !!loadSettings().perTableRR, []);
-  const groupCount = useMemo(() => loadSettings().groupCount || 3, []);
+  const groupMode = !!loadSettings().perTableRR;
+  const groupCount = loadSettings().groupCount || 3;
 
   useEffect(() => dbSubscribe("/",
     (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
@@ -2104,7 +2144,7 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster, format }) {
+function BracketTab({ roster, format, prelimMode, finalMode }) {
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
   const fmt = format || loadSettings().format || "jcl";
   const mkMatch = (extra) => ({
@@ -2113,9 +2153,12 @@ function BracketTab({ roster, format }) {
     lastResult: null, hist: [], format: fmt, ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
-  // グループ分けして総当たりで予選を組んだ大会は、決勝トーナメントも
-  // 「各グループ1位（グループ数ぶん）＋勝ち数（同数なら達成率）上位で枠を埋める」方式で固定する
-  const groupMode = !!s0.perTableRR;
+  // 決勝の進出方式（イベントの設定・骨組み③で選ぶ）。
+  // 「各グループ1位（グループ数ぶん）＋勝ち数（同数なら達成率）上位で枠を埋める」方式は、
+  // 予選をグループ分け総当たりで組んだ時だけ成立するので、その条件も合わせて確認する
+  const pMode = prelimMode || loadPrelimMode(s0);
+  const fMode = finalMode || loadFinalMode(s0);
+  const groupMode = fMode === "group" && pMode === "rr_group";
   const groupCount = s0.groupCount || 3;
   const groupBracketSize = groupCount <= 4 ? 4 : 8; // グループ数が収まる最小のブラケットサイズ（4 or 8）
   const [size, setSize] = useState(groupMode ? groupBracketSize : (s0.bracketSize === 4 ? 4 : 8));
@@ -2676,6 +2719,22 @@ function SectionLabel({ children }) {
 /* 説明文の共通スタイル。小さすぎ・薄すぎを避けて、離れても読める濃さにする */
 const HELP = { fontSize: 14, color: "#3F4A55", lineHeight: 1.8 };
 
+/* 骨組み設定の中の「① ② ③」の見出し。選ぶ順番が一目で分かるようにする */
+function StepHead({ n, title, sub }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+      <span style={{
+        flexShrink: 0, width: 24, height: 24, borderRadius: 12, background: C.blue, color: "#fff",
+        fontSize: 13, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center",
+      }}>{n}</span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 16, fontWeight: 900, color: C.ink }}>{title}</span>
+        {sub && <span style={{ display: "block", fontSize: 12.5, color: C.sub, marginTop: 1 }}>{sub}</span>}
+      </span>
+    </div>
+  );
+}
+
 /* 設定タブの折りたたみセクション。使う時だけ開く形にして、画面をすっきりさせる */
 function Section({ icon, title, note, sub, defaultOpen, children }) {
   const [open, setOpen] = useState(!!defaultOpen);
@@ -2705,6 +2764,25 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
   const [format, setFormat] = useState(() => loadSettings().format || "jcl");
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
+  // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
+  const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
+  const [finalMode, setFinalMode] = useState(() => loadFinalMode());
+
+  // 決勝の「各グループ1位＋…」方式は、予選をグループ分け総当たりで組んだ時だけ成立する
+  const groupFinalAvailable = prelimMode === "rr_group";
+  const updateFinalMode = (v) => { setFinalMode(v); saveSettings({ finalMode: v }); };
+  const updatePrelimMode = (id) => {
+    setPrelimMode(id);
+    const flags = prelimModeFlags(id);
+    saveSettings({ prelimMode: id, ...flags });
+    onSetRoundRobin(flags.roundRobinMode); // プレイヤータブの対戦表表示（App側のstate）も合わせる
+    if (id !== "rr_group" && finalMode === "group") updateFinalMode("overall");
+  };
+  // 起動直後、旧設定から復元したprelimModeとApp側のroundRobinがずれていたら合わせておく
+  useEffect(() => {
+    const want = prelimModeFlags(prelimMode).roundRobinMode;
+    if (want !== roundRobin) onSetRoundRobin(want);
+  }, []);
 
   const updateFormat = (v) => { setFormat(v); saveSettings({ format: v }); };
   const updateTournamentName = (v) => {
@@ -2747,15 +2825,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </div>
 
-      {/* 以下は大会当日の流れの順に並べる：① イベントの設定 → ② 予選を組む（参加者リストを含む） → ③ 決勝トーナメント */}
-      <Section icon="⚙️" title="イベントの設定" sub="試合のフォーマット選択と調整">
+      {/* 以下は大会当日の流れの順に並べる：① イベントの設定（骨組み） → ② 予選を組む（参加者リストを含む） → ③ 決勝トーナメント */}
+      <Section icon="⚙️" title="イベントの設定" sub="まずは試合の骨組み（得点方式・予選・決勝）を決める">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
-          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 10 }}>試合のフォーマット</div>
+          <div style={{ background: C.lightBlue, border: `1px solid ${C.blue}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, ...HELP, color: "#2A3B4C" }}>
+            ここで骨組みだけを決めます。人数・グループ数・時間割など具体的な数字は、下の「🎱 予選を組む」で選んだ骨組みに必要な項目だけが出ます。
+          </div>
+
+          <StepHead n="1" title="得点方式" sub="どのルールでスコアを付けるか" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
             <div style={{ display: "flex", gap: 8 }}>
               {[
+                { id: "azuki", label: "JPA / モス・あずき杯", sub: "JPAスコア・勝者ブレイク・固定目標点" },
                 { id: "jcl", label: "JCL / NORA 1GP", sub: "ファーゴハンデ・交互ブレイク" },
-                { id: "azuki", label: "あずき杯 / モスカップ", sub: "JPAスコア・勝者ブレイク" },
               ].map(({ id, label, sub }) => (
                 <button key={id} onClick={() => updateFormat(id)} style={{
                   flex: 1, background: format === id ? C.blue : "#fff",
@@ -2767,8 +2849,73 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
                 </button>
               ))}
             </div>
-            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングでフォーマットが各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
+            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングで得点方式が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
           </div>
+
+          <StepHead n="2" title="予選の組み方" sub="リーグ戦にするか、ランダムに組むか" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
+            {[
+              { kind: "league", label: "リーグ（総当たり）", sub: "決められた相手全員と1回ずつ。順位がはっきり出ます" },
+              { kind: "random", label: "ランダム", sub: "1人あたりの試合数を決めて、相手を割り当てます" },
+            ].map(({ kind, label, sub }) => (
+              <div key={kind} style={{ marginBottom: kind === "league" ? 14 : 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 900, color: C.ink }}>{label}</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 1, marginBottom: 7 }}>{sub}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {PRELIM_MODES.filter((m) => m.kind === kind).map((m) => (
+                    <button key={m.id} onClick={() => updatePrelimMode(m.id)} style={{
+                      width: "100%", textAlign: "left", background: prelimMode === m.id ? C.lightBlue : "#fff",
+                      border: `2px solid ${prelimMode === m.id ? C.blue : C.line}`, borderRadius: 12,
+                      padding: "10px 12px", cursor: "pointer", fontFamily: FONT,
+                    }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: prelimMode === m.id ? C.blue : C.ink }}>
+                        {prelimMode === m.id ? "● " : "○ "}{m.label}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6, paddingLeft: 17 }}>{m.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <StepHead n="3" title="決勝への進出方式" sub="予選の成績から誰が決勝トーナメントに上がるか" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              <button onClick={() => groupFinalAvailable && updateFinalMode("group")} disabled={!groupFinalAvailable} style={{
+                width: "100%", textAlign: "left", background: finalMode === "group" ? C.lightBlue : "#fff",
+                border: `2px solid ${finalMode === "group" ? C.blue : C.line}`, borderRadius: 12,
+                padding: "10px 12px", cursor: groupFinalAvailable ? "pointer" : "default", fontFamily: FONT,
+                opacity: groupFinalAvailable ? 1 : 0.45,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: finalMode === "group" ? C.blue : C.ink }}>
+                  {finalMode === "group" ? "● " : "○ "}各グループ1位＋勝ち数トップ
+                </div>
+                <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6, paddingLeft: 17 }}>
+                  各グループの1位に、グループ1位を除いた中から勝ち数（同数なら達成率）の上位を足して枠を埋めます（3グループなら計4名）
+                </div>
+              </button>
+              <button onClick={() => updateFinalMode("overall")} style={{
+                width: "100%", textAlign: "left", background: finalMode === "overall" ? C.lightBlue : "#fff",
+                border: `2px solid ${finalMode === "overall" ? C.blue : C.line}`, borderRadius: 12,
+                padding: "10px 12px", cursor: "pointer", fontFamily: FONT,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: finalMode === "overall" ? C.blue : C.ink }}>
+                  {finalMode === "overall" ? "● " : "○ "}全体の勝ち数上位 4名 or 8名
+                </div>
+                <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6, paddingLeft: 17 }}>
+                  グループに関係なく、全員を勝ち数（同数なら達成率）の順に並べて上位から選びます。人数は「🏆 決勝トーナメント」で選びます
+                </div>
+              </button>
+            </div>
+            {!groupFinalAvailable && (
+              <div style={{ ...HELP, marginTop: 8, color: C.sub }}>
+                「各グループ1位＋…」は、予選を <b>グループに分けて総当たり</b> で組んだ時だけ選べます。
+              </div>
+            )}
+          </div>
+
+          <StepHead n="4" title="その他の設定" sub="大会名・配信・時間制限など" />
 
           <div style={{ background: timeLimitEnabled ? C.lightBlue : C.zone, border: `1.5px solid ${timeLimitEnabled ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2823,12 +2970,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         </div>
       </Section>
 
-      <Section icon="🎱" title="予選を組む" sub="参加者リスト・分け方・時間割から対戦表をつくる">
-        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} roundRobin={roundRobin} onSetRoundRobin={onSetRoundRobin} format={format} />
+      <Section icon="🎱" title="予選を組む" sub={`${prelimModeInfo(prelimMode).label}｜人数・参加者・時間割を入れて対戦表をつくる`}>
+        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} prelimMode={prelimMode} format={format} />
       </Section>
 
-      <Section icon="🏆" title="決勝トーナメント" sub="上位4人／8人と抽選番号を入れて登録">
-        <BracketTab roster={roster} format={format} />
+      <Section icon="🏆" title="決勝トーナメント" sub={finalMode === "group" ? "各グループ1位＋勝ち数トップで自動選出" : "全体の上位4人／8人と抽選番号を入れて登録"}>
+        <BracketTab roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
@@ -3747,10 +3894,18 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, todayEarly, on
   );
 }
 
-function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roundRobin, onSetRoundRobin, format }) {
+function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prelimMode, format }) {
   const registeringRef = useRef(false); // 連打による二重登録防止（state更新は非同期なのでrefで即座にブロック）
   const fmt = format || loadSettings().format || "jcl";
   const s0 = useMemo(() => loadSettings(), []);
+  // 予選の組み方は「イベントの設定」の骨組み②で1つだけ選ぶ。ここでは選ばれた方式から必要なフラグを導くだけで、
+  // このタブ側でON/OFFを切り替えることはしない（組み合わせで意味の通らない状態が作れないようにするため）
+  const pMode = prelimMode || loadPrelimMode(s0);
+  const modeInfo = prelimModeInfo(pMode);
+  const roundRobin = pMode === "rr_all" || pMode === "rr_group";
+  const perTableRR = pMode === "rr_group";
+  const avoidGroups = pMode === "rand_group";
+  const rivalMode = pMode === "rand_rival";
   const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
   const [games, setGames] = useState(s0.games || 4);
   const [lenPct, setLenPct] = useState(s0.lenPct || 100);
@@ -3765,15 +3920,12 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   const [endM, setEndM] = useState(d0.endM);
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
-  const [avoidGroups, setAvoidGroups] = useState(!!s0.avoidGroups);
   const [group1, setGroup1] = useState(s0.group1 || 5);
   const [group2, setGroup2] = useState(s0.group2 || 5);
-  const [perTableRR, setPerTableRR] = useState(!!s0.perTableRR);
   const [groupCount, setGroupCount] = useState(s0.groupCount || 3);
   const [fixedGroupTable, setFixedGroupTable] = useState(!!s0.fixedGroupTable);
   const [existingMatches, setExistingMatches] = useState({});
   // 対抗戦（団体戦）：参加者リストの前半／後半で2チームに分け、必ず違うチーム同士だけを組む
-  const [rivalMode, setRivalMode] = useState(!!s0.rivalMode);
   const [rivalA, setRivalA] = useState(s0.rivalA || Math.ceil((s0.players || 12) / 2));
   const [rivalNameA, setRivalNameA] = useState(s0.rivalNameA || "Aチーム");
   const [rivalNameB, setRivalNameB] = useState(s0.rivalNameB || "Bチーム");
@@ -3797,12 +3949,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   useEffect(() => {
     saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
   }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
-  // 「グループ分けして総当たり」は、有効なグループ数の候補が無くなったら自動でOFFにする
-  useEffect(() => {
-    if (perTableRR && !perTableEligible) setPerTableRR(false);
-  }, [perTableRR, perTableEligible]);
   // 人数が変わってグループ数の候補が変わったら、選んでいたグループ数が候補から外れていないか確認する。
-  // 外れていたら3人数（既定）→候補の先頭の順で選び直す
+  // 外れていたら3グループ（既定）→候補の先頭の順で選び直す
   useEffect(() => {
     if (groupOptions.length > 0 && !groupOptions.includes(groupCount)) {
       setGroupCount(groupOptions.includes(3) ? 3 : groupOptions[0]);
@@ -3812,9 +3960,6 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
   useEffect(() => {
     if (fixedGroupTable && groupCount !== 3) setFixedGroupTable(false);
   }, [fixedGroupTable, groupCount]);
-  // 「グループを避けて組む」と「対抗戦」は"グループ"の定義が異なるため同時には使えない（相互排他）
-  useEffect(() => { if (rivalMode && avoidGroups) setAvoidGroups(false); }, [rivalMode]);
-  useEffect(() => { if (avoidGroups && rivalMode) setRivalMode(false); }, [avoidGroups]);
   // チームA人数は1〜(players-1)の範囲に収める。人数が変わって範囲外になったら中央値へ寄せる
   useEffect(() => {
     if (rivalA > players - 1 || rivalA < 1) setRivalA(Math.max(1, Math.min(players - 1, Math.ceil(players / 2))));
@@ -4030,11 +4175,26 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
 
   const noRatings = rows && rows.some((m) => !m.rt1 && !m.rt2);
 
+  // 選んだ予選方式に応じて、その方式だけに必要な設定（グループ数・チーム分けなど）を1ステップぶん挟む。
+  // 必要ない方式では番号を詰めて、見出しが「1→2→3→4」と素直につながるようにする
+  const hasModeStep = perTableRR || avoidGroups || rivalMode;
+  const stepNo = hasModeStep
+    ? { mode: "2", score: "3", time: "4", run: "5" }
+    : { score: "2", time: "3", run: "4" };
+  // グループ分け総当たりなのに人数が割り切れない時は組めない
+  const groupBlocked = perTableRR && !perTableEligible;
+  const canRun = !busy && todayRoster.length === players && !groupBlocked;
+
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 32px", color: C.ink }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>試合割り</div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>空き卓は最終コマのみ／3連続なし／連投は同卓のみ</div>
+      {/* 「イベントの設定」で決めた骨組みの確認。ここでは変えられない（変えるのは上のセクション） */}
+      <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "11px 14px", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 5 }}>いま選んでいる骨組み</div>
+        <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.6 }}>
+          {fmt === "azuki" ? "JPA / モス・あずき杯" : "JCL / NORA 1GP"}　・　{modeInfo.label}
+        </div>
+        <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 3, lineHeight: 1.6 }}>{modeInfo.sub}</div>
+        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5 }}>変えるときは上の「⚙️ イベントの設定」から</div>
       </div>
 
       {existingPrelimCount > 0 && (
@@ -4049,6 +4209,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         <ExtendMidwayPanel existingMatches={existingMatches} roster={roster} setRoster={setRoster}
           fmt={fmt} lenPct={lenPct} per100Min={per100Min} azukiPrelim={azukiPrelim} gamesDefault={games} />
       )}
+
+      <StepHead n="1" title="人数と参加者" sub="当日の人数を決めて、左の枠を埋める（並び順＝抽選番号）" />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
@@ -4084,127 +4246,74 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: roundRobin ? C.lightBlue : C.zone, border: `1.5px solid ${roundRobin ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>総当たりモード</div>
-          <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>ONの間は全員と1回ずつ対戦する総当たり戦で組みます。プレイヤータブに対戦表も表示されます</div>
-        </div>
-        <button onClick={() => onSetRoundRobin(!roundRobin)} style={{
-          background: roundRobin ? C.blue : C.line, color: roundRobin ? "#fff" : C.sub,
-          border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-          cursor: "pointer", fontFamily: FONT, flexShrink: 0,
-        }}>
-          {roundRobin ? "ON" : "OFF"}
-        </button>
-      </div>
-
-      {roundRobin && (
-        <div style={{ background: perTableRR ? C.lightBlue : C.zone, border: `1.5px solid ${perTableRR ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, opacity: perTableEligible ? 1 : 0.5 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループ分けして総当たり（リーグ戦）</div>
-              <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
-                {perTableEligible
-                  ? `全体を${groupCount}等分し、G1〜G${groupCount}それぞれのグループの中だけで${players / groupCount}人が総当たりします（1人${Math.max(0, players / groupCount - 1)}試合）。グループをまたいだ対戦は組みません。${
-                      perTableRR && fixedGroupTable ? "グループ1〜3をそのままT1〜T3に固定して組みます" : "試合は3卓に均等に振り分けます"
-                    }`
-                  : "人数を2グループ以上・1グループ2人以上に均等分割できる時だけ使えます（例：15人なら3or5グループ、16人なら2/4/8グループ）"}
-              </div>
-              {perTableEligible && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      {/* 選んだ予選方式に必要な項目だけを出す。方式そのものの切替は「イベントの設定」側 */}
+      {perTableRR && (
+        <>
+          <StepHead n={stepNo.mode} title="グループの分け方" sub="何グループに分けるか（人数を均等に割れる数だけ選べます）" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+            {perTableEligible ? (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {groupOptions.map((g) => (
-                    <button key={g} onClick={() => perTableRR && setGroupCount(g)} disabled={!perTableRR} style={{
-                      background: perTableRR && groupCount === g ? C.blue : "#fff",
-                      color: perTableRR && groupCount === g ? "#fff" : C.ink,
-                      border: `1.5px solid ${perTableRR && groupCount === g ? C.blue : C.line}`,
-                      borderRadius: 10, padding: "6px 12px", fontSize: 13, fontWeight: 800,
-                      cursor: perTableRR ? "pointer" : "default", fontFamily: FONT, opacity: perTableRR ? 1 : 0.5,
+                    <button key={g} onClick={() => setGroupCount(g)} style={{
+                      background: groupCount === g ? C.blue : "#fff",
+                      color: groupCount === g ? "#fff" : C.ink,
+                      border: `1.5px solid ${groupCount === g ? C.blue : C.line}`,
+                      borderRadius: 10, padding: "8px 12px", fontSize: 13, fontWeight: 800,
+                      cursor: "pointer", fontFamily: FONT,
                     }}>{g}グループ（1組{players / g}人）</button>
                   ))}
                 </div>
-              )}
-              {perTableRR && groupCount === 3 && (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", marginTop: 10 }}>
-                  <div style={{ fontSize: 12.5, color: "#3F4A55", lineHeight: 1.6, paddingRight: 8 }}>
-                    グループでテーブル固定
-                    <div style={{ fontSize: 11, color: C.sub, marginTop: 1 }}>ONにすると、G1→T1・G2→T2・G3→T3で固定（大会中ずっと同じ卓）</div>
-                  </div>
-                  <button onClick={() => setFixedGroupTable((v) => !v)} style={{
-                    background: fixedGroupTable ? C.blue : C.line, color: fixedGroupTable ? "#fff" : C.sub,
-                    border: "none", borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 800,
-                    cursor: "pointer", fontFamily: FONT, flexShrink: 0,
-                  }}>
-                    {fixedGroupTable ? "ON" : "OFF"}
-                  </button>
+                <div style={{ fontSize: 13, color: "#3F4A55", marginTop: 8, lineHeight: 1.7 }}>
+                  G1〜G{groupCount}それぞれの中だけで{players / groupCount}人が総当たりします（1人{Math.max(0, players / groupCount - 1)}試合）。グループをまたいだ対戦は組みません。
                 </div>
-              )}
-            </div>
-            <button onClick={() => perTableEligible && setPerTableRR((v) => !v)} disabled={!perTableEligible} style={{
-              background: perTableRR ? C.blue : C.line, color: perTableRR ? "#fff" : C.sub,
-              border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-              cursor: perTableEligible ? "pointer" : "default", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
-            }}>
-              {perTableRR ? "ON" : "OFF"}
-            </button>
+                {groupCount === 3 && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 11px", marginTop: 10 }}>
+                    <div style={{ fontSize: 13, color: "#3F4A55", lineHeight: 1.6, paddingRight: 8 }}>
+                      グループでテーブル固定
+                      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 1 }}>ONにすると G1→T1・G2→T2・G3→T3 で固定（大会中ずっと同じ卓）。OFFなら3卓へ均等に振り分けます</div>
+                    </div>
+                    <button onClick={() => setFixedGroupTable((v) => !v)} style={{
+                      background: fixedGroupTable ? C.blue : C.line, color: fixedGroupTable ? "#fff" : C.sub,
+                      border: "none", borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 800,
+                      cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+                    }}>
+                      {fixedGroupTable ? "ON" : "OFF"}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ fontSize: 13.5, color: C.minus, fontWeight: 700, lineHeight: 1.7 }}>
+                {players}人は2グループ以上・1グループ2人以上に均等分割できません。人数を変えるか、「イベントの設定」で別の予選方式を選んでください（例：15人なら3or5グループ、16人なら2/4/8グループ）。
+              </div>
+            )}
           </div>
-        </div>
+        </>
       )}
 
-      {!usePerTableRR && (
-      <div style={{ background: avoidGroups ? C.lightBlue : C.zone, border: `1.5px solid ${avoidGroups ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>グループを避けて組む</div>
-            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
-              メンバーリストの並び順で上から3グループに分け、同じグループ内の対戦をできるだけ避けます
-            </div>
-          </div>
-          <button onClick={() => setAvoidGroups((v) => !v)} style={{
-            background: avoidGroups ? C.blue : C.line, color: avoidGroups ? "#fff" : C.sub,
-            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-            cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
-          }}>
-            {avoidGroups ? "ON" : "OFF"}
-          </button>
-        </div>
-        {avoidGroups && (
-          <>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      {avoidGroups && (
+        <>
+          <StepHead n={stepNo.mode} title="グループの人数" sub="参加者リストの上から順に3グループへ分けます" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <BulkStepper label="Aグループ（上位）" value={group1} min={2} max={players} onChange={setGroup1} />
               <BulkStepper label="Bグループ（次点）" value={group2} min={2} max={players} onChange={setGroup2} />
             </div>
             <div style={{ fontSize: 13, color: C.sub, marginTop: 8, lineHeight: 1.7 }}>
-              C グループ（残り）：{group3Count}人。優先順位は「別グループ・連戦なし」→「別グループ・同卓連戦」→「別グループ・別卓連戦」→「同グループ・連戦なし」→「同グループ・同卓連戦」→「同グループ・別卓連戦」の順です。3連戦は常に避けます。
-            </div>
-          </>
-        )}
-      </div>
-      )}
-
-      {!usePerTableRR && (
-      <div style={{ background: rivalMode ? C.lightBlue : C.zone, border: `1.5px solid ${rivalMode ? C.blue : C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>必ず相手グループと当たる（対抗戦）</div>
-            <div style={{ fontSize: 14, color: "#3F4A55", marginTop: 2, lineHeight: 1.7 }}>
-              参加者リストの前半／後半で2チームに分け、必ず違うチームの相手とだけ対戦を組みます
+              Cグループ（残り）：{group3Count}人。同じグループ同士の対戦はできるだけ避けますが、組めない場合は許容します（3連戦は常に避けます）。
             </div>
           </div>
-          <button onClick={() => setRivalMode((v) => !v)} style={{
-            background: rivalMode ? C.blue : C.line, color: rivalMode ? "#fff" : C.sub,
-            border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-            cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
-          }}>
-            {rivalMode ? "ON" : "OFF"}
-          </button>
-        </div>
-        {rivalMode && (
-          <>
-            <div style={{ marginTop: 12 }}>
-              <BulkStepper label="Aチーム（前半）人数" value={rivalTeamA || 1} min={1} max={Math.max(1, players - 1)} onChange={setRivalA} />
-            </div>
-            <div style={{ fontSize: 13, color: C.sub, marginTop: 8, marginBottom: 12 }}>
-              Bチーム（後半）：{rivalTeamBCount}人。参加者リストの上から{rivalTeamA || 0}人がAチーム、残り{rivalTeamBCount}人がBチームになります（人数が同数でなくても構いません）。
+        </>
+      )}
+
+      {rivalMode && (
+        <>
+          <StepHead n={stepNo.mode} title="チーム分け" sub="参加者リストの前半／後半で2チームに分けます" />
+          <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+            <BulkStepper label="Aチーム（前半）人数" value={rivalTeamA || 1} min={1} max={Math.max(1, players - 1)} onChange={setRivalA} />
+            <div style={{ fontSize: 13, color: C.sub, marginTop: 8, marginBottom: 12, lineHeight: 1.7 }}>
+              Bチーム（後半）：{rivalTeamBCount}人。参加者リストの上から{rivalTeamA || 0}人がAチーム、残り{rivalTeamBCount}人がBチームになります（同数でなくても構いません）。
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <div style={{ flex: 1 }}>
@@ -4220,14 +4329,16 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
                   style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 15, padding: "10px 10px", outline: "none", fontFamily: FONT }} />
               </div>
             </div>
-          </>
-        )}
-      </div>
+          </div>
+        </>
       )}
 
       {result && !result.error && result.usedRelaxed && (
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
       )}
+
+      <StepHead n={stepNo.score} title={fmt === "jcl" ? "試合の長さ" : "目標点"}
+        sub={fmt === "jcl" ? "ファーゴハンデの目標点は、この長さから自動で計算されます" : "ファーゴハンデを使わないので、回戦ごとに目標点を決めます"} />
 
       {fmt === "jcl" ? (
         <>
@@ -4249,9 +4360,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         </>
       ) : (
         <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>目標点の設定（あずき杯 / モスカップ）</div>
           <div style={{ fontSize: 13, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
-            ファーゴハンデを使わないため、回戦ごとに目標点を固定で設定します。予選はここで組む対戦に、準々決勝・準決勝・決勝は決勝トーナメントで使われます（4人開催の時は準々決勝は使いません）。
+            予選はここで組む対戦に、準々決勝・準決勝・決勝は「🏆 決勝トーナメント」で使われます（4人開催の時は準々決勝は使いません）。
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <BulkStepper label="予選" value={azukiPrelim} min={1} max={50} onChange={setAzukiPrelim} />
@@ -4264,8 +4374,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         </div>
       )}
 
+      <StepHead n={stepNo.time} title="時間割" sub="開始・終了の目安と、卓の入替時間" />
+
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 10 }}>時間割</div>
         <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>開始</div>
@@ -4288,7 +4399,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#7A4B0B",
         }}>
           ⏰ 遅刻設定の{lateCountInPlay}人を、できるだけ後の試合になるよう最優先で調整します
-          {usePerTableRR && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（総当たりモードでは全員が毎ラウンド対戦するため、実際には反映されません）</span>}
+          {roundRobin && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（リーグ戦は全員が毎ラウンド対戦するため、実際には反映されません）</span>}
         </div>
       )}
 
@@ -4298,7 +4409,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
           borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#1B5E20",
         }}>
           🏃 早退設定の{earlyCountInPlay}人を、できるだけ早い試合になるよう最優先で調整します
-          {usePerTableRR && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（総当たりモードでは全員が毎ラウンド対戦するため、実際には反映されません）</span>}
+          {roundRobin && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（リーグ戦は全員が毎ラウンド対戦するため、実際には反映されません）</span>}
         </div>
       )}
 
@@ -4306,8 +4417,14 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, roun
         <Notice>当日参加者リストがまだ{todayRoster.length}/{players}人です。上のリストで枠を埋めてから組んでください。</Notice>
       )}
 
-      <button onClick={run} disabled={busy || todayRoster.length !== players}
-        style={{ width: "100%", background: (busy || todayRoster.length !== players) ? C.line : C.ink, color: (busy || todayRoster.length !== players) ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: (busy || todayRoster.length !== players) ? "default" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
+      {groupBlocked && (
+        <Notice>{players}人はグループに均等分割できないため組めません。人数を変えるか、「⚙️ イベントの設定」で別の予選方式を選んでください。</Notice>
+      )}
+
+      <StepHead n={stepNo.run} title="組む" sub="下書きを作ってから、確認して登録します" />
+
+      <button onClick={run} disabled={!canRun}
+        style={{ width: "100%", background: !canRun ? C.line : C.ink, color: !canRun ? C.sub : "#fff", border: "none", borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 800, cursor: !canRun ? "default" : "pointer", fontFamily: FONT, marginBottom: 16 }}>
         {busy ? "計算中…" : "組む ▶"}
       </button>
 
