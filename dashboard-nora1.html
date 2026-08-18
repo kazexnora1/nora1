@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.211";
-const BUILD_TIME = "2026-08-18 試合の設定を整理：まず「骨組み（得点方式→予選の組み方→決勝の進出方式）」を決め、その後「予選を組む」で必要な項目だけを順に入力する流れに変更";
+const APP_VERSION = "1.212";
+const BUILD_TIME = "2026-08-18 あずき杯／モスカップの時は、決勝トーナメントの設定を「回戦ごとの長さ（%）」ではなく「回戦ごとの目標点」にした（4人なら準決勝・決勝の2つ）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2171,14 +2171,23 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
   const changeover = parseInt(s0.changeoverMin, 10) || 5;
   // あずき杯／モスカップ用：ファーゴハンデを使わないので、回戦ごとに固定の目標点を使う
   // （決勝＝azukiFinal、準決勝＝azukiSemi、それより前の回戦＝azukiQuarter。4人開催なら準決勝と決勝の2段階のみ使う）
-  const azukiQuarter = parseInt(s0.azukiQuarter, 10) || 25;
-  const azukiSemi = parseInt(s0.azukiSemi, 10) || 30;
-  const azukiFinal = parseInt(s0.azukiFinal, 10) || 40;
+  // 予選の目標点は「予選を組む」側、決勝トーナメントの回戦ごとの目標点はこの画面で設定する
+  const [azukiQuarter, setAzukiQuarter] = useState(() => parseInt(s0.azukiQuarter, 10) || 25);
+  const [azukiSemi, setAzukiSemi] = useState(() => parseInt(s0.azukiSemi, 10) || 30);
+  const [azukiFinal, setAzukiFinal] = useState(() => parseInt(s0.azukiFinal, 10) || 40);
+  useEffect(() => { saveSettings({ azukiQuarter, azukiSemi, azukiFinal }); }, [azukiQuarter, azukiSemi, azukiFinal]);
   const azukiTargetFor = (r, total) => {
     const distFromFinal = total - r;
     if (distFromFinal <= 0) return azukiFinal;
     if (distFromFinal === 1) return azukiSemi;
     return azukiQuarter;
+  };
+  // 回戦から、その回戦の目標点を持っている設定項目へ書き戻す
+  const setAzukiTargetFor = (r, total, v) => {
+    const distFromFinal = total - r;
+    if (distFromFinal <= 0) setAzukiFinal(v);
+    else if (distFromFinal === 1) setAzukiSemi(v);
+    else setAzukiQuarter(v);
   };
   const defaultPctFor = (r, total) => Math.min(140, basePct + (r === total ? 30 : r === total - 1 ? 15 : 0));
   const [pcts, setPcts] = useState(() => [1, 2, 3].map((r) => defaultPctFor(r, 3)));
@@ -2548,6 +2557,26 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             </div>
           </div>
 
+          {fmt === "azuki" ? (
+            <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 2 }}>回戦ごとの目標点</div>
+              <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 10 }}>
+                ファーゴハンデを使わないため、回戦ごとに目標点を決めます（勝ち上がるほど大きくするのが目安）
+              </div>
+              {roundPlan.map((pl) => (
+                <div key={pl.round} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800 }}>{roundLabel(pl.round)}</div>
+                    <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>{fmtClock(pl.startAt)}〜</div>
+                  </div>
+                  <div style={{ flex: "0 0 150px", display: "flex" }}>
+                    <BulkStepper label="目標点" value={azukiTargetFor(pl.round, totalRounds)} min={1} max={50}
+                      onChange={(v) => setAzukiTargetFor(pl.round, totalRounds, v)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 2 }}>回戦ごとの長さ</div>
             <div style={{ fontSize: 14, color: "#3F4A55", marginBottom: 10 }}>予選（{basePct}%）を基準に、勝ち上がるほど長くしています</div>
@@ -2566,6 +2595,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
               </div>
             ))}
           </div>
+          )}
 
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, margin: "16px 0" }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>1回戦の組み合わせ</div>
@@ -3929,11 +3959,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const [rivalA, setRivalA] = useState(s0.rivalA || Math.ceil((s0.players || 12) / 2));
   const [rivalNameA, setRivalNameA] = useState(s0.rivalNameA || "Aチーム");
   const [rivalNameB, setRivalNameB] = useState(s0.rivalNameB || "Bチーム");
-  // あずき杯／モスカップ用：ファーゴハンデを使わないため、時間設定の代わりに回戦ごとの目標点を持つ
+  // あずき杯／モスカップ用：ファーゴハンデを使わないため、時間設定の代わりに固定の目標点を持つ。
+  // ここで持つのは予選ぶんだけで、決勝トーナメントの回戦ごとの目標点はBracketTab側で設定する
   const [azukiPrelim, setAzukiPrelim] = useState(s0.azukiPrelim || 12);
-  const [azukiQuarter, setAzukiQuarter] = useState(s0.azukiQuarter || 25);
-  const [azukiSemi, setAzukiSemi] = useState(s0.azukiSemi || 30);
-  const [azukiFinal, setAzukiFinal] = useState(s0.azukiFinal || 40);
   // 当日参加者リスト（A）：参加予定者リスト（B＝roster）の中から選んだ人のid。
   // 配列の長さは常にplayersと同じ（空き枠はnull）。並び順＝抽選番号
   const [todayIds, setTodayIds] = useState(() => (Array.isArray(s0.todayIds) ? s0.todayIds : []));
@@ -3947,8 +3975,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, azukiQuarter, azukiSemi, azukiFinal, todayIds, todayLate, todayEarly]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly]);
   // 人数が変わってグループ数の候補が変わったら、選んでいたグループ数が候補から外れていないか確認する。
   // 外れていたら3グループ（既定）→候補の先頭の順で選び直す
   useEffect(() => {
@@ -4361,15 +4389,10 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       ) : (
         <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
           <div style={{ fontSize: 13, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
-            予選はここで組む対戦に、準々決勝・準決勝・決勝は「🏆 決勝トーナメント」で使われます（4人開催の時は準々決勝は使いません）。
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <BulkStepper label="予選" value={azukiPrelim} min={1} max={50} onChange={setAzukiPrelim} />
-            <BulkStepper label="準々決勝" value={azukiQuarter} min={1} max={50} onChange={setAzukiQuarter} />
+            ここで組む予選の目標点です。決勝トーナメントの回戦ごとの目標点は「🏆 決勝トーナメント」で設定します。
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <BulkStepper label="準決勝" value={azukiSemi} min={1} max={50} onChange={setAzukiSemi} />
-            <BulkStepper label="決勝" value={azukiFinal} min={1} max={50} onChange={setAzukiFinal} />
+            <BulkStepper label="予選の目標点" value={azukiPrelim} min={1} max={50} onChange={setAzukiPrelim} />
           </div>
         </div>
       )}
