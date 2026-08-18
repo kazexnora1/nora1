@@ -83,8 +83,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.212";
-const BUILD_TIME = "2026-08-18 あずき杯／モスカップの時は、決勝トーナメントの設定を「回戦ごとの長さ（%）」ではなく「回戦ごとの目標点」にした（4人なら準決勝・決勝の2つ）";
+const APP_VERSION = "1.213";
+const BUILD_TIME = "2026-08-18 「予選を組む」の順番を変更：グループ分け・チーム分けの設定を参加者リストより先に置き、①人数→②グループ／チーム分け→③参加者→④長さ/目標点→⑤時間割→⑥組む の流れにした";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -4207,8 +4207,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   // 必要ない方式では番号を詰めて、見出しが「1→2→3→4」と素直につながるようにする
   const hasModeStep = perTableRR || avoidGroups || rivalMode;
   const stepNo = hasModeStep
-    ? { mode: "2", score: "3", time: "4", run: "5" }
-    : { score: "2", time: "3", run: "4" };
+    ? { mode: "2", roster: "3", score: "4", time: "5", run: "6" }
+    : { roster: "2", score: "3", time: "4", run: "5" };
   // グループ分け総当たりなのに人数が割り切れない時は組めない
   const groupBlocked = perTableRR && !perTableEligible;
   const canRun = !busy && todayRoster.length === players && !groupBlocked;
@@ -4238,7 +4238,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           fmt={fmt} lenPct={lenPct} per100Min={per100Min} azukiPrelim={azukiPrelim} gamesDefault={games} />
       )}
 
-      <StepHead n="1" title="人数と参加者" sub="当日の人数を決めて、左の枠を埋める（並び順＝抽選番号）" />
+      <StepHead n="1" title="人数" sub="当日の参加人数（と1人あたりの試合数）を決めます" />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
@@ -4252,26 +4252,6 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
         ) : (
           <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
         )}
-      </div>
-
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
-        <div style={{ flex: "0 0 42%", minWidth: 0 }}>
-          <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate} todayEarly={todayEarly}
-            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onToggleEarly={toggleEarly} onShuffle={shuffleToday} onClearAll={clearAllToday}
-            rowGroupLabels={rowGroupLabels} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>📋 参加予定</div>
-            <div style={{ fontSize: 12, color: C.sub }}>{roster.length}人</div>
-          </div>
-          <a href="https://kazexnora1.github.io/nora1/members.html" target="_blank" rel="noopener noreferrer"
-            style={{ display: "inline-block", fontSize: 11.5, color: C.blue, fontWeight: 700, marginBottom: 6, textDecoration: "underline" }}>
-            🔗 メンバーDBを編集する
-          </a>
-          <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError}
-            onRemoveFromToday={removeFromToday} format={fmt} />
-        </div>
       </div>
 
       {/* 選んだ予選方式に必要な項目だけを出す。方式そのものの切替は「イベントの設定」側 */}
@@ -4364,6 +4344,28 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       {result && !result.error && result.usedRelaxed && (
         <Notice>人数の都合で同卓縛り・3連投禁止の条件を一部緩和して組みました（自動判定）。</Notice>
       )}
+
+      <StepHead n={stepNo.roster} title="参加者" sub="左の枠を上から埋める（並び順＝抽選番号）" />
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
+        <div style={{ flex: "0 0 42%", minWidth: 0 }}>
+          <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate} todayEarly={todayEarly}
+            onSetSlot={setTodaySlot} onToggleLate={toggleLate} onToggleEarly={toggleEarly} onShuffle={shuffleToday} onClearAll={clearAllToday}
+            rowGroupLabels={rowGroupLabels} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>📋 参加予定</div>
+            <div style={{ fontSize: 12, color: C.sub }}>{roster.length}人</div>
+          </div>
+          <a href="https://kazexnora1.github.io/nora1/members.html" target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-block", fontSize: 11.5, color: C.blue, fontWeight: 700, marginBottom: 6, textDecoration: "underline" }}>
+            🔗 メンバーDBを編集する
+          </a>
+          <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError}
+            onRemoveFromToday={removeFromToday} format={fmt} />
+        </div>
+      </div>
 
       <StepHead n={stepNo.score} title={fmt === "jcl" ? "試合の長さ" : "目標点"}
         sub={fmt === "jcl" ? "ファーゴハンデの目標点は、この長さから自動で計算されます" : "ファーゴハンデを使わないので、回戦ごとに目標点を決めます"} />
