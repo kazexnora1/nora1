@@ -11,6 +11,7 @@
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
@@ -34,8 +35,8 @@
 const { useState, useEffect, useRef, useMemo } = React;
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
-const APP_VERSION = "1.002";
-const BUILD_TIME = "2026-08-14 一覧を1行1人のコンパクト表示に変更（画面あたりの表示人数を増やす）";
+const APP_VERSION = "1.003";
+const BUILD_TIME = "2026-08-18 匿名ログインを追加。メンバーDBのルールを「ログイン済みのみ」に絞ったため、これが無いと保存できない";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -59,17 +60,35 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
+/* ========= 匿名ログイン =========
+   画面には何も出ないが、開いた瞬間に裏で「名無しの利用者」としてログインする。
+   nora-members のルールを「ログインした人だけ読み書きできる」に絞ってあるので、
+   これが無いと保存が権限エラーで失敗する。B1〜B3と同じ仕組み。 */
+const authReady = (async () => {
+  try {
+    if (!firebase.auth().currentUser) await firebase.auth().signInAnonymously();
+  } catch (e) {
+    console.warn("[auth] 匿名ログインに失敗", (e && e.code) || e);
+  }
+})();
+
 async function dbGet(path) {
+  await authReady;
   const snap = await db.ref(path).once("value");
   return snap.val();
 }
 function dbSubscribe(path, onValue, onError) {
-  const ref = db.ref(path);
-  const handler = ref.on("value", (snap) => onValue(snap.val()),
-    (e) => onError && onError(e && e.message ? e.message : String(e)));
-  return () => ref.off("value", handler);
+  // ログインが済むまで購読を待つ。待っている間に画面が閉じられた場合は何もしない
+  let ref = null, handler = null, cancelled = false;
+  authReady.then(() => {
+    if (cancelled) return;
+    ref = db.ref(path);
+    handler = ref.on("value", (snap) => onValue(snap.val()),
+      (e) => onError && onError(e && e.message ? e.message : String(e)));
+  });
+  return () => { cancelled = true; if (ref && handler) ref.off("value", handler); };
 }
-async function dbSet(path, value) { await db.ref(path).set(value); }
+async function dbSet(path, value) { await authReady; await db.ref(path).set(value); }
 
 let _id = 1;
 function nid() { return _id++; }
@@ -290,7 +309,10 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// 匿名ログインが済んでから画面を出す
+authReady.then(() => {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+});
 </script>
 </body>
 </html>
