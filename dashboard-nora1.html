@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.214";
-const BUILD_TIME = "2026-08-18 匿名ログインを追加（画面表示は変わらない）。DBのルールを「ログイン済みのみ」に絞るための第一段階";
+const APP_VERSION = "1.215";
+const BUILD_TIME = "2026-08-18 「前の状態に戻す」で得点方式・グループ・チーム名が消えてしまう不具合を修正（あずき杯なのにヒルヒル表示になる原因）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1146,7 +1146,16 @@ function TimelineSlotCard({
       setHist(list);
     } catch { setHist([]); }
   };
-  // 選んだ時点の内容で上書きする。相手の端末にも届くよう版を上げる
+  // 選んだ時点の内容で上書きする。相手の端末にも届くよう版を上げる。
+  // 控え（スナップショット）が持っているのは進行状況に関わる項目だけで、
+  // 得点方式(format)・グループ(grp)・チーム名などは含まれていない。
+  // 単純に丸ごと差し替えるとそれらが消えてしまい、あずき杯なのにJCL扱いになって
+  // 「ヒルヒル！／9番勝負！」が出るなどの誤表示につながるため、
+  // 「控えが受け持つ項目は控えの内容で／それ以外は今の値を維持」という形で書き戻す
+  const SNAPSHOT_FIELDS = ["names", "table", "slot", "tot", "raceTo", "hist", "rack", "brk", "balls", "phase",
+    "lastResult", "r1", "r2", "lenPct", "matchMinutes", "scheduledAt", "startedAt", "deadline",
+    "finishedAt", "elapsedMs", "winner", "bothLose", "referee", "createdAt", "version",
+    "bracket", "bracketRound", "bracketPos", "bracketSize", "pending"];
   const restoreFrom = async (entry) => {
     const sn = entry.snap || {};
     const t = sn.tot || [0, 0];
@@ -1154,7 +1163,15 @@ function TimelineSlotCard({
     setSaving(true);
     try {
       await saveMatchHistory(m.id, m, "元に戻す前");
-      await dbSet("matches/" + m.id, { ...sn, version: (m.version || sn.version || 1) + 1, updatedAt: Date.now() });
+      const next = { ...m };
+      delete next.id; // 一覧を作るときに付けた印。記録そのものには書き戻さない
+      // 控えが受け持つ項目は一度消してから控えの値を入れる。
+      // こうしないと、決着後の状態から決着前へ戻したときに winner が残って「勝ち」表示のままになる
+      SNAPSHOT_FIELDS.forEach((k) => { delete next[k]; });
+      Object.assign(next, sn);
+      next.version = (m.version || sn.version || 1) + 1;
+      next.updatedAt = Date.now();
+      await dbSet("matches/" + m.id, next);
       setMenu(null);
     } catch {}
     setSaving(false);
