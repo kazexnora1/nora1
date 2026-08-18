@@ -26,6 +26,7 @@
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
@@ -83,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.213";
-const BUILD_TIME = "2026-08-18 「予選を組む」の順番を変更：グループ分け・チーム分けの設定を参加者リストより先に置き、①人数→②グループ／チーム分け→③参加者→④長さ/目標点→⑤時間割→⑥組む の流れにした";
+const APP_VERSION = "1.214";
+const BUILD_TIME = "2026-08-18 匿名ログインを追加（画面表示は変わらない）。DBのルールを「ログイン済みのみ」に絞るための第一段階";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -118,28 +119,59 @@ const MEMBERS_FIREBASE_CONFIG = {
   messagingSenderId: "466660255687",
   appId: "1:466660255687:web:8da8a4839ec5f8ae0f1be2",
 };
-const membersDb = firebase.initializeApp(MEMBERS_FIREBASE_CONFIG, "members").database();
+const membersApp = firebase.initializeApp(MEMBERS_FIREBASE_CONFIG, "members");
+const membersDb = membersApp.database();
+
+/* ========= 匿名ログイン =========
+   画面には何も出ないが、ページを開いた瞬間に裏で「名無しの利用者」としてログインする。
+   これでデータベース側のルールを「ログインした人だけ読み書きできる」に絞れるようになり、
+   公開状態のFirebaseを自動で探し回るスクリプトからデータを守れる。
+   ※まだ匿名ログインを有効にしていない段階でも、失敗を握りつぶして今までどおり動くようにしてある。
+     全アプリを差し替えてから、最後にルールを厳しくする手順にすること。 */
+const authReady = (async () => {
+  const signIn = async (app, label) => {
+    try {
+      if (app.auth().currentUser) return;
+      await app.auth().signInAnonymously();
+    } catch (e) {
+      console.warn("[auth] " + label + "：匿名ログインに失敗", (e && e.code) || e);
+    }
+  };
+  await Promise.all([signIn(firebase.app(), "本体"), signIn(membersApp, "メンバーDB")]);
+})();
+/* いまログインできているか（接続診断の表示用） */
+function authStatusLine() {
+  const a = firebase.auth().currentUser, b = membersApp.auth().currentUser;
+  return `ログイン状態：本体 ${a ? "OK" : "未ログイン"} ／ メンバーDB ${b ? "OK" : "未ログイン"}`;
+}
 async function membersDbGet(path) {
+  await authReady;
   const snap = await membersDb.ref(path).once("value");
   return snap.val();
 }
 
 /* 1回だけ読む */
 async function dbGet(path) {
+  await authReady;
   const snap = await db.ref(path).once("value");
   return snap.val();
 }
 /* 変更を購読する。ポーリングと違い、変わった瞬間に届く。戻り値を呼ぶと解除 */
 function dbSubscribe(path, onValue, onError) {
-  const ref = db.ref(path);
-  const handler = ref.on("value", (snap) => onValue(snap.val()),
-    (e) => onError && onError(e && e.message ? e.message : String(e)));
-  return () => ref.off("value", handler);
+  // ログインが済むまで購読を待つ。待っている間に画面が閉じられた場合は何もしない
+  let ref = null, handler = null, cancelled = false;
+  authReady.then(() => {
+    if (cancelled) return;
+    ref = db.ref(path);
+    handler = ref.on("value", (snap) => onValue(snap.val()),
+      (e) => onError && onError(e && e.message ? e.message : String(e)));
+  });
+  return () => { cancelled = true; if (ref && handler) ref.off("value", handler); };
 }
-async function dbSet(path, value) { await db.ref(path).set(value); }
+async function dbSet(path, value) { await authReady; await db.ref(path).set(value); }
 /* 複数の場所をまとめて更新する。指定した項目だけが変わるので、
    スコアラーが入力中の値を本部側が上書きしてしまう事故が起きない */
-async function dbUpdate(path, values) { await db.ref(path).update(values); }
+async function dbUpdate(path, values) { await authReady; await db.ref(path).update(values); }
 
 function normalizeRecord(rec) {
   rec = rec || {};
@@ -2701,6 +2733,8 @@ function ConnectionTest() {
     setBusy(true);
     const lines = [];
     lines.push(`接続先：${FIREBASE_CONFIG.databaseURL}`);
+    await authReady;
+    lines.push(authStatusLine());
     try {
       const t0 = Date.now();
       const rec = (await dbGet("/")) || {};
@@ -2716,7 +2750,7 @@ function ConnectionTest() {
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       lines.push(`エラー：${msg}`);
-      if (/permission|Permission/.test(msg)) lines.push("→ Realtime Databaseのルールが許可になっていません");
+      if (/permission|Permission/.test(msg)) lines.push("→ ルールで拒否されました。匿名ログインが有効か、ルールの条件を確認してください");
       else if (/FIREBASE_CONFIG|Invalid|invalid/.test(msg)) lines.push("→ databaseURL の値を確認してください");
       else lines.push("→ オフライン、または設定値が違う可能性があります");
     }
