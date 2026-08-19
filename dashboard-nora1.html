@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.215";
-const BUILD_TIME = "2026-08-18 「前の状態に戻す」で得点方式・グループ・チーム名が消えてしまう不具合を修正（あずき杯なのにヒルヒル表示になる原因）";
+const APP_VERSION = "1.216";
+const BUILD_TIME = "2026-08-19 試合ルールを「種目 × 得点方式 × ブレイク順」の3軸に分解。テンプレート選択はそのままに、詳細設定を追加（10ボール・8ボール・セットマッチ・JPAスキルハンデは準備中）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -733,10 +733,78 @@ function saveSettings(patch) {
   // 時間割に関わる値だけは共有側にも書いておく。
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
-  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format", "timeLimitEnabled"].forEach((k) => {
+  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format", "timeLimitEnabled",
+   "game", "scoring", "breakMode"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
+}
+
+/* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
+   これまで得点方式は format という文字列1つ（"jcl" / "azuki"）だけで切り替えていた。
+   種目（9/10/8ボール）やセットマッチを足すには足りないので、ここで3つの軸に分解する。
+     game       … 種目（何番までの球を使い、どれがマネーボールか）
+     scoring    … 得点方式（何を1点と数え、目標点をどう決めるか）
+     breakMode  … ブレイク順
+   「あずきモス」「JCL / NORA 1GP」は、この3軸の組み合わせに名前を付けたテンプレートとして扱う。
+   ready:false のものはまだ選手アプリ（B2）・観戦ページ（B3）が対応していないので選べない。 */
+const GAMES = [
+  { id: "9",  label: "9ボール",  balls: 9,  money: 9,  ready: true,  sub: "1〜9番、9番がマネーボール" },
+  { id: "10", label: "10ボール", balls: 10, money: 10, ready: false, sub: "1〜10番、10番がマネーボール" },
+  { id: "8",  label: "8ボール",  balls: 8,  money: 8,  ready: false, sub: "手玉以外を取り切って8番。ラック単位" },
+];
+const SCORINGS = [
+  { id: "set",       label: "セットマッチ（クラスハンデ）", unit: "rack",  ready: false, sub: "1ラック＝1点。クラスごとの先取数（A5/B4/C3）" },
+  { id: "jpa_skill", label: "JPA（スキルハンデ）",         unit: "point", ready: false, sub: "球1点・マネーボール2点。スキルごとの目標点" },
+  { id: "jpa_fixed", label: "JPA（目標点固定）",           unit: "point", ready: true,  sub: "球1点・マネーボール2点。回戦ごとに全員同じ目標点" },
+  { id: "jcl",       label: "JCL（レートハンデ）",         unit: "point", ready: true,  sub: "球1点・落とした側は14点。ファーゴレートで目標点" },
+];
+const BREAK_MODES = [
+  { id: "alternate", label: "交互ブレイク", ready: true, sub: "1ラックごとに交代" },
+  { id: "winner",    label: "勝者ブレイク", ready: true, sub: "そのラックを取った人が続けてブレイク" },
+];
+const gameInfo    = (id) => GAMES.find((g) => g.id === id) || GAMES[0];
+const scoringInfo = (id) => SCORINGS.find((s) => s.id === id) || SCORINGS[3];
+const breakInfo   = (id) => BREAK_MODES.find((b) => b.id === id) || BREAK_MODES[0];
+
+/* 組み込みテンプレート（削除できない2つ）。STEP3で、名前を付けて保存した自作テンプレートがこの後ろに並ぶ */
+const BUILTIN_TEMPLATES = [
+  { id: "azuki", name: "JPA / モス・あずき杯", builtin: true, spec: { game: "9", scoring: "jpa_fixed", breakMode: "winner" } },
+  { id: "jcl",   name: "JCL / NORA 1GP",      builtin: true, spec: { game: "9", scoring: "jcl",       breakMode: "alternate" } },
+];
+
+/* 3軸 → 従来の format 文字列。既存のコード（目標点の計算・ルールメモの出し分け・B2/B3の旧バージョン）が
+   引き続き読むので、必ず一緒に保存する。得点の数え方が JPA 系なら "azuki"、JCL なら "jcl"。 */
+const legacyFormat = (spec) => (spec && spec.scoring === "jcl" ? "jcl" : "azuki");
+
+function normalizeSpec(sp, fallback) {
+  const fb = fallback || BUILTIN_TEMPLATES[1].spec;
+  const s = sp && typeof sp === "object" ? sp : {};
+  return {
+    game:      GAMES.some((g) => g.id === s.game) ? s.game : fb.game,
+    scoring:   SCORINGS.some((x) => x.id === s.scoring) ? s.scoring : fb.scoring,
+    breakMode: BREAK_MODES.some((b) => b.id === s.breakMode) ? s.breakMode : fb.breakMode,
+  };
+}
+/* 保存済みの設定から3軸を復元する。まだ spec を持っていない古い設定でも、format から正しく引き継ぐ */
+function loadSpec(s) {
+  const st = s || loadSettings();
+  const fallback = (st.format === "azuki" ? BUILTIN_TEMPLATES[0] : BUILTIN_TEMPLATES[1]).spec;
+  return normalizeSpec(st.spec, fallback);
+}
+function saveSpec(spec) {
+  const sp = normalizeSpec(spec);
+  saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode });
+  return sp;
+}
+const sameSpec = (a, b) => !!a && !!b && a.game === b.game && a.scoring === b.scoring && a.breakMode === b.breakMode;
+const specSummary = (sp) => `${gameInfo(sp.game).label}・${scoringInfo(sp.scoring).label}・${breakInfo(sp.breakMode).label}`;
+/* いま選ばれている3軸が、どのテンプレートと同じか（同じものが無ければ null＝カスタム） */
+const matchedTemplate = (sp, list) => (list || BUILTIN_TEMPLATES).find((t) => sameSpec(t.spec, sp)) || null;
+/* 試合レコードに埋め込むルール情報。押した瞬間の設定を読むので、どの画面から作っても食い違わない */
+function ruleFields(spec) {
+  const sp = normalizeSpec(spec || loadSpec());
+  return { format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode };
 }
 
 /* ========= 試合の骨組み（得点方式 → 予選の組み方 → 決勝の進出方式） =========
@@ -951,6 +1019,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
         r1: R1, r2: R2, lenPct,
         matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
         createdAt: existing ? existing.createdAt : now, updatedAt: now,
+        ...ruleFields(),
       };
       await dbSet("matches/" + matchId, state);
       onDone && onDone();
@@ -2195,11 +2264,12 @@ function PcStandingsTab() {
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
 function BracketTab({ roster, format, prelimMode, finalMode }) {
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
-  const fmt = format || loadSettings().format || "jcl";
+  const curSpec = loadSpec();
+  const fmt = format || legacyFormat(curSpec);
   const mkMatch = (extra) => ({
     version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
     balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
-    lastResult: null, hist: [], format: fmt, ...extra,
+    lastResult: null, hist: [], ...ruleFields(), ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
   // 決勝の進出方式（イベントの設定・骨組み③で選ぶ）。
@@ -2495,6 +2565,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             r1: p1.r, r2: p2.r, lenPct: pct, matchMinutes: plan.mins,
             createdAt: now + i, updatedAt: now,
             bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
+            ...ruleFields(),
           };
         }
       }
@@ -2801,6 +2872,39 @@ function SectionLabel({ children }) {
 const HELP = { fontSize: 14, color: "#3F4A55", lineHeight: 1.8 };
 
 /* 骨組み設定の中の「① ② ③」の見出し。選ぶ順番が一目で分かるようにする */
+/* 詳細設定の1軸ぶん（種目／得点方式／ブレイク順）の選択リスト。
+   ready:false のものは、選手アプリ・観戦ページがまだ対応していないので「準備中」として押せない */
+function AxisPicker({ title, items, value, onPick }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginBottom: 6 }}>{title}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {items.map((it) => {
+          const on = value === it.id;
+          return (
+            <button key={it.id} onClick={() => { if (it.ready) onPick(it.id); }} disabled={!it.ready} style={{
+              width: "100%", textAlign: "left", background: on ? C.lightBlue : "#fff",
+              border: `2px solid ${on ? C.blue : C.line}`, borderRadius: 12, padding: "9px 11px",
+              cursor: it.ready ? "pointer" : "default", fontFamily: FONT, opacity: it.ready || on ? 1 : 0.45,
+            }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: on ? C.blue : C.ink }}>
+                {on ? "● " : "○ "}{it.label}
+                {!it.ready && (
+                  <span style={{
+                    marginLeft: 6, fontSize: 10.5, fontWeight: 800, color: C.hill,
+                    background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 6, padding: "1px 5px",
+                  }}>準備中</span>
+                )}
+              </div>
+              {it.sub && <div style={{ fontSize: 11.5, color: "#3F4A55", marginTop: 2, lineHeight: 1.5, paddingLeft: 17 }}>{it.sub}</div>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StepHead({ n, title, sub }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
@@ -2843,7 +2947,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [tournamentName, setTournamentName] = useState(() => loadSettings().tournamentName || "");
   const [liveUrl, setLiveUrl] = useState(() => loadSettings().liveUrl || "");
   const [refereeEnabled, setRefereeEnabled] = useState(() => loadSettings().refereeEnabled !== false);
-  const [format, setFormat] = useState(() => loadSettings().format || "jcl");
+  // 試合のルールは3軸（種目・得点方式・ブレイク順）で持つ。従来の format はここから導く
+  const [spec, setSpec] = useState(() => loadSpec());
+  const format = legacyFormat(spec);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const curTemplate = matchedTemplate(spec);
+  const updateSpec = (patch) => setSpec(saveSpec({ ...spec, ...patch }));
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
@@ -2865,7 +2974,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
     if (want !== roundRobin) onSetRoundRobin(want);
   }, []);
 
-  const updateFormat = (v) => { setFormat(v); saveSettings({ format: v }); };
   const updateTournamentName = (v) => {
     setTournamentName(v);
     saveSettings({ tournamentName: v });
@@ -2913,24 +3021,49 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             ここで骨組みだけを決めます。人数・グループ数・時間割など具体的な数字は、下の「🎱 予選を組む」で選んだ骨組みに必要な項目だけが出ます。
           </div>
 
-          <StepHead n="1" title="得点方式" sub="どのルールでスコアを付けるか" />
+          <StepHead n="1" title="試合のルール" sub="テンプレートを選ぶ。細かく決めたい時は詳細設定から" />
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginBottom: 7 }}>テンプレート</div>
             <div style={{ display: "flex", gap: 8 }}>
-              {[
-                { id: "azuki", label: "JPA / モス・あずき杯", sub: "JPAスコア・勝者ブレイク・固定目標点" },
-                { id: "jcl", label: "JCL / NORA 1GP", sub: "ファーゴハンデ・交互ブレイク" },
-              ].map(({ id, label, sub }) => (
-                <button key={id} onClick={() => updateFormat(id)} style={{
-                  flex: 1, background: format === id ? C.blue : "#fff",
-                  border: `2px solid ${format === id ? C.blue : C.line}`,
-                  borderRadius: 12, padding: "10px 6px", cursor: "pointer", fontFamily: FONT, textAlign: "center",
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: format === id ? "#fff" : C.ink }}>{label}</div>
-                  <div style={{ fontSize: 11, color: format === id ? "rgba(255,255,255,0.8)" : C.sub, marginTop: 3 }}>{sub}</div>
-                </button>
-              ))}
+              {BUILTIN_TEMPLATES.map((t) => {
+                const on = !!curTemplate && curTemplate.id === t.id;
+                return (
+                  <button key={t.id} onClick={() => updateSpec(t.spec)} style={{
+                    flex: 1, background: on ? C.blue : "#fff",
+                    border: `2px solid ${on ? C.blue : C.line}`,
+                    borderRadius: 12, padding: "10px 6px", cursor: "pointer", fontFamily: FONT, textAlign: "center",
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: on ? "#fff" : C.ink }}>{t.name}</div>
+                    <div style={{ fontSize: 11, color: on ? "rgba(255,255,255,0.8)" : C.sub, marginTop: 3, lineHeight: 1.5 }}>{specSummary(t.spec)}</div>
+                  </button>
+                );
+              })}
             </div>
-            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングで得点方式が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
+
+            <div style={{ marginTop: 12, borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
+              <button onClick={() => setShowAdvanced(!showAdvanced)} style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                background: "none", border: "none", padding: "2px 0", cursor: "pointer", fontFamily: FONT, textAlign: "left",
+              }}>
+                <span style={{ fontSize: 13.5, fontWeight: 800, color: C.blue }}>{showAdvanced ? "▼" : "▶"} 詳細設定</span>
+                <span style={{ fontSize: 11.5, color: C.sub, textAlign: "right", lineHeight: 1.5 }}>{specSummary(spec)}</span>
+              </button>
+              {showAdvanced && (
+                <div style={{ marginTop: 10 }}>
+                  <AxisPicker title="種目" items={GAMES} value={spec.game} onPick={(v) => updateSpec({ game: v })} />
+                  <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
+                  <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
+                  <div style={{ ...HELP, marginTop: 2 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
+                </div>
+              )}
+              {!curTemplate && (
+                <div style={{ marginTop: 10, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 11px", fontSize: 12, color: "#5A4318", lineHeight: 1.7 }}>
+                  テンプレートから変えた<b>カスタム設定</b>です（{specSummary(spec)}）。<br />
+                  ブレイク順の変更が選手アプリ・観戦ページに反映されるのは、次の更新（B2・B3の差し替え）からです。
+                </div>
+              )}
+            </div>
+            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングでこの内容が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
           </div>
 
           <StepHead n="2" title="予選の組み方" sub="リーグ戦にするか、ランダムに組むか" />
@@ -3977,7 +4110,8 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, todayEarly, on
 
 function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prelimMode, format }) {
   const registeringRef = useRef(false); // 連打による二重登録防止（state更新は非同期なのでrefで即座にブロック）
-  const fmt = format || loadSettings().format || "jcl";
+  const curSpec = loadSpec();
+  const fmt = format || legacyFormat(curSpec);
   const s0 = useMemo(() => loadSettings(), []);
   // 予選の組み方は「イベントの設定」の骨組み②で1つだけ選ぶ。ここでは選ばれた方式から必要なフラグを導くだけで、
   // このタブ側でON/OFFを切り替えることはしない（組み合わせで意味の通らない状態が作れないようにするため）
@@ -4230,7 +4364,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
-          createdAt: m.createdAt, updatedAt: now, format: fmt,
+          createdAt: m.createdAt, updatedAt: now, ...ruleFields(),
           ...(rivalTeamA ? { rival: true, teamNames: [rivalNameA || "Aチーム", rivalNameB || "Bチーム"] } : {}),
         };
       });
@@ -4270,8 +4404,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "11px 14px", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 5 }}>いま選んでいる骨組み</div>
         <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.6 }}>
-          {fmt === "azuki" ? "JPA / モス・あずき杯" : "JCL / NORA 1GP"}　・　{modeInfo.label}
+          {(matchedTemplate(curSpec) || {}).name || "カスタム設定"}　・　{modeInfo.label}
         </div>
+        <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6 }}>{specSummary(curSpec)}</div>
         <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 3, lineHeight: 1.6 }}>{modeInfo.sub}</div>
         <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5 }}>変えるときは上の「⚙️ イベントの設定」から</div>
       </div>
@@ -4685,7 +4820,7 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, lenPct, pe
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table, slot: null,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
-          createdAt: m.createdAt, updatedAt: Date.now(), format: fmt,
+          createdAt: m.createdAt, updatedAt: Date.now(), ...ruleFields(),
         };
       });
       await dbUpdate("matches", upd);
@@ -4888,7 +5023,7 @@ function ScheduleTab({ roster }) {
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
       r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
-      format: loadSettings().format || "jcl",
+      ...ruleFields(),
     };
     await saveMatch(matchId, state).catch(() => {});
     setCreatedInfo({ table, names: [p1.name, p2.name], raceTo: [res.rt1, res.rt2] });
