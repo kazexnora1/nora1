@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.011";
-const BUILD_TIME = "2026-08-19 10ボール対応：ヒルヒル時の「◯番勝負！」表記をマネーボール番号（10ボールなら10番）に合わせて一般化";
+const APP_VERSION = "1.012";
+const BUILD_TIME = "2026-08-19 10ボール時の球の並びを5列2段（上1〜5・下6〜10）に。9番（ゲームボールでない時）に白いラインを入れて1番と見分けやすくした";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -111,21 +111,21 @@ const mkBalls = (n) => Array.from({ length: Number(n) > 0 ? Number(n) : 9 }, (_,
 /* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
    本部アプリ（B1 v1.216〜）が、試合を組むときに各試合へ game / scoring / breakMode を書き込む。
    それより前に作られた試合には format（"jcl" / "azuki"）しか入っていないので、そこから読み替える。
-     game      … 9 / 10 / 8（球数とマネーボールの番号）
-     scoring   … jcl（落とした側14点）／jpa_fixed・jpa_skill（球1点・マネーボール2点）／set（1ラック＝1点）
+     game      … 9 / 10 / 8（球数とゲームボールの番号）
+     scoring   … jcl（落とした側14点）／jpa_fixed・jpa_skill（球1点・ゲームボール2点）／set（1ラック＝1点）
      breakMode … alternate（交互）／winner（勝者） */
 const RULE_GAMES = {
   "9":  { balls: 9,  money: 9,  label: "9ボール" },
   "10": { balls: 10, money: 10, label: "10ボール" },
   "8":  { balls: 8,  money: 8,  label: "8ボール" },
 };
-/* 球1点・マネーボール2点（JPA方式）の数え方 */
+/* 球1点・ゲームボール2点（JPA方式）の数え方 */
 const jpaPts = (balls, loc, money) =>
   balls.filter((x) => x.loc === loc && !x.dead).reduce((sum, b) => sum + (b.n === money ? 2 : 1), 0);
 const SCORING_DEFS = {
   jcl: {
     label: "JCL（レートハンデ）", unit: "point", hill: 14,
-    // マネーボールを落とした側は14点固定、相手は落とした球の数
+    // ゲームボールを落とした側は14点固定、相手は落とした球の数
     calcAdd: (balls, w, g) => {
       const ll = w === 0 ? "p2" : "p1";
       const loserPts = balls.filter((x) => x.loc === ll && !x.dead).length;
@@ -173,7 +173,7 @@ function makeRuleset(spec) {
   return {
     spec, unit: sc.unit,
     ballCount: g.balls,     // 1ラックで使う球の数
-    money: g.money,         // マネーボール（これを落とすとラック確定）
+    money: g.money,         // ゲームボール（これを落とすとラック確定）
     hillThreshold: sc.hill, // JCLだけ持つ「ヒル」の閾値。null ならヒル概念なし＝「あと◯」表記
     label: `${g.label}・${sc.label}`,
     calcAdd: (balls, w) => sc.calcAdd(balls, w, g),
@@ -2505,10 +2505,14 @@ function MatchScreen({ setupInfo, onExit }) {
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word" }}>
             {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 52px))", gap: 7, flexShrink: 0 }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: ruleset.ballCount === 10 ? "repeat(5, minmax(0, 44px))" : "repeat(3, minmax(0, 52px))",
+            gap: 7, flexShrink: 0,
+          }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big money={ruleset.money} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
             })}
           </div>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word" }}>
@@ -2551,10 +2555,12 @@ function Zone({ label, team, side, color, balls, money, sub, pressed, onPress, o
     </div>
   );
 }
-function Ball({ b, big, money, sub, pressed, style, onPress, onGesture }) {
-  const size = big ? 52 : 34;
-  // マネーボール（9ボールなら9番、10ボールなら10番）は白地に縞で描く
+function Ball({ b, big, size: sizeOverride, money, sub, pressed, style, onPress, onGesture }) {
+  const size = sizeOverride || (big ? 52 : 34);
+  // ゲームボール（9ボールなら9番、10ボールなら10番）は白地に縞で描く
   const base = BALL[b.n] || "#6A7480"; const nine = b.n === (money || 9);
+  // ゲームボールでない9番は、1番（同じ色）と見分けられるよう白いラインを入れる（実物の縞球っぽく）
+  const nineStripe = b.n === 9 && !nine;
   const ref = useRef(null);
   const startYRef = useRef(0);
 
@@ -2586,10 +2592,13 @@ function Ball({ b, big, money, sub, pressed, style, onPress, onGesture }) {
     <div ref={ref}
       onContextMenu={(e) => e.preventDefault()}
       style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
-        background: b.dead ? C.dead : nine ? "#fff" : base,
+        background: b.dead ? C.dead
+          : nine ? "#fff"
+          : nineStripe ? `linear-gradient(${base} 0%, ${base} 32%, #fff 32%, #fff 68%, ${base} 68%, ${base} 100%)`
+          : base,
         border: nine && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
         boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
-        color: nine && !b.dead ? base : "#fff",
+        color: (nine || nineStripe) && !b.dead ? base : "#fff",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
         touchAction: "none", cursor: "pointer", position: "relative",
