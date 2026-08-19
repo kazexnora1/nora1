@@ -79,16 +79,60 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
-const APP_VERSION = "1.002";
-const BUILD_TIME = "2026-08-18 匿名ログインを追加（画面表示は変わらない）。DBのルールを「ログイン済みのみ」に絞るための第一段階";
+const APP_VERSION = "1.003";
+const BUILD_TIME = "2026-08-19 試合ルールを「種目 × 得点方式 × ブレイク順」の3軸で読むように変更（本部B1 v1.216以降に対応。旧データもそのまま動きます）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
   win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
-const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B", 10: "#2A56A0" };
 const PC = [C.blue, C.red];
-const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+const mkBalls = (n) => Array.from({ length: Number(n) > 0 ? Number(n) : 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+
+/* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
+   本部アプリ（B1 v1.216〜）が各試合へ game / scoring / breakMode を書き込む。
+   それより前に作られた試合には format（"jcl" / "azuki"）しか無いので、そこから読み替える。
+   観戦ページは表示だけなので、必要なのは「球数・マネーボール・点の数え方・ヒルの有無」 */
+const RULE_GAMES = {
+  "9":  { balls: 9,  money: 9,  label: "9ボール" },
+  "10": { balls: 10, money: 10, label: "10ボール" },
+  "8":  { balls: 8,  money: 8,  label: "8ボール" },
+};
+const jpaPts = (balls, loc, money) =>
+  balls.filter((x) => x.loc === loc && !x.dead).reduce((sum, b) => sum + (b.n === money ? 2 : 1), 0);
+const SCORING_DEFS = {
+  jcl:       { label: "JCL（レートハンデ）",         unit: "point", hill: 14,   calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length },
+  jpa_fixed: { label: "JPA（目標点固定）",           unit: "point", hill: null, calcLive: (balls, side, g) => jpaPts(balls, side, g.money) },
+  jpa_skill: { label: "JPA（スキルハンデ）",         unit: "point", hill: null, calcLive: (balls, side, g) => jpaPts(balls, side, g.money) },
+  set:       { label: "セットマッチ（クラスハンデ）", unit: "rack",  hill: null, calcLive: () => 0 },
+};
+const LEGACY_SPEC = {
+  jcl:   { game: "9", scoring: "jcl",       breakMode: "alternate" },
+  azuki: { game: "9", scoring: "jpa_fixed", breakMode: "winner" },
+};
+function specOf(src) {
+  const o = src || {};
+  const base = LEGACY_SPEC[o.format === "azuki" ? "azuki" : "jcl"];
+  return {
+    game:      RULE_GAMES[o.game] ? o.game : base.game,
+    scoring:   SCORING_DEFS[o.scoring] ? o.scoring : base.scoring,
+    breakMode: (o.breakMode === "winner" || o.breakMode === "alternate") ? o.breakMode : base.breakMode,
+  };
+}
+function makeRuleset(spec) {
+  const g = RULE_GAMES[spec.game] || RULE_GAMES["9"];
+  const sc = SCORING_DEFS[spec.scoring] || SCORING_DEFS.jcl;
+  return {
+    spec, unit: sc.unit, ballCount: g.balls, money: g.money,
+    hillThreshold: sc.hill, label: `${g.label}・${sc.label}`,
+    calcLive: (balls, side) => sc.calcLive(balls, side, g),
+    nextBrk: (lastResult, curBrk) =>
+      spec.breakMode === "winner" ? (lastResult ? lastResult.w : curBrk) : 1 - curBrk,
+  };
+}
+const getRuleset = (src) => makeRuleset(specOf(src));
+const ballCountOf = (src) => (RULE_GAMES[specOf(src).game] || RULE_GAMES["9"]).balls;
 
 /* ========= 共有バックエンド：Firebase Realtime Database =========
    ↓ B1・B3 とまったく同じ値を貼ってください */
@@ -129,7 +173,7 @@ function normalizeMatch(m) {
     names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
     tot: Array.isArray(m.tot) ? m.tot : [0, 0],
     raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
-    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
+    balls: Array.isArray(m.balls) && m.balls.length === ballCountOf(m) ? m.balls : mkBalls(ballCountOf(m)),
     hist: Array.isArray(m.hist) ? m.hist : [],
     rack: m.rack || 1,
     version: m.version || 1,
@@ -893,13 +937,6 @@ function rateOfPlayer(m, i) {
   const v = parseInt(i === 0 ? (m && m.r1) : (m && m.r2), 10);
   return v > 0 ? v : null;
 }
-/* フォーマットに応じたルールセット。JCLだけ「ヒル」概念（残り点数がこの値以下）を持つ。
-   あずき杯／モスカップにはヒルが無いので、最初から最後まで「あと◯」表記で統一し、FR（ファーゴレート）も出さない */
-const RULESETS = {
-  jcl: { hillThreshold: 14 },
-  azuki: { hillThreshold: null },
-};
-const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
 
 /* ========= 対抗戦バナー：Aチーム名 vs Bチーム名。対抗戦の試合が1件でもあれば、対戦表・テーブルの各画面上部に表示する ========= */
 function RivalBanner({ teamNames }) {
@@ -988,10 +1025,8 @@ function LiveTablePanel({ tableNum, m }) {
   useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
 
   const balls = (m && m.balls) || [];
-  const live = [
-    balls.filter((b) => b.loc === "p1" && !b.dead).length,
-    balls.filter((b) => b.loc === "p2" && !b.dead).length,
-  ];
+  const rs0 = getRuleset(m); // その試合の3軸（種目・得点方式・ブレイク順）
+  const live = [rs0.calcLive(balls, "p1"), rs0.calcLive(balls, "p2")];
   const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
 
   // 進行中ラックの点数が変わったら点滅。試合や卓が切り替わった時は点滅させない
@@ -1031,7 +1066,7 @@ function LiveTablePanel({ tableNum, m }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
-  const ruleset = getRuleset(m.format); // JCL or あずき杯／モスカップ
+  const ruleset = rs0; // 上で作ったこの試合のルールセット
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
@@ -1310,10 +1345,8 @@ function ProjectorCard({ tableNum, m }) {
   };
 
   const balls = (m && m.balls) || [];
-  const live = [
-    balls.filter((b) => b.loc === "p1" && !b.dead).length,
-    balls.filter((b) => b.loc === "p2" && !b.dead).length,
-  ];
+  const rs0 = getRuleset(m); // その試合の3軸（種目・得点方式・ブレイク順）
+  const live = [rs0.calcLive(balls, "p1"), rs0.calcLive(balls, "p2")];
   const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
 
   // 進行中ラックの点数が変わったら点滅（他卓を横目で見ても気づけるように）
@@ -1342,7 +1375,7 @@ function ProjectorCard({ tableNum, m }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
-  const ruleset = getRuleset(m.format); // JCL or あずき杯／モスカップ
+  const ruleset = rs0; // 上で作ったこの試合のルールセット
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
