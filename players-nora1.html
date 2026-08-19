@@ -81,16 +81,94 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.008";
-const BUILD_TIME = "2026-08-18 匿名ログインを追加（画面表示は変わらない）。DBのルールを「ログイン済みのみ」に絞るための第一段階";
+const APP_VERSION = "1.009";
+const BUILD_TIME = "2026-08-19 試合ルールを「種目 × 得点方式 × ブレイク順」の3軸で読むように変更（本部B1 v1.216以降に対応。旧データもそのまま動きます）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
   win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
-const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B" };
+const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B", 10: "#2A56A0" };
 const PC = [C.blue, C.red];
-const mkBalls = () => Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+const mkBalls = (n) => Array.from({ length: Number(n) > 0 ? Number(n) : 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+
+/* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
+   本部アプリ（B1 v1.216〜）が、試合を組むときに各試合へ game / scoring / breakMode を書き込む。
+   それより前に作られた試合には format（"jcl" / "azuki"）しか入っていないので、そこから読み替える。
+     game      … 9 / 10 / 8（球数とマネーボールの番号）
+     scoring   … jcl（落とした側14点）／jpa_fixed・jpa_skill（球1点・マネーボール2点）／set（1ラック＝1点）
+     breakMode … alternate（交互）／winner（勝者） */
+const RULE_GAMES = {
+  "9":  { balls: 9,  money: 9,  label: "9ボール" },
+  "10": { balls: 10, money: 10, label: "10ボール" },
+  "8":  { balls: 8,  money: 8,  label: "8ボール" },
+};
+/* 球1点・マネーボール2点（JPA方式）の数え方 */
+const jpaPts = (balls, loc, money) =>
+  balls.filter((x) => x.loc === loc && !x.dead).reduce((sum, b) => sum + (b.n === money ? 2 : 1), 0);
+const SCORING_DEFS = {
+  jcl: {
+    label: "JCL（レートハンデ）", unit: "point", hill: 14,
+    // マネーボールを落とした側は14点固定、相手は落とした球の数
+    calcAdd: (balls, w, g) => {
+      const ll = w === 0 ? "p2" : "p1";
+      const loserPts = balls.filter((x) => x.loc === ll && !x.dead).length;
+      const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
+      return add;
+    },
+    calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length,
+  },
+  jpa_fixed: {
+    label: "JPA（目標点固定）", unit: "point", hill: null,
+    calcAdd: (balls, _w, g) => [jpaPts(balls, "p1", g.money), jpaPts(balls, "p2", g.money)],
+    calcLive: (balls, side, g) => jpaPts(balls, side, g.money),
+  },
+  jpa_skill: {
+    // 得点の数え方はJPA（目標点固定）と同じ。違うのは目標点の決め方（本部側でスキルから算出する）
+    label: "JPA（スキルハンデ）", unit: "point", hill: null,
+    calcAdd: (balls, _w, g) => [jpaPts(balls, "p1", g.money), jpaPts(balls, "p2", g.money)],
+    calcLive: (balls, side, g) => jpaPts(balls, side, g.money),
+  },
+  set: {
+    // セットマッチ：ラックを取った側に1点。台上の球は点にならない
+    label: "セットマッチ（クラスハンデ）", unit: "rack", hill: null,
+    calcAdd: (_balls, w) => { const add = [0, 0]; add[w] = 1; return add; },
+    calcLive: () => 0,
+  },
+};
+/* 旧データ（formatしか無い試合）からの読み替え */
+const LEGACY_SPEC = {
+  jcl:   { game: "9", scoring: "jcl",       breakMode: "alternate" },
+  azuki: { game: "9", scoring: "jpa_fixed", breakMode: "winner" },
+};
+/* 試合レコード（またはスコアラーの起動情報）から3軸を取り出す */
+function specOf(src) {
+  const o = src || {};
+  const base = LEGACY_SPEC[o.format === "azuki" ? "azuki" : "jcl"];
+  return {
+    game:      RULE_GAMES[o.game] ? o.game : base.game,
+    scoring:   SCORING_DEFS[o.scoring] ? o.scoring : base.scoring,
+    breakMode: (o.breakMode === "winner" || o.breakMode === "alternate") ? o.breakMode : base.breakMode,
+  };
+}
+function makeRuleset(spec) {
+  const g = RULE_GAMES[spec.game] || RULE_GAMES["9"];
+  const sc = SCORING_DEFS[spec.scoring] || SCORING_DEFS.jcl;
+  return {
+    spec, unit: sc.unit,
+    ballCount: g.balls,     // 1ラックで使う球の数
+    money: g.money,         // マネーボール（これを落とすとラック確定）
+    hillThreshold: sc.hill, // JCLだけ持つ「ヒル」の閾値。null ならヒル概念なし＝「あと◯」表記
+    label: `${g.label}・${sc.label}`,
+    calcAdd: (balls, w) => sc.calcAdd(balls, w, g),
+    calcLive: (balls, side) => sc.calcLive(balls, side, g),
+    nextBrk: (lastResult, curBrk) =>
+      spec.breakMode === "winner" ? (lastResult ? lastResult.w : curBrk) : 1 - curBrk,
+  };
+}
+/* 試合レコードやスコアラー起動情報を渡すと、その試合のルールセットを返す */
+const getRuleset = (src) => makeRuleset(specOf(src));
+const ballCountOf = (src) => (RULE_GAMES[specOf(src).game] || RULE_GAMES["9"]).balls;
 
 /* 紙吹雪。ライブラリが読み込めていない時（オフラインなど）は静かに何もしない */
 function fireConfetti(big) {
@@ -140,7 +218,7 @@ function normalizeMatch(m) {
     names: Array.isArray(m.names) ? m.names : ["P1", "P2"],
     tot: Array.isArray(m.tot) ? m.tot : [0, 0],
     raceTo: Array.isArray(m.raceTo) ? m.raceTo : [0, 0],
-    balls: Array.isArray(m.balls) && m.balls.length === 9 ? m.balls : mkBalls(),
+    balls: Array.isArray(m.balls) && m.balls.length === ballCountOf(m) ? m.balls : mkBalls(ballCountOf(m)),
     hist: Array.isArray(m.hist) ? m.hist : [],
     rack: m.rack || 1,
     version: m.version || 1,
@@ -207,13 +285,13 @@ function matchDurationMs(s) {
   return ((s && s.matchMinutes) || DEFAULT_MATCH_MINUTES) * 60000;
 }
 
-const initialMatchState = (rt1, rt2, names, table) => ({
+const initialMatchState = (rt1, rt2, names, table, ballCount) => ({
   version: 1,
   phase: "banking", // banking | play | done | finished
   brk: null, // 0 | 1 | null
   tot: [0, 0],
   rack: 1,
-  balls: mkBalls(),
+  balls: mkBalls(ballCount),
   lastResult: null,
   hist: [],
   raceTo: [rt1, rt2],
@@ -977,10 +1055,8 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
   useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
 
   const balls = (m && m.balls) || [];
-  const live = [
-    balls.filter((b) => b.loc === "p1" && !b.dead).length,
-    balls.filter((b) => b.loc === "p2" && !b.dead).length,
-  ];
+  const liveRuleset = getRuleset(m);
+  const live = [liveRuleset.calcLive(balls, "p1"), liveRuleset.calcLive(balls, "p2")];
   const liveKey = m ? `${m.id}:${m.rack}:${live[0]}/${live[1]}` : "";
 
   // 進行中ラックの点数が変わったら点滅。試合や卓が切り替わった時は点滅させない
@@ -1020,7 +1096,7 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
-  const ruleset = getRuleset(m.format); // フォーマットに応じたルールセット（JCL or あずき杯等）。あずき杯にはヒル概念が無い
+  const ruleset = liveRuleset; // その試合の3軸（種目・得点方式・ブレイク順）から作ったルールセット
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
@@ -1731,6 +1807,9 @@ function Shell() {
         : null,
       table: Number(params.get("t")) || 1,
       format: params.get("fmt") || "jcl",
+      game: params.get("gm") || null,
+      scoring: params.get("sc") || null,
+      breakMode: params.get("bm") || null,
       rival: params.get("rv") === "1",
       teamNames: params.get("ta") && params.get("tb") ? [params.get("ta"), params.get("tb")] : null,
     };
@@ -1750,6 +1829,9 @@ function Shell() {
       raceToParam: Array.isArray(m.raceTo) ? [Number(m.raceTo[0]) || 0, Number(m.raceTo[1]) || 0] : null,
       table: Number(m.table) || 1,
       format: m.format || "jcl",
+      game: m.game || null,
+      scoring: m.scoring || null,
+      breakMode: m.breakMode || null,
       rival: !!m.rival,
       teamNames: Array.isArray(m.teamNames) ? m.teamNames : null,
     });
@@ -1766,6 +1848,10 @@ function Shell() {
     url.searchParams.set("len", info.lenPct);
     url.searchParams.set("t", info.table);
     url.searchParams.set("fmt", info.format || "jcl");
+    const sp = specOf(info);
+    url.searchParams.set("gm", sp.game);
+    url.searchParams.set("sc", sp.scoring);
+    url.searchParams.set("bm", sp.breakMode);
     if (info.raceToParam) { url.searchParams.set("rt1", info.raceToParam[0]); url.searchParams.set("rt2", info.raceToParam[1]); }
     if (info.rival && info.teamNames) {
       url.searchParams.set("rv", "1");
@@ -1832,50 +1918,21 @@ function App() {
   return <Shell />;
 }
 
-/* ========= ルールセット定義 =========
-   match.format に基づいてスコアリング・ブレイク・表示を切り替える。
-   デフォルト（未設定）は "jcl"。 */
-const RULESETS = {
-  jcl: {
-    label: "JCL / NORA 1GP",
-    hillThreshold: 14,          // 残りこの点以下でヒル状態
-    breakMode: "alternate",     // 交互ブレイク
-    // 9番確定時の加点計算。winner=0 or 1、balls=台上球配列
-    calcAdd: (balls, w) => {
-      const ll = w === 0 ? "p2" : "p1";
-      const loserPts = balls.filter((x) => x.loc === ll && !x.dead).length;
-      const add = [0, 0]; add[w] = 14; add[1 - w] = loserPts;
-      return add;
-    },
-    // ライブスコア（台上の球から計算）
-    calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length,
-    // 次のブレイク
-    nextBrk: (_lastResult, curBrk) => 1 - curBrk,
-  },
-  azuki: {
-    label: "あずき杯 / モスカップ",
-    hillThreshold: null,        // ヒル概念なし
-    breakMode: "winner",        // 勝者ブレイク
-    calcAdd: (balls, _w) => {
-      const ptsOf = (loc) => balls.filter((x) => x.loc === loc && !x.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0);
-      return [ptsOf("p1"), ptsOf("p2")];
-    },
-    calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).reduce((s, b) => s + (b.n === 9 ? 2 : 1), 0),
-    nextBrk: (lastResult, curBrk) => (lastResult ? lastResult.w : curBrk),
-  },
-};
-const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
 
 /* ========= 試合画面（バンキング＋スコアリング、2台同期） ========= */
 function MatchScreen({ setupInfo, onExit }) {
   const { matchId, names, lenPct, table } = setupInfo;
   const rival = !!setupInfo.rival;
   const teamNames = setupInfo.teamNames;
-  const ruleset = getRuleset(setupInfo.format); // フォーマットに応じたルールセット（JCL or あずき杯等）
+  // この画面を開いた時の情報（対戦カードのタップ or URL）から作る、暫定のルールセット
+  const setupRuleset = getRuleset(setupInfo);
   const [res] = useState(() => setupInfo.raceToParam
     ? { rt1: setupInfo.raceToParam[0], rt2: setupInfo.raceToParam[1] }
     : computeRace(setupInfo.ratings[0], setupInfo.ratings[1], lenPct));
-  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table));
+  const [state, setState] = useState(() => initialMatchState(res.rt1, res.rt2, names, table, setupRuleset.ballCount));
+  // 実際に使うルールセットは、読み込んだ試合データを最優先にする。
+  // （古いURLを開き直した時など、URLのルール情報が実際の試合と食い違っていても正しく動く）
+  const ruleset = (state && (state.game || state.scoring || state.format)) ? getRuleset(state) : setupRuleset;
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [nowTs, setNowTs] = useState(Date.now());
@@ -2038,7 +2095,7 @@ function MatchScreen({ setupInfo, onExit }) {
       if (midRackWin) { pushUndo(); saveMatchHistory(matchId, stateRef.current, "9番以外で決着の前"); }
       applyLocal((s) => ({
         ...s,
-        ...(midRackWin ? { tot: [liveTot[0], liveTot[1]], balls: mkBalls(), phase: "done", lastResult: null } : {}),
+        ...(midRackWin ? { tot: [liveTot[0], liveTot[1]], balls: mkBalls(ruleset.ballCount), phase: "done", lastResult: null } : {}),
         finishedAt: fin,
         elapsedMs: s.startedAt ? fin - s.startedAt : null,
         winner: matchWinner,
@@ -2085,7 +2142,7 @@ function MatchScreen({ setupInfo, onExit }) {
     if (dir === "up") loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
     else loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
     const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
-    if (n === 9 && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
+    if (n === ruleset.money && (loc === "p1" || loc === "p2") && !b.dead) finish(nb, loc === "p1" ? 0 : 1);
     else { pushUndo(); applyLocal((s) => ({ ...s, balls: nb })); }
   };
   const toggleDead = (n) => {
@@ -2109,7 +2166,7 @@ function MatchScreen({ setupInfo, onExit }) {
   };
   const nextRack = () => {
     pushUndo();
-    applyLocal((s) => ({ ...s, balls: mkBalls(), rack: s.rack + 1, brk: ruleset.nextBrk(s.lastResult, s.brk), lastResult: null, phase: "play" }));
+    applyLocal((s) => ({ ...s, balls: mkBalls(ruleset.ballCount), rack: s.rack + 1, brk: ruleset.nextBrk(s.lastResult, s.brk), lastResult: null, phase: "play" }));
   };
   const undoRack = () => {
     saveMatchHistory(matchId, stateRef.current, "1ラック戻すの前");
@@ -2117,7 +2174,7 @@ function MatchScreen({ setupInfo, onExit }) {
     applyLocal((s) => {
       if (!s.hist.length) return s;
       const last = s.hist[s.hist.length - 1];
-      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
+      return { ...s, tot: [s.tot[0] - last.add[0], s.tot[1] - last.add[1]], rack: last.rack, brk: last.brk, balls: mkBalls(ruleset.ballCount), phase: "play", lastResult: null, hist: s.hist.slice(0, -1) };
     });
   };
   const undoLast = () => setUndoStack((s) => { if (!s.length) return s; const prev = s[s.length - 1]; applyLocal(prev); return s.slice(0, -1); });
@@ -2125,7 +2182,7 @@ function MatchScreen({ setupInfo, onExit }) {
     pushUndo();
     applyLocal((s) => {
       const now = Date.now();
-      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: timeLimitEnabled ? now + matchDurationMs(s) : null, finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
+      return { ...s, tot: [0, 0], rack: 1, brk: 0, balls: mkBalls(ruleset.ballCount), phase: "play", lastResult: null, hist: [], startedAt: now, deadline: timeLimitEnabled ? now + matchDurationMs(s) : null, finishedAt: null, elapsedMs: null, winner: null, bothLose: false };
     });
   };
   const backToSetup = () => {
@@ -2426,7 +2483,7 @@ function MatchScreen({ setupInfo, onExit }) {
       )}
 
       <div ref={playAreaRef} style={{ touchAction: "none" }}>
-        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word" }}>
@@ -2435,7 +2492,7 @@ function MatchScreen({ setupInfo, onExit }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 52px))", gap: 7, flexShrink: 0 }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+              return <Ball key={b.n} b={b} big money={ruleset.money} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
             })}
           </div>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word" }}>
@@ -2443,7 +2500,7 @@ function MatchScreen({ setupInfo, onExit }) {
           </div>
         </div>
 
-        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} money={ruleset.money} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
       </div>
 
       {histRows.length > 0 && (
@@ -2466,21 +2523,22 @@ function MatchScreen({ setupInfo, onExit }) {
   );
 }
 
-function Zone({ label, team, side, color, balls, sub, pressed, onPress, onGesture }) {
+function Zone({ label, team, side, color, balls, money, sub, pressed, onPress, onGesture }) {
   return (
     <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       {team && <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 0.3 }}>{team}</div>}
       <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
       {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
-        {balls.map((b) => <Ball key={b.n} b={b} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+        {balls.map((b) => <Ball key={b.n} b={b} money={money} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
       </div>
     </div>
   );
 }
-function Ball({ b, big, sub, pressed, style, onPress, onGesture }) {
+function Ball({ b, big, money, sub, pressed, style, onPress, onGesture }) {
   const size = big ? 52 : 34;
-  const base = BALL[b.n]; const nine = b.n === 9;
+  // マネーボール（9ボールなら9番、10ボールなら10番）は白地に縞で描く
+  const base = BALL[b.n] || "#6A7480"; const nine = b.n === (money || 9);
   const ref = useRef(null);
   const startYRef = useRef(0);
 
