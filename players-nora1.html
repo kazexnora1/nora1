@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.017";
-const BUILD_TIME = "2026-08-19 ブラックデュラミス（縞球が黒地で形も違うデザイン）は見送りとし、切り替えリストから削除。デュラミス・ダイナスフィア・プレデターの3種で確定";
+const APP_VERSION = "1.018";
+const BUILD_TIME = "2026-08-19 スワイプが苦手な人向けに、球をタップして選択→選手エリアをタップして移動できるように。選択中・ドラッグ中は移動先の選手エリアがハイライトされる";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2003,6 +2003,8 @@ function MatchScreen({ setupInfo, onExit }) {
     return () => el.removeEventListener("touchmove", block, { passive: false });
   });
   const [pressed, setPressed] = useState(null);
+  const [selectedBall, setSelectedBall] = useState(null); // タップで選んだ球（スワイプが苦手な人向けの代替操作）
+  const [dragDir, setDragDir] = useState(null); // ドラッグ中の向き（ライブ表示用）
   const [undoStack, setUndoStack] = useState([]);
   const [toolsOpen, setToolsOpen] = useState(false); // タイマー設定（延長／降りる）の下シート。一時停止/再開は時間表示を直接タップ
   // 球のデザインセット（見た目の好み、端末ごとに保存）。準備中のものは含めず、実装済みの中だけを巡回する
@@ -2108,6 +2110,8 @@ function MatchScreen({ setupInfo, onExit }) {
 
   const rt = (i) => state.raceTo[i] || 0;
   const { tot, rack, brk, balls, phase, lastResult, hist } = state;
+  // ラックが進む／戻る、決着がつくなど状態が変わったら、選択中の球はいったん解除する
+  useEffect(() => { setSelectedBall(null); }, [rack, phase]);
   const live = [ruleset.calcLive(balls, "p1"), ruleset.calcLive(balls, "p2")];
   const liveTot = phase === "play" ? [tot[0] + live[0], tot[1] + live[1]] : [tot[0], tot[1]];
   // hillHillはJCL専用（hillThresholdがnullのモードでは常にfalse）
@@ -2301,15 +2305,33 @@ function MatchScreen({ setupInfo, onExit }) {
   };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+  // タップで球を選び、選手エリアをタップして移動できる（スワイプが苦手な人向けの代替操作）。
+  // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝従来通り無効球の切り替え（選択は解除）
   const gestureImpl = (n, dy) => {
-    if (Math.abs(dy) > 28) { move(n, dy < 0 ? "up" : "down"); lastTapRef.current[n] = 0; return; }
+    if (Math.abs(dy) > 28) {
+      lastTapRef.current[n] = 0;
+      setSelectedBall(null);
+      move(n, dy < 0 ? "up" : "down");
+      return;
+    }
     const now = Date.now();
-    if (lastTapRef.current[n] && now - lastTapRef.current[n] < 340) { toggleDead(n); lastTapRef.current[n] = 0; }
-    else lastTapRef.current[n] = now;
+    const isDoubleTap = lastTapRef.current[n] && now - lastTapRef.current[n] < 340;
+    lastTapRef.current[n] = isDoubleTap ? 0 : now;
+    if (isDoubleTap) { toggleDead(n); setSelectedBall(null); return; }
+    setSelectedBall((cur) => (cur === n ? null : n));
   };
   const gestureRef = useRef(gestureImpl);
   gestureRef.current = gestureImpl;
   const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+  // ドラッグ中（指を離す前）に、今どちら向きかをライブで受け取り、対応する選手エリアをハイライトする
+  const dragImpl = (n, dir) => { setDragDir(dir); if (dir != null) setSelectedBall(null); };
+  const dragRef = useRef(dragImpl);
+  dragRef.current = dragImpl;
+  const onDrag = useCallback((n, dir) => dragRef.current(n, dir), []);
+  // 選択中の球を、タップした側の選手エリアへ移動する
+  const commitSelectedTo = (dir) => { if (selectedBall == null) return; move(selectedBall, dir); setSelectedBall(null); };
+  const highlightUp = selectedBall != null || dragDir === "up";
+  const highlightDown = selectedBall != null || dragDir === "down";
 
   const hillInfoLocal = (i) => {
     if (matchWinner != null || bothLose) {
@@ -2575,7 +2597,7 @@ function MatchScreen({ setupInfo, onExit }) {
       )}
 
       <div ref={playAreaRef} style={{ touchAction: "none" }}>
-        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} selectedBall={selectedBall} highlight={phase === "play" && highlightUp} onPress={onPress} onGesture={onGesture} onDrag={onDrag} onZoneTap={() => commitSelectedTo("up")} />
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
           <div
@@ -2591,7 +2613,7 @@ function MatchScreen({ setupInfo, onExit }) {
           }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} selected={selectedBall === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} onDrag={onDrag} />;
             })}
           </div>
           <div
@@ -2602,7 +2624,7 @@ function MatchScreen({ setupInfo, onExit }) {
           </div>
         </div>
 
-        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} selectedBall={selectedBall} highlight={phase === "play" && highlightDown} onPress={onPress} onGesture={onGesture} onDrag={onDrag} onZoneTap={() => commitSelectedTo("down")} />
       </div>
 
       {histRows.length > 0 && (
@@ -2625,19 +2647,31 @@ function MatchScreen({ setupInfo, onExit }) {
   );
 }
 
-function Zone({ label, team, side, color, balls, money, palette, sub, pressed, onPress, onGesture }) {
+function Zone({ label, team, side, color, balls, money, palette, sub, pressed, selectedBall, highlight, onPress, onGesture, onDrag, onZoneTap }) {
   return (
-    <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+    <div
+      onClick={onZoneTap}
+      style={{
+        background: highlight ? C.lightBlue : C.zone,
+        border: `1.5px solid ${highlight ? C.blue : C.line}`,
+        borderRadius: 12, padding: "7px 8px", minHeight: 52,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+        transition: "background 120ms ease, border-color 120ms ease",
+      }}>
       {team && <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 0.3 }}>{team}</div>}
       <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
-      {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
+      {balls.length === 0 && (
+        <div style={{ color: highlight ? C.blue : C.sub, fontSize: 11.5, textAlign: "center", fontWeight: highlight ? 800 : 400 }}>
+          {highlight ? "タップで移動" : side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}
+        </div>
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
-        {balls.map((b) => <Ball key={b.n} b={b} money={money} palette={palette} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+        {balls.map((b) => <Ball key={b.n} b={b} money={money} palette={palette} sub={sub} pressed={pressed === b.n} selected={selectedBall === b.n} onPress={onPress} onGesture={onGesture} onDrag={onDrag} />)}
       </div>
     </div>
   );
 }
-function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, style, onPress, onGesture }) {
+function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, selected, style, onPress, onGesture, onDrag }) {
   const size = sizeOverride || (big ? 52 : 34);
   // ゲームボール（9ボールなら9番、10ボールなら10番）は白地＋縁取りのデザインで描く。
   // 9番は、それ自体がゲームボールでない時（＝10ボール）も同じ「白地＋縁取り」のデザインにする。
@@ -2650,15 +2684,24 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, style,
 
   useEffect(() => {
     const el = ref.current; if (!el) return;
-    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; onPress(b.n, true); };
-    const move = (e) => { e.preventDefault(); };
+    let curDir = null; // 今ドラッグ中の向き（ライブ判定。閾値を超えたら選手エリアをハイライトする用）
+    const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; curDir = null; onPress(b.n, true); };
+    const move = (e) => {
+      e.preventDefault();
+      if (!onDrag) return;
+      const y = e.touches[0].clientY;
+      const dy = y - startYRef.current;
+      const dir = Math.abs(dy) > 28 ? (dy < 0 ? "up" : "down") : null;
+      if (dir !== curDir) { curDir = dir; onDrag(b.n, dir); }
+    };
     const end = (e) => {
       e.preventDefault();
       onPress(b.n, false);
+      if (onDrag) onDrag(b.n, null);
       const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
       onGesture(b.n, y - startYRef.current);
     };
-    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); };
+    const cancel = (e) => { e.preventDefault(); onPress(b.n, false); if (onDrag) onDrag(b.n, null); };
     const opts = { passive: false };
     el.addEventListener("touchstart", start, opts);
     el.addEventListener("touchmove", move, opts);
@@ -2670,7 +2713,7 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, style,
       el.removeEventListener("touchend", end, opts);
       el.removeEventListener("touchcancel", cancel, opts);
     };
-  }, [b.n, onPress, onGesture]);
+  }, [b.n, onPress, onGesture, onDrag]);
 
   return (
     <div ref={ref}
@@ -2678,15 +2721,17 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, style,
       style={{ width: size, height: size, borderRadius: size, flexShrink: 0,
         background: b.dead ? C.dead : ring ? "#fff" : base,
         border: ring && !b.dead ? `${Math.round(size * 0.16)}px solid ${base}` : "2px solid rgba(255,255,255,0.85)",
-        boxShadow: pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)" : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
+        boxShadow: selected ? `0 0 0 4px #fff, 0 0 0 7px ${C.blue}, 0 6px 16px rgba(0,0,0,0.3)`
+          : pressed ? "0 0 0 5px rgba(0,0,0,0.12), 0 6px 16px rgba(0,0,0,0.3)"
+          : b.dead || sub ? "none" : "0 2px 5px rgba(0,0,0,0.18)",
         color: ring && !b.dead ? base : "#fff",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: big ? 20 : 15, fontWeight: 800, boxSizing: "border-box",
         touchAction: "none", cursor: "pointer", position: "relative",
         userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
-        transform: pressed ? "scale(1.25)" : "scale(1)",
+        transform: selected ? "scale(1.15)" : pressed ? "scale(1.25)" : "scale(1)",
         transition: "transform 130ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 130ms ease",
-        zIndex: pressed ? 10 : 1,
+        zIndex: pressed || selected ? 10 : 1,
         ...style }}>
       {b.n}
       {b.dead && <span style={{ position: "absolute", fontSize: Math.round(size * 0.7), color: "#7A2E2E" }}>×</span>}
