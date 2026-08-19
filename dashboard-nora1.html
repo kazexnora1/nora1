@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.218";
-const BUILD_TIME = "2026-08-19 10ボールを解禁。マネーボール表記（ヒルヒル時の「◯番勝負！」）を種目に応じて一般化し、試合作成時の球配列も種目の球数に合わせた";
+const APP_VERSION = "1.219";
+const BUILD_TIME = "2026-08-19 テンプレート保存時に、同じ内容や同じ名前がすでにある場合のアラートを追加。「マネーボール」表記を「ゲームボール」に統一";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -743,20 +743,20 @@ function saveSettings(patch) {
 /* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
    これまで得点方式は format という文字列1つ（"jcl" / "azuki"）だけで切り替えていた。
    種目（9/10/8ボール）やセットマッチを足すには足りないので、ここで3つの軸に分解する。
-     game       … 種目（何番までの球を使い、どれがマネーボールか）
+     game       … 種目（何番までの球を使い、どれがゲームボールか）
      scoring    … 得点方式（何を1点と数え、目標点をどう決めるか）
      breakMode  … ブレイク順
    「あずきモス」「JCL / NORA 1GP」は、この3軸の組み合わせに名前を付けたテンプレートとして扱う。
    ready:false のものはまだ選手アプリ（B2）・観戦ページ（B3）が対応していないので選べない。 */
 const GAMES = [
-  { id: "9",  label: "9ボール",  balls: 9,  money: 9,  ready: true,  sub: "1〜9番、9番がマネーボール" },
-  { id: "10", label: "10ボール", balls: 10, money: 10, ready: true,  sub: "1〜10番、10番がマネーボール" },
+  { id: "9",  label: "9ボール",  balls: 9,  money: 9,  ready: true,  sub: "1〜9番、9番がゲームボール" },
+  { id: "10", label: "10ボール", balls: 10, money: 10, ready: true,  sub: "1〜10番、10番がゲームボール" },
   { id: "8",  label: "8ボール",  balls: 8,  money: 8,  ready: false, sub: "手玉以外を取り切って8番。ラック単位" },
 ];
 const SCORINGS = [
   { id: "set",       label: "セットマッチ（クラスハンデ）", unit: "rack",  ready: false, sub: "1ラック＝1点。クラスごとの先取数（A5/B4/C3）" },
-  { id: "jpa_skill", label: "JPA（スキルハンデ）",         unit: "point", ready: false, sub: "球1点・マネーボール2点。スキルごとの目標点" },
-  { id: "jpa_fixed", label: "JPA（目標点固定）",           unit: "point", ready: true,  sub: "球1点・マネーボール2点。回戦ごとに全員同じ目標点" },
+  { id: "jpa_skill", label: "JPA（スキルハンデ）",         unit: "point", ready: false, sub: "球1点・ゲームボール2点。スキルごとの目標点" },
+  { id: "jpa_fixed", label: "JPA（目標点固定）",           unit: "point", ready: true,  sub: "球1点・ゲームボール2点。回戦ごとに全員同じ目標点" },
   { id: "jcl",       label: "JCL（レートハンデ）",         unit: "point", ready: true,  sub: "球1点・落とした側は14点。ファーゴレートで目標点" },
 ];
 const BREAK_MODES = [
@@ -3019,8 +3019,23 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const saveTemplate = async () => {
     const name = tplName.trim().slice(0, 20);
     if (!name || tplBusy) return;
+    const allTpls = [...BUILTIN_TEMPLATES, ...customTpls];
+    // 中身（種目・得点方式・ブレイク順）がまったく同じテンプレートが、別の名前ですでにある
+    const sameSpecTpl = allTpls.find((t) => sameSpec(t.spec, spec) && t.name !== name);
+    if (sameSpecTpl) {
+      window.alert(`この内容のテンプレートはすでに「${sameSpecTpl.name}」という名前で登録されています。`);
+      return;
+    }
+    // 組み込みのテンプレート名とはかぶせられない（上書きできないので）
+    if (BUILTIN_TEMPLATES.some((t) => t.name === name)) {
+      window.alert(`「${name}」は組み込みのテンプレート名です。別の名前をつけてください。`);
+      return;
+    }
     const dup = customTpls.find((t) => t.name === name);
-    if (dup && !window.confirm(`「${name}」はすでにあります。今の設定で上書きしますか？`)) return;
+    if (dup) {
+      if (sameSpec(dup.spec, spec)) { window.alert(`「${name}」はすでにあります。`); return; }
+      if (!window.confirm(`「${name}」はすでにあります。今の設定で上書きしますか？`)) return;
+    }
     setTplBusy(true);
     const entry = { id: dup ? dup.id : "u" + Date.now(), name, spec, createdAt: dup ? dup.createdAt : Date.now() };
     const next = dup ? customTpls.map((t) => (t.id === dup.id ? entry : t)) : [...customTpls, entry];
@@ -5490,7 +5505,7 @@ function rateOfPlayer(m, i) {
 }
 /* 表示用の軽量ルールセット。JCLだけ「ヒル」概念（残り点数がこの値以下）を持つ。
    あずき杯／モスカップにはヒルが無いので「あと◯」表記で統一し、FR（ファーゴレート）も出さない。
-   種目（マネーボールの番号）は上部で定義した GAMES から引く。試合を作る側（BulkScheduleTab等）とは
+   種目（ゲームボールの番号）は上部で定義した GAMES から引く。試合を作る側（BulkScheduleTab等）とは
    別の、あくまで表示専用の軽い版なので、球1つ1つの計算（calcAdd等）は持たない */
 function displayRuleset(m) {
   const sp = specOfMatch(m);
@@ -5557,7 +5572,7 @@ function LiveTablePanel({ tableNum, m }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
-  const ruleset = getRuleset(m); // JCL or あずき杯／モスカップ／…（マネーボール番号も含む）
+  const ruleset = getRuleset(m); // JCL or あずき杯／モスカップ／…（ゲームボール番号も含む）
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
