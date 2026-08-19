@@ -97,38 +97,44 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.013";
-const BUILD_TIME = "2026-08-19 9番のデザインを「白地＋縁取り」に統一（ゲームボールでなくても同じ見た目、色だけ自分の色）。スコアラー画面のメニューに球のデザインセット切り替え（5種、スイッチのみ）を追加";
+const APP_VERSION = "1.014";
+const BUILD_TIME = "2026-08-19 球のデザインは形を変えず色だけ切り替える方針で確定。スーパーアラミスの実際の色を実装（他4種は色未定のため準備中のまま）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
   win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
-const BALL = { 1: "#E0A93B", 2: "#2A56A0", 3: "#C0362B", 4: "#E495AC", 5: "#DE7E2C", 6: "#2F7D4E", 7: "#97663A", 8: "#1A1A1A", 9: "#E0A93B", 10: "#2A56A0" };
-
 /* ========= 球のデザインセット =========
-   今回はスコアラー画面に切り替えスイッチだけ用意する。選んだ内容は端末ごとにlocalStorageへ保存する
-   （見た目の好みなので、対戦相手や他の端末とは共有しない）。実際に見た目（色味）を切り替える実装は
-   次の更新で行う。今はどれを選んでも表示は変わらない */
+   デザインセットごとの違いは色だけ（形は共通）。今のところ実際の色データがあるのは
+   「スーパーアラミス」のみ。残り4つは色が決まるまで、アラミスと同じ色で仮に動く */
+const BALL_PALETTES = {
+  aramith: { 1: "#FFB143", 2: "#1F529D", 3: "#E4363C", 4: "#FE8885", 5: "#FC8741", 6: "#037556", 7: "#BF773B", 8: "#32341F", 9: "#FFB143", 10: "#1F529D" },
+};
+const DEFAULT_DESIGN = "aramith";
+function paletteFor(designId) {
+  return BALL_PALETTES[designId] || BALL_PALETTES[DEFAULT_DESIGN];
+}
 const BALL_DESIGN_SETS = [
-  { id: "aramith", name: "スーパーアラミス" },
-  { id: "duramith", name: "デュラミス" },
-  { id: "black_duramith", name: "ブラックデュラミス" },
-  { id: "predator", name: "プレデター" },
-  { id: "dynasphere", name: "ダイナスフィア" },
+  { id: "aramith", name: "スーパーアラミス", ready: true },
+  { id: "duramith", name: "デュラミス", ready: false },
+  { id: "black_duramith", name: "ブラックデュラミス", ready: false },
+  { id: "predator", name: "プレデター", ready: false },
+  { id: "dynasphere", name: "ダイナスフィア", ready: false },
 ];
 const BALL_DESIGN_KEY = "jcl9_ball_design_v1";
 function loadBallDesign() {
   try {
     const v = localStorage.getItem(BALL_DESIGN_KEY);
-    return BALL_DESIGN_SETS.some((d) => d.id === v) ? v : BALL_DESIGN_SETS[0].id;
-  } catch { return BALL_DESIGN_SETS[0].id; }
+    return BALL_DESIGN_SETS.some((d) => d.id === v) ? v : DEFAULT_DESIGN;
+  } catch { return DEFAULT_DESIGN; }
 }
 function saveBallDesign(id) {
   try { localStorage.setItem(BALL_DESIGN_KEY, id); } catch {}
 }
 const PC = [C.blue, C.red];
 const mkBalls = (n) => Array.from({ length: Number(n) > 0 ? Number(n) : 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+
+
 
 /* ========= 試合ルールの3軸（種目 × 得点方式 × ブレイク順） =========
    本部アプリ（B1 v1.216〜）が、試合を組むときに各試合へ game / scoring / breakMode を書き込む。
@@ -1996,8 +2002,9 @@ function MatchScreen({ setupInfo, onExit }) {
   const [pressed, setPressed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [toolsOpen, setToolsOpen] = useState(false); // タイマー設定（延長／降りる）の下シート。一時停止/再開は時間表示を直接タップ
-  // 球のデザインセット（見た目の好み、端末ごとに保存。今はスイッチだけであり見た目は変わらない）
+  // 球のデザインセット（見た目の好み、端末ごとに保存）。今はスーパーアラミスのみ実際の色で切り替わる
   const [ballDesign, setBallDesign] = useState(() => loadBallDesign());
+  const palette = paletteFor(ballDesign);
   const updateBallDesign = (id) => { setBallDesign(id); saveBallDesign(id); };
   const lastTapRef = useRef({});
   const dirtyRef = useRef(false);
@@ -2426,16 +2433,17 @@ function MatchScreen({ setupInfo, onExit }) {
               <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 }}>球のデザイン</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 6 }}>
                 {BALL_DESIGN_SETS.map((d) => (
-                  <button key={d.id} onClick={() => updateBallDesign(d.id)} style={{
+                  <button key={d.id} onClick={() => { if (d.ready) updateBallDesign(d.id); }} disabled={!d.ready} style={{
                     background: ballDesign === d.id ? C.blue : "#fff",
                     color: ballDesign === d.id ? "#fff" : C.ink,
                     border: `1.5px solid ${ballDesign === d.id ? C.blue : C.line}`,
-                    borderRadius: 20, padding: "7px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                  }}>{d.name}</button>
+                    borderRadius: 20, padding: "7px 13px", fontSize: 12.5, fontWeight: 700,
+                    cursor: d.ready ? "pointer" : "default", fontFamily: FONT, opacity: d.ready || ballDesign === d.id ? 1 : 0.4,
+                  }}>{d.name}{!d.ready && <span style={{ fontSize: 10, fontWeight: 700, marginLeft: 4 }}>準備中</span>}</button>
                 ))}
               </div>
               <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.7, textAlign: "center", marginBottom: 8 }}>
-                選んだ内容はこの端末に保存されます。今回はスイッチのみで、表示（色味）は次の更新で切り替わります
+                選んだ内容はこの端末に保存されます
               </div>
             </div>
 
@@ -2542,7 +2550,7 @@ function MatchScreen({ setupInfo, onExit }) {
       )}
 
       <div ref={playAreaRef} style={{ touchAction: "none" }}>
-        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word" }}>
@@ -2555,7 +2563,7 @@ function MatchScreen({ setupInfo, onExit }) {
           }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
+              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
             })}
           </div>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word" }}>
@@ -2563,7 +2571,7 @@ function MatchScreen({ setupInfo, onExit }) {
           </div>
         </div>
 
-        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} money={ruleset.money} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
+        <Zone label={pl[1].name} team={rival && teamNames ? teamNames[1] : null} side="down" color={C.red} balls={col("p2")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p2"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
       </div>
 
       {histRows.length > 0 && (
@@ -2586,24 +2594,24 @@ function MatchScreen({ setupInfo, onExit }) {
   );
 }
 
-function Zone({ label, team, side, color, balls, money, sub, pressed, onPress, onGesture }) {
+function Zone({ label, team, side, color, balls, money, palette, sub, pressed, onPress, onGesture }) {
   return (
     <div style={{ background: C.zone, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "7px 8px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       {team && <div style={{ fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 0.3 }}>{team}</div>}
       <div style={{ fontSize: 12.5, fontWeight: 800, color }}>{label}</div>
       {balls.length === 0 && <div style={{ color: C.sub, fontSize: 11.5, textAlign: "center" }}>{side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ"}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
-        {balls.map((b) => <Ball key={b.n} b={b} money={money} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
+        {balls.map((b) => <Ball key={b.n} b={b} money={money} palette={palette} sub={sub} pressed={pressed === b.n} onPress={onPress} onGesture={onGesture} />)}
       </div>
     </div>
   );
 }
-function Ball({ b, big, size: sizeOverride, money, sub, pressed, style, onPress, onGesture }) {
+function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, style, onPress, onGesture }) {
   const size = sizeOverride || (big ? 52 : 34);
   // ゲームボール（9ボールなら9番、10ボールなら10番）は白地＋縁取りのデザインで描く。
   // 9番は、それ自体がゲームボールでない時（＝10ボール）も同じ「白地＋縁取り」のデザインにする。
   // 色は9番自身の色（＝1番と同じ橙）を使うので、実際のゲームボール（10番＝青系）とは色が違って見分けられる
-  const base = BALL[b.n] || "#6A7480";
+  const base = (palette || BALL_PALETTES[DEFAULT_DESIGN])[b.n] || "#6A7480";
   const isMoney = b.n === (money || 9);
   const ring = isMoney || b.n === 9;
   const ref = useRef(null);
