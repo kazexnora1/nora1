@@ -26,7 +26,12 @@
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div id="boot" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;color:#1C2530;background:#fff;">
+  <div style="font-size:40px;">🎱</div>
+  <div id="bootmsg" style="font-size:15px;font-weight:800;">読み込み中…</div>
+  <div id="bootsub" style="font-size:12.5px;color:#6A7480;text-align:center;line-height:1.7;padding:0 24px;">はじめての読み込みは少し時間がかかります</div>
+  <button id="bootreload" onclick="location.reload()" style="display:none;background:#2E6DB5;color:#fff;border:none;border-radius:12px;padding:12px 22px;font-size:15px;font-weight:800;font-family:inherit;">再読み込み</button>
+</div></div>
 <div id="crashlog" style="display:none; position:fixed; inset:0; background:#fff3f3; color:#7A2E2E; padding:16px; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
 <script>
   function showCrash(msg) {
@@ -37,6 +42,17 @@
   window.onerror = function (msg, src, line, col, err) {
     showCrash(msg + "\n" + (src || "") + ":" + line + ":" + col + "\n" + (err && err.stack ? err.stack : ""));
   };
+  /* 起動の進み具合を出す。真っ白のまま止まって見えるのを防ぐ */
+  var bootT0 = Date.now();
+  function bootSay(msg, sub, showReload) {
+    var m = document.getElementById("bootmsg"), s = document.getElementById("bootsub"), r = document.getElementById("bootreload");
+    if (!m) return; // すでにアプリが描画された
+    if (msg) m.textContent = msg;
+    if (sub) s.textContent = sub;
+    if (showReload && r) r.style.display = "block";
+  }
+  setTimeout(function () { bootSay("接続中…", "通信が混んでいるようです。もう少しお待ちください"); }, 3000);
+  setTimeout(function () { bootSay("まだ接続中です", "電波の良い場所で再読み込みすると直ることがあります", true); }, 8000);
   window.addEventListener("unhandledrejection", function (e) {
     showCrash("Promise rejected: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
   });
@@ -79,8 +95,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
-const APP_VERSION = "1.003";
-const BUILD_TIME = "2026-08-19 試合ルールを「種目 × 得点方式 × ブレイク順」の3軸で読むように変更（本部B1 v1.216以降に対応。旧データもそのまま動きます）";
+const APP_VERSION = "1.004";
+const BUILD_TIME = "2026-08-19 起動時に真っ白のまま止まることがある問題に対応（読み込み画面とログイン待ちの打ち切りを追加）。試合ルールの3軸対応（v1.003）を含む";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1675,14 +1691,28 @@ function App() {
 }
 
 
-// 匿名ログインが済んでから画面を出す。先に出すと、最初の読み込みだけ権限エラーになることがある
-authReady.then(() => {
+// 匿名ログインが済んでから画面を出す。ただし通信が詰まって ログインが返ってこない時に
+// 真っ白のまま止まらないよう、一定時間で見切って先に画面を出す（ログインは裏で続き、
+// 通ったところからデータが流れてくる）
+const AUTH_WAIT_MS = 6000;
+let appStarted = false;
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
   try {
     ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   } catch (e) {
     showCrash(e.message + "\n" + (e.stack || ""));
   }
-});
+}
+Promise.race([
+  authReady,
+  new Promise((resolve) => setTimeout(() => resolve("timeout"), AUTH_WAIT_MS)),
+]).then((r) => {
+  if (r === "timeout") console.warn("[auth] ログインの応答が遅いので、先に画面を出します");
+  startApp();
+}).catch(() => startApp());
+
 </script>
 </body>
 </html>
