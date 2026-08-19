@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.010";
-const BUILD_TIME = "2026-08-19 起動時に真っ白のまま止まることがある問題に対応（読み込み画面とログイン待ちの打ち切りを追加）。試合ルールの3軸対応（v1.009）を含む";
+const APP_VERSION = "1.011";
+const BUILD_TIME = "2026-08-19 10ボール対応：ヒルヒル時の「◯番勝負！」表記をマネーボール番号（10ボールなら10番）に合わせて一般化";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1147,7 +1147,7 @@ function LiveTablePanel({ tableNum, m, timeLimitEnabled }) {
       // あずき杯／モスカップ：ヒル概念が無いので、最初から最後まで「あと◯」表記で統一する
       return { t: `あと${rem}` };
     }
-    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : `${ruleset.money}番勝負！` };
     const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
@@ -2271,7 +2271,7 @@ function MatchScreen({ setupInfo, onExit }) {
     const rem = rt(i) - tot[i];
     if (rem <= 0) return { txt: "達成", on: true };
     // ヒルヒルはこのラックの9番で決まるので残り点数ではなくその旨を出す
-    if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : "9番勝負！", on: true };
+    if (hillHill) return { txt: i === 0 ? "ヒルヒル！" : `${ruleset.money}番勝負！`, on: true };
     const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
   };
@@ -2445,7 +2445,7 @@ function MatchScreen({ setupInfo, onExit }) {
 
       {hillHill && matchWinner == null && phase === "play" && ruleset.hillThreshold != null && (
         <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
-          ヒルヒル：このラックで9番を落とした方が勝ち
+          ヒルヒル：このラックで{ruleset.money}番を落とした方が勝ち
         </div>
       )}
 
