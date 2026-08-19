@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.020";
-const BUILD_TIME = "2026-08-19 選手エリアの球を選択中、球エリア内のどこ（他の球の上・元の位置含む）をタップしても台に戻るように修正（今までは隙間や余白しか反応しなかった）";
+const APP_VERSION = "1.021";
+const BUILD_TIME = "2026-08-19 無効球（2回タップ）の判定を球エリア（中央の台）だけに限定。選手エリアの球には効かなくした";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2315,19 +2315,21 @@ function MatchScreen({ setupInfo, onExit }) {
     setSelectedBall(null);
   };
   // タップで球を選び、選手エリアをタップして移動できる（スワイプが苦手な人向けの代替操作）。
-  // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝従来通り無効球の切り替え（選択は解除）。
+  // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝無効球の切り替え（球エリアの球のみ。選手エリアの球には効かない）。
   // 選手エリアに入っている球を選択中は、球エリア内のどこ（他の球の上でも）をタップしても「台に戻す」を優先する
-  const gestureImpl = (n, dy) => {
+  const gestureImpl = (n, dy, area) => {
     if (Math.abs(dy) > 28) {
       lastTapRef.current[n] = 0;
       setSelectedBall(null);
       move(n, dy < 0 ? "up" : "down");
       return;
     }
-    const now = Date.now();
-    const isDoubleTap = lastTapRef.current[n] && now - lastTapRef.current[n] < 340;
-    lastTapRef.current[n] = isDoubleTap ? 0 : now;
-    if (isDoubleTap) { toggleDead(n); setSelectedBall(null); return; }
+    if (area === "rack") {
+      const now = Date.now();
+      const isDoubleTap = lastTapRef.current[n] && now - lastTapRef.current[n] < 340;
+      lastTapRef.current[n] = isDoubleTap ? 0 : now;
+      if (isDoubleTap) { toggleDead(n); setSelectedBall(null); return; }
+    }
     if (selectedBall != null) {
       const sb = balls.find((x) => x.n === selectedBall);
       if (sb && sb.loc !== "c") { returnSelectedToCenter(); return; }
@@ -2336,7 +2338,7 @@ function MatchScreen({ setupInfo, onExit }) {
   };
   const gestureRef = useRef(gestureImpl);
   gestureRef.current = gestureImpl;
-  const onGesture = useCallback((n, dy) => gestureRef.current(n, dy), []);
+  const onGesture = useCallback((n, dy, area) => gestureRef.current(n, dy, area), []);
   // ドラッグ中（指を離す前）に、今どちら向きかをライブで受け取り、対応する選手エリアをハイライトする
   const dragImpl = (n, dir) => { setDragDir(dir); if (dir != null) setSelectedBall(null); };
   const dragRef = useRef(dragImpl);
@@ -2634,7 +2636,7 @@ function MatchScreen({ setupInfo, onExit }) {
           }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
-              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} selected={selectedBall === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} onDrag={onDrag} />;
+              return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} selected={selectedBall === b.n} area="rack" style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} onDrag={onDrag} />;
             })}
           </div>
           <div
@@ -2688,12 +2690,12 @@ function Zone({ label, team, side, color, balls, money, palette, sub, pressed, s
         </div>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 }}>
-        {balls.map((b) => <Ball key={b.n} b={b} money={money} palette={palette} sub={sub} pressed={pressed === b.n} selected={selectedBall === b.n} onPress={onPress} onGesture={onGesture} onDrag={onDrag} />)}
+        {balls.map((b) => <Ball key={b.n} b={b} money={money} palette={palette} sub={sub} pressed={pressed === b.n} selected={selectedBall === b.n} area="zone" onPress={onPress} onGesture={onGesture} onDrag={onDrag} />)}
       </div>
     </div>
   );
 }
-function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, selected, style, onPress, onGesture, onDrag }) {
+function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, selected, area, style, onPress, onGesture, onDrag }) {
   const size = sizeOverride || (big ? 52 : 34);
   // ゲームボール（9ボールなら9番、10ボールなら10番）は白地＋縁取りのデザインで描く。
   // 9番は、それ自体がゲームボールでない時（＝10ボール）も同じ「白地＋縁取り」のデザインにする。
@@ -2721,7 +2723,7 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, select
       onPress(b.n, false);
       if (onDrag) onDrag(b.n, null);
       const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
-      onGesture(b.n, y - startYRef.current);
+      onGesture(b.n, y - startYRef.current, area);
     };
     const cancel = (e) => { e.preventDefault(); onPress(b.n, false); if (onDrag) onDrag(b.n, null); };
     const opts = { passive: false };
@@ -2735,7 +2737,7 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, select
       el.removeEventListener("touchend", end, opts);
       el.removeEventListener("touchcancel", cancel, opts);
     };
-  }, [b.n, onPress, onGesture, onDrag]);
+  }, [b.n, onPress, onGesture, onDrag, area]);
 
   return (
     <div ref={ref}
