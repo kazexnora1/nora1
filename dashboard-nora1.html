@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.217";
-const BUILD_TIME = "2026-08-19 詳細設定に名前をつけて保存できるようにした（自作テンプレートが、あずき杯・NORA1と並んで選べる）";
+const APP_VERSION = "1.218";
+const BUILD_TIME = "2026-08-19 10ボールを解禁。マネーボール表記（ヒルヒル時の「◯番勝負！」）を種目に応じて一般化し、試合作成時の球配列も種目の球数に合わせた";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -750,7 +750,7 @@ function saveSettings(patch) {
    ready:false のものはまだ選手アプリ（B2）・観戦ページ（B3）が対応していないので選べない。 */
 const GAMES = [
   { id: "9",  label: "9ボール",  balls: 9,  money: 9,  ready: true,  sub: "1〜9番、9番がマネーボール" },
-  { id: "10", label: "10ボール", balls: 10, money: 10, ready: false, sub: "1〜10番、10番がマネーボール" },
+  { id: "10", label: "10ボール", balls: 10, money: 10, ready: true,  sub: "1〜10番、10番がマネーボール" },
   { id: "8",  label: "8ボール",  balls: 8,  money: 8,  ready: false, sub: "手玉以外を取り切って8番。ラック単位" },
 ];
 const SCORINGS = [
@@ -844,6 +844,23 @@ const allTemplatesSync = () => [...BUILTIN_TEMPLATES, ...loadLocalTemplates()];
 function ruleFields(spec) {
   const sp = normalizeSpec(spec || loadSpec());
   return { format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode };
+}
+/* 試合作成時の初期状態に入れる球の配列。ruleFields() と同じ設定（種目）から球数を決める */
+function mkMatchBalls(spec) {
+  const sp = normalizeSpec(spec || loadSpec());
+  const n = gameInfo(sp.game).balls;
+  return Array.from({ length: n }, (_, i) => ({ n: i + 1, loc: "c", dead: false }));
+}
+/* すでにできている試合レコードから3軸を取り出す（B2/B3のspecOfと同じ考え方）。
+   game/scoring/breakModeを持たない古い試合は、formatから読み替える */
+function specOfMatch(m) {
+  const o = m || {};
+  const legacy = o.format === "azuki" ? BUILTIN_TEMPLATES[0].spec : BUILTIN_TEMPLATES[1].spec;
+  return {
+    game: GAMES.some((g) => g.id === o.game) ? o.game : legacy.game,
+    scoring: SCORINGS.some((x) => x.id === o.scoring) ? o.scoring : legacy.scoring,
+    breakMode: (o.breakMode === "winner" || o.breakMode === "alternate") ? o.breakMode : legacy.breakMode,
+  };
 }
 
 /* ========= 試合の骨組み（得点方式 → 予選の組み方 → 決勝の進出方式） =========
@@ -1052,7 +1069,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
       const rt = res ? [res.rt1, res.rt2] : [0, 0];
       const state = {
         version: (existing && existing.version || 0) + 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-        balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+        balls: mkMatchBalls(),
         lastResult: null, hist: [], raceTo: rt,
         names: [p1.name, p2.name], table,
         r1: R1, r2: R2, lenPct,
@@ -2307,7 +2324,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
   const fmt = format || legacyFormat(curSpec);
   const mkMatch = (extra) => ({
     version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-    balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+    balls: mkMatchBalls(),
     lastResult: null, hist: [], ...ruleFields(), ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
@@ -2598,7 +2615,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
           const id = randomMatchId();
           next[id] = {
             version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-            balls: Array.from({ length: 9 }, (_, k) => ({ n: k + 1, loc: "c", dead: false })),
+            balls: mkMatchBalls(),
             lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
             names: [p1.name, p2.name], table: nextRound === totalRounds ? 1 : tables[i],
             r1: p1.r, r2: p2.r, lenPct: pct, matchMinutes: plan.mins,
@@ -4481,7 +4498,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       rows.forEach((m) => {
         next[m.matchId] = {
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+          balls: mkMatchBalls(),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
@@ -4937,7 +4954,7 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, lenPct, pe
       result.board.forEach((m) => {
         upd[m.matchId] = {
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-          balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+          balls: mkMatchBalls(),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table, slot: null,
           r1: m.r1 || 0, r2: m.r2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
@@ -5140,7 +5157,7 @@ function ScheduleTab({ roster }) {
     const matchId = randomMatchId();
     const state = {
       version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
-      balls: Array.from({ length: 9 }, (_, i) => ({ n: i + 1, loc: "c", dead: false })),
+      balls: mkMatchBalls(),
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
       r1: R1, r2: R2, lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
@@ -5471,13 +5488,15 @@ function rateOfPlayer(m, i) {
   const v = parseInt(i === 0 ? (m && m.r1) : (m && m.r2), 10);
   return v > 0 ? v : null;
 }
-/* フォーマットに応じたルールセット。JCLだけ「ヒル」概念（残り点数がこの値以下）を持つ。
-   あずき杯／モスカップにはヒルが無いので「あと◯」表記で統一し、FR（ファーゴレート）も出さない */
-const RULESETS = {
-  jcl: { hillThreshold: 14 },
-  azuki: { hillThreshold: null },
-};
-const getRuleset = (fmt) => RULESETS[fmt] || RULESETS.jcl;
+/* 表示用の軽量ルールセット。JCLだけ「ヒル」概念（残り点数がこの値以下）を持つ。
+   あずき杯／モスカップにはヒルが無いので「あと◯」表記で統一し、FR（ファーゴレート）も出さない。
+   種目（マネーボールの番号）は上部で定義した GAMES から引く。試合を作る側（BulkScheduleTab等）とは
+   別の、あくまで表示専用の軽い版なので、球1つ1つの計算（calcAdd等）は持たない */
+function displayRuleset(m) {
+  const sp = specOfMatch(m);
+  return { hillThreshold: sp.scoring === "jcl" ? 14 : null, money: gameInfo(sp.game).money };
+}
+const getRuleset = (fmt) => (typeof fmt === "object" && fmt ? displayRuleset(fmt) : { hillThreshold: fmt === "jcl" ? 14 : null, money: 9 });
 
 /* ========= テーブルの様子：卓ごとの1試合を、ラック履歴つきで見せる =========
    左右が選手カード、真ん中がここまでのラック履歴。履歴の下に現在のスコア。
@@ -5538,7 +5557,7 @@ function LiveTablePanel({ tableNum, m }) {
   const tot = m.tot || [0, 0];
   const hist = m.hist || [];
   const bothLose = !!m.bothLose;
-  const ruleset = getRuleset(m.format); // JCL or あずき杯／モスカップ
+  const ruleset = getRuleset(m); // JCL or あずき杯／モスカップ／…（マネーボール番号も含む）
   const reached = [raceTo[0] > 0 && tot[0] >= raceTo[0], raceTo[1] > 0 && tot[1] >= raceTo[1]];
   const winner = bothLose ? null
     : (m.winner === 0 || m.winner === 1) ? m.winner
@@ -5565,7 +5584,7 @@ function LiveTablePanel({ tableNum, m }) {
       // あずき杯／モスカップ：ヒル概念が無いので、最初から最後まで「あと◯」表記で統一する
       return { t: `あと${rem}` };
     }
-    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : "9番勝負！" };
+    if (hillHill) return { t: i === 0 ? "ヒルヒル！" : `${ruleset.money}番勝負！` };
     const toHill = rem - ruleset.hillThreshold;
     return toHill > 0 ? { t: `あと${toHill}でヒル` } : { t: `あと${rem}で勝ち` };
   };
