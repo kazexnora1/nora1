@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.018";
-const BUILD_TIME = "2026-08-19 スワイプが苦手な人向けに、球をタップして選択→選手エリアをタップして移動できるように。選択中・ドラッグ中は移動先の選手エリアがハイライトされる";
+const APP_VERSION = "1.019";
+const BUILD_TIME = "2026-08-19 選手エリアに入っている球を選択した状態で、球が並ぶエリア全体をタップすると台に戻せるように。対象になっている間は台の枠と案内文でハイライト";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2330,8 +2330,19 @@ function MatchScreen({ setupInfo, onExit }) {
   const onDrag = useCallback((n, dir) => dragRef.current(n, dir), []);
   // 選択中の球を、タップした側の選手エリアへ移動する
   const commitSelectedTo = (dir) => { if (selectedBall == null) return; move(selectedBall, dir); setSelectedBall(null); };
+  // 選択中の球を台（中央）に戻す。選手エリアに入っている球を、球が並ぶエリア全体をタップして戻せるようにする
+  const returnSelectedToCenter = () => {
+    if (selectedBall == null) return;
+    const b = balls.find((x) => x.n === selectedBall);
+    if (!b || b.loc === "c" || phase !== "play") { setSelectedBall(null); return; }
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: s.balls.map((x) => (x.n === selectedBall ? { ...x, loc: "c" } : x)) }));
+    setSelectedBall(null);
+  };
   const highlightUp = selectedBall != null || dragDir === "up";
   const highlightDown = selectedBall != null || dragDir === "down";
+  // 選択中の球が、すでにどちらかの選手エリアに入っている場合だけ「タップで台に戻す」を案内する
+  const selectedOffTable = selectedBall != null && (balls.find((b) => b.n === selectedBall) || {}).loc !== "c";
 
   const hillInfoLocal = (i) => {
     if (matchWinner != null || bothLose) {
@@ -2599,17 +2610,22 @@ function MatchScreen({ setupInfo, onExit }) {
       <div ref={playAreaRef} style={{ touchAction: "none" }}>
         <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} selectedBall={selectedBall} highlight={phase === "play" && highlightUp} onPress={onPress} onGesture={onGesture} onDrag={onDrag} onZoneTap={() => commitSelectedTo("up")} />
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
+        <div onClick={returnSelectedToCenter} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0", cursor: selectedBall != null ? "pointer" : "default" }}>
           <div
             onTouchStart={onDesignSwipeStart}
             onTouchEnd={onDesignSwipeEnd}
             style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" }}>
-            {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
+            {selectedOffTable ? <span style={{ color: C.blue, fontWeight: 800 }}>タップで<br />台に戻す</span>
+              : matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
           </div>
           <div style={{
             display: "grid",
             gridTemplateColumns: ruleset.ballCount === 10 ? "repeat(5, minmax(0, 44px))" : "repeat(3, minmax(0, 52px))",
             gap: 7, flexShrink: 0,
+            background: selectedOffTable ? C.lightBlue : "transparent",
+            border: `1.5px dashed ${selectedOffTable ? C.blue : "transparent"}`,
+            borderRadius: 12, padding: selectedOffTable ? 6 : 0,
+            transition: "background 120ms ease, border-color 120ms ease",
           }}>
             {balls.map((b) => {
               const moved = b.loc !== "c";
@@ -2620,7 +2636,8 @@ function MatchScreen({ setupInfo, onExit }) {
             onTouchStart={onDesignSwipeStart}
             onTouchEnd={onDesignSwipeEnd}
             style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word", touchAction: "pan-y" }}>
-            {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
+            {selectedOffTable ? <span style={{ color: C.blue, fontWeight: 800 }}>タップで<br />台に戻す</span>
+              : matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
           </div>
         </div>
 
