@@ -97,8 +97,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.019";
-const BUILD_TIME = "2026-08-19 選手エリアに入っている球を選択した状態で、球が並ぶエリア全体をタップすると台に戻せるように。対象になっている間は台の枠と案内文でハイライト";
+const APP_VERSION = "1.020";
+const BUILD_TIME = "2026-08-19 選手エリアの球を選択中、球エリア内のどこ（他の球の上・元の位置含む）をタップしても台に戻るように修正（今までは隙間や余白しか反応しなかった）";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2305,8 +2305,18 @@ function MatchScreen({ setupInfo, onExit }) {
   };
 
   const onPress = useCallback((n, isPressed) => { setPressed(isPressed ? n : null); }, []);
+  // 選択中の球を台（中央）に戻す。選手エリアに入っている球を、球が並ぶエリア全体をタップして戻せるようにする
+  const returnSelectedToCenter = () => {
+    if (selectedBall == null) return;
+    const b = balls.find((x) => x.n === selectedBall);
+    if (!b || b.loc === "c" || phase !== "play") { setSelectedBall(null); return; }
+    pushUndo();
+    applyLocal((s) => ({ ...s, balls: s.balls.map((x) => (x.n === selectedBall ? { ...x, loc: "c" } : x)) }));
+    setSelectedBall(null);
+  };
   // タップで球を選び、選手エリアをタップして移動できる（スワイプが苦手な人向けの代替操作）。
-  // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝従来通り無効球の切り替え（選択は解除）
+  // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝従来通り無効球の切り替え（選択は解除）。
+  // 選手エリアに入っている球を選択中は、球エリア内のどこ（他の球の上でも）をタップしても「台に戻す」を優先する
   const gestureImpl = (n, dy) => {
     if (Math.abs(dy) > 28) {
       lastTapRef.current[n] = 0;
@@ -2318,6 +2328,10 @@ function MatchScreen({ setupInfo, onExit }) {
     const isDoubleTap = lastTapRef.current[n] && now - lastTapRef.current[n] < 340;
     lastTapRef.current[n] = isDoubleTap ? 0 : now;
     if (isDoubleTap) { toggleDead(n); setSelectedBall(null); return; }
+    if (selectedBall != null) {
+      const sb = balls.find((x) => x.n === selectedBall);
+      if (sb && sb.loc !== "c") { returnSelectedToCenter(); return; }
+    }
     setSelectedBall((cur) => (cur === n ? null : n));
   };
   const gestureRef = useRef(gestureImpl);
@@ -2330,15 +2344,6 @@ function MatchScreen({ setupInfo, onExit }) {
   const onDrag = useCallback((n, dir) => dragRef.current(n, dir), []);
   // 選択中の球を、タップした側の選手エリアへ移動する
   const commitSelectedTo = (dir) => { if (selectedBall == null) return; move(selectedBall, dir); setSelectedBall(null); };
-  // 選択中の球を台（中央）に戻す。選手エリアに入っている球を、球が並ぶエリア全体をタップして戻せるようにする
-  const returnSelectedToCenter = () => {
-    if (selectedBall == null) return;
-    const b = balls.find((x) => x.n === selectedBall);
-    if (!b || b.loc === "c" || phase !== "play") { setSelectedBall(null); return; }
-    pushUndo();
-    applyLocal((s) => ({ ...s, balls: s.balls.map((x) => (x.n === selectedBall ? { ...x, loc: "c" } : x)) }));
-    setSelectedBall(null);
-  };
   const highlightUp = selectedBall != null || dragDir === "up";
   const highlightDown = selectedBall != null || dragDir === "down";
   // 選択中の球が、すでにどちらかの選手エリアに入っている場合だけ「タップで台に戻す」を案内する
