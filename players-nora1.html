@@ -97,29 +97,32 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.014";
-const BUILD_TIME = "2026-08-19 球のデザインは形を変えず色だけ切り替える方針で確定。スーパーアラミスの実際の色を実装（他4種は色未定のため準備中のまま）";
+const APP_VERSION = "1.017";
+const BUILD_TIME = "2026-08-19 ブラックデュラミス（縞球が黒地で形も違うデザイン）は見送りとし、切り替えリストから削除。デュラミス・ダイナスフィア・プレデターの3種で確定";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
   win: "#2E7D46", hill: "#B26A1E", hillBg: "#FFF3E0", minus: "#C0392B", dead: "#B9B4A8",
 };
 /* ========= 球のデザインセット =========
-   デザインセットごとの違いは色だけ（形は共通）。今のところ実際の色データがあるのは
-   「スーパーアラミス」のみ。残り4つは色が決まるまで、アラミスと同じ色で仮に動く */
+   デザインセットごとの違いは色だけ（形は共通）。色は実物の写真から抽出した値。
+   スーパーアラミスはデュラミスとほぼ同じ色だったため、デュラミスに一本化（アラミスは廃止）。
+   また、セットをまたいで見分けがつかないほど近い番号の色は同じ値にそろえてある
+   （例：3番・5番・8番は3セットとも共通。7番はセットごとにはっきり違うので別のまま）。
+   ブラックデュラミス（縞球が黒地のデザイン）は色だけでなく形も違うため見送り */
 const BALL_PALETTES = {
-  aramith: { 1: "#FFB143", 2: "#1F529D", 3: "#E4363C", 4: "#FE8885", 5: "#FC8741", 6: "#037556", 7: "#BF773B", 8: "#32341F", 9: "#FFB143", 10: "#1F529D" },
+  duramith:  { 1: "#E3A645", 2: "#193B7F", 3: "#C44341", 4: "#EC7882", 5: "#EC834E", 6: "#2A5C44", 7: "#966338", 8: "#271F1D", 9: "#E3A645", 10: "#193B7F" },
+  dynasphere:{ 1: "#F3C25B", 2: "#285090", 3: "#C44341", 4: "#734D7D", 5: "#EC834E", 6: "#90826F", 7: "#A8D6C6", 8: "#271F1D", 9: "#F3C25B", 10: "#285090" },
+  predator:  { 1: "#E3A645", 2: "#285090", 3: "#C44341", 4: "#734D7D", 5: "#EC834E", 6: "#2A5C44", 7: "#AB7740", 8: "#271F1D", 9: "#E3A645", 10: "#285090" },
 };
-const DEFAULT_DESIGN = "aramith";
+const DEFAULT_DESIGN = "duramith";
 function paletteFor(designId) {
   return BALL_PALETTES[designId] || BALL_PALETTES[DEFAULT_DESIGN];
 }
 const BALL_DESIGN_SETS = [
-  { id: "aramith", name: "スーパーアラミス", ready: true },
-  { id: "duramith", name: "デュラミス", ready: false },
-  { id: "black_duramith", name: "ブラックデュラミス", ready: false },
-  { id: "predator", name: "プレデター", ready: false },
-  { id: "dynasphere", name: "ダイナスフィア", ready: false },
+  { id: "duramith", name: "デュラミス", ready: true },
+  { id: "dynasphere", name: "ダイナスフィア", ready: true },
+  { id: "predator", name: "プレデター", ready: true },
 ];
 const BALL_DESIGN_KEY = "jcl9_ball_design_v1";
 function loadBallDesign() {
@@ -2002,10 +2005,32 @@ function MatchScreen({ setupInfo, onExit }) {
   const [pressed, setPressed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [toolsOpen, setToolsOpen] = useState(false); // タイマー設定（延長／降りる）の下シート。一時停止/再開は時間表示を直接タップ
-  // 球のデザインセット（見た目の好み、端末ごとに保存）。今はスーパーアラミスのみ実際の色で切り替わる
+  // 球のデザインセット（見た目の好み、端末ごとに保存）。準備中のものは含めず、実装済みの中だけを巡回する
   const [ballDesign, setBallDesign] = useState(() => loadBallDesign());
   const palette = paletteFor(ballDesign);
   const updateBallDesign = (id) => { setBallDesign(id); saveBallDesign(id); };
+  const readyDesigns = BALL_DESIGN_SETS.filter((d) => d.ready);
+  const cycleBallDesign = (dir) => {
+    const idx = readyDesigns.findIndex((d) => d.id === ballDesign);
+    const next = readyDesigns[(((idx < 0 ? 0 : idx) + dir) % readyDesigns.length + readyDesigns.length) % readyDesigns.length];
+    if (next) updateBallDesign(next.id);
+  };
+  // 球の左右の余白を左右にスワイプすると、球のデザインセットが切り替わる
+  const designSwipeRef = useRef({ x: 0, y: 0, active: false });
+  const onDesignSwipeStart = (e) => {
+    const t = e.touches[0];
+    designSwipeRef.current = { x: t.clientX, y: t.clientY, active: true };
+  };
+  const onDesignSwipeEnd = (e) => {
+    if (!designSwipeRef.current.active) return;
+    designSwipeRef.current.active = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - designSwipeRef.current.x;
+    const dy = t.clientY - designSwipeRef.current.y;
+    if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      cycleBallDesign(dx < 0 ? 1 : -1);
+    }
+  };
   const lastTapRef = useRef({});
   const dirtyRef = useRef(false);
   const stateRef = useRef(state);
@@ -2443,7 +2468,7 @@ function MatchScreen({ setupInfo, onExit }) {
                 ))}
               </div>
               <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.7, textAlign: "center", marginBottom: 8 }}>
-                選んだ内容はこの端末に保存されます
+                選んだ内容はこの端末に保存されます。球の左右の余白を左右にスワイプしても切り替えられます
               </div>
             </div>
 
@@ -2553,7 +2578,10 @@ function MatchScreen({ setupInfo, onExit }) {
         <Zone label={pl[0].name} team={rival && teamNames ? teamNames[0] : null} side="up" color={C.blue} balls={col("p1")} money={ruleset.money} palette={palette} sub={phase === "done" && winnerLoc === "p1"} pressed={pressed} onPress={onPress} onGesture={onGesture} />
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0" }}>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word" }}>
+          <div
+            onTouchStart={onDesignSwipeStart}
+            onTouchEnd={onDesignSwipeEnd}
+            style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" }}>
             {matchWinner == null && phase === "play" && <>↑スワイプで<br />{pl[0].name}</>}
           </div>
           <div style={{
@@ -2566,7 +2594,10 @@ function MatchScreen({ setupInfo, onExit }) {
               return <Ball key={b.n} b={b} big size={ruleset.ballCount === 10 ? 44 : undefined} money={ruleset.money} palette={palette} pressed={pressed === b.n} style={{ opacity: moved ? 0.2 : 1 }} onPress={onPress} onGesture={onGesture} />;
             })}
           </div>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word" }}>
+          <div
+            onTouchStart={onDesignSwipeStart}
+            onTouchEnd={onDesignSwipeEnd}
+            style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word", touchAction: "pan-y" }}>
             {matchWinner == null && phase === "play" && <>↓スワイプで<br />{pl[1].name}<br /><span style={{ fontSize: 11 }}>2回タップで無効球</span></>}
           </div>
         </div>
