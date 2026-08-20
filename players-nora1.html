@@ -96,8 +96,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.024";
-const BUILD_TIME = "2026-08-20 セットマッチ画面：スコアを「1/0」のような分数表示ではなく単独の数字にし、「Race to ◯」を別行で表示するよう修正";
+const APP_VERSION = "1.025";
+const BUILD_TIME = "2026-08-20 セットマッチ画面：「あと◯」バッジを非表示に（Race to表示と重複するため）";
 const C = {
     bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
     blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -2371,7 +2371,7 @@ function MatchScreen({ setupInfo, onExit }) {
                 ruleset.unit === "rack" && React.createElement("div", { style: { fontSize: 13, fontWeight: 700, opacity: 0.85, marginTop: -2, marginBottom: 2 } },
                     "Race to ",
                     pl[i].raceTo),
-                hi.txt && React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" } }, hi.txt),
+                ruleset.unit !== "rack" && hi.txt && React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" } }, hi.txt),
                 tappable && React.createElement("div", { style: { fontSize: 11, opacity: 0.85, marginTop: 4 } }, "\u30BF\u30C3\u30D7\u3067+1\u30E9\u30C3\u30AF"),
                 React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && (React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF"))) : brk === i && (React.createElement("button", { onClick: swapBreak, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF")))));
         })),
