@@ -96,8 +96,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.025";
-const BUILD_TIME = "2026-08-20 セットマッチ画面：「あと◯」バッジを非表示に（Race to表示と重複するため）";
+const APP_VERSION = "1.026";
+const BUILD_TIME = "2026-08-20 ひとことバナーが長い時に頭が切れて見える不具合を修正。セットマッチのラック履歴：見出しを「ラックの履歴」に、古い順（R1→R2…）に並べ、スコアの代わりに時刻を表示";
+
 const C = {
     bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
     blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -937,7 +938,9 @@ function BannerLine({ style, boxed }) {
     const h = boxed ? 50 : 26;
     const box = {
         height: "100%", boxSizing: "border-box",
-        display: "flex", alignItems: "center", justifyContent: "center",
+        display: "flex", alignItems: "center",
+        // 収まる時は中央寄せ、はみ出す時は左端から（＝頭から）見せて、そこから右へゆっくり流す
+        justifyContent: shift > 0 ? "flex-start" : "center",
         overflow: "hidden",
         opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
         ...(boxed ? {
@@ -2026,7 +2029,7 @@ function MatchScreen({ setupInfo, onExit }) {
     const finish = (nb, w) => {
         pushUndo();
         const add = ruleset.calcAdd(nb, w);
-        const entry = { rack, w, add, brk, hill: hillHill,
+        const entry = { rack, w, add, brk, hill: hillHill, at: Date.now(),
             winnerBalls: nb.filter((x) => x.loc === (w === 0 ? "p1" : "p2") && !x.dead).length,
             loserPts: nb.filter((x) => x.loc === (w === 0 ? "p2" : "p1") && !x.dead).length };
         saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
@@ -2095,7 +2098,7 @@ function MatchScreen({ setupInfo, onExit }) {
         saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
         const add = [0, 0];
         add[w] = 1;
-        applyLocal((s) => ({ ...s, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], rack: s.rack + 1, brk: ruleset.nextBrk({ w }, s.brk), hist: [...s.hist, { rack: s.rack, w, add, brk: s.brk, hill: false }] }));
+        applyLocal((s) => ({ ...s, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], rack: s.rack + 1, brk: ruleset.nextBrk({ w }, s.brk), hist: [...s.hist, { rack: s.rack, w, add, brk: s.brk, hill: false, at: Date.now() }] }));
     };
     const rematch = () => {
         pushUndo();
@@ -2447,21 +2450,23 @@ function MatchScreen({ setupInfo, onExit }) {
             React.createElement(Zone, { label: pl[1].name, team: rival && teamNames ? teamNames[1] : null, side: "down", color: C.red, balls: col("p2"), money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === "p2", pressed: pressed, selectedBall: selectedBall, highlight: phase === "play" && highlightDown, onPress: onPress, onGesture: onGesture, onDrag: onDrag, onZoneTap: () => commitSelectedTo("down") })),
         histRows.length > 0 && (React.createElement("div", { style: { marginTop: 10 } },
             React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, marginBottom: 5 } },
-                "\u30E9\u30C3\u30AF\u6BCE\u306E\u30B9\u30B3\u30A2\uFF08\u5C65\u6B74 ",
+                ruleset.unit === "rack" ? "\u30E9\u30C3\u30AF\u306E\u5C65\u6B74\uFF08" : "\u30E9\u30C3\u30AF\u6BCE\u306E\u30B9\u30B3\u30A2\uFF08\u5C65\u6B74 ",
                 histRows.length,
                 "\uFF09"),
-            histRows.slice().reverse().map((h, k) => (React.createElement("div", { key: k, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 } },
+            (ruleset.unit === "rack" ? histRows : histRows.slice().reverse()).map((h, k) => (React.createElement("div", { key: k, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 } },
                 React.createElement("span", { style: { fontSize: 13.5, color: C.sub } },
                     "\u7B2C",
                     h.rack,
                     "R\u3000",
                     React.createElement("b", { style: { color: PC[h.w] } }, pl[h.w].name),
                     h.hill ? " ⚑" : ""),
-                React.createElement("span", { style: { fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 } },
-                    React.createElement("b", { style: { fontSize: 16.5 } },
-                        React.createElement("span", { style: { color: C.blue } }, h.add[0]),
-                        React.createElement("span", { style: { color: C.sub, margin: "0 2px" } }, "\u2013"),
-                        React.createElement("span", { style: { color: C.red } }, h.add[1])))))))),
+                ruleset.unit === "rack"
+                    ? React.createElement("span", { style: { fontSize: 12.5, color: C.sub, fontVariantNumeric: "tabular-nums" } }, h.at ? fmtClock(h.at) : "")
+                    : React.createElement("span", { style: { fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "baseline", gap: 6 } },
+                        React.createElement("b", { style: { fontSize: 16.5 } },
+                            React.createElement("span", { style: { color: C.blue } }, h.add[0]),
+                            React.createElement("span", { style: { color: C.sub, margin: "0 2px" } }, "\u2013"),
+                            React.createElement("span", { style: { color: C.red } }, h.add[1])))))))),
         React.createElement(BannerLine, { boxed: true, style: { marginTop: 16 } })));
 }
 function Zone({ label, team, side, color, balls, money, palette, sub, pressed, selectedBall, highlight, onPress, onGesture, onDrag, onZoneTap }) {
