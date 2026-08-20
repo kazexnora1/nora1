@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.220";
-const BUILD_TIME = "2026-08-20 JPA（スキルハンデ）に対応。目標点の計算をraceFor()に一本化し、参加予定リストにSL欄を追加";
+const APP_VERSION = "1.221";
+const BUILD_TIME = "2026-08-20 セットマッチ（クラスハンデ）に対応。設定タブでクラスごとの先取数を編集可能に";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -434,8 +434,13 @@ function azukiTargetForRound(r, total) {
 function bracketWinnerInfo(m) {
   const w = matchWinnerIndex(m);
   if (w == null) return null;
-  // 次の回戦の目標点を組むのに、ファーゴレートとスキルレベルの両方を持ち上げる
-  return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0), sk: w === 0 ? (m.sk1 || 0) : (m.sk2 || 0) };
+  // 次の回戦の目標点を組むのに、ファーゴレート・スキルレベル・クラスをまとめて持ち上げる
+  return {
+    name: m.names[w],
+    r: w === 0 ? (m.r1 || 0) : (m.r2 || 0),
+    sk: w === 0 ? (m.sk1 || 0) : (m.sk2 || 0),
+    cls: w === 0 ? (m.cls1 || "") : (m.cls2 || ""),
+  };
 }
 /* ========= 決勝トーナメントの自動勝ち上がり =========
    準決勝などの試合が終わるたびに動く。片方が先に終わったら、まずその勝者だけを次の枠に入れる
@@ -479,11 +484,13 @@ function BracketAutoAdvance() {
           next[cur.id + "/names/0"] = winA.name;
           next[cur.id + "/r1"] = winA.r;
           next[cur.id + "/sk1"] = winA.sk;
+          next[cur.id + "/cls1"] = winA.cls;
         }
         if (winB && cur.names[1] !== winB.name) {
           next[cur.id + "/names/1"] = winB.name;
           next[cur.id + "/r2"] = winB.r;
           next[cur.id + "/sk2"] = winB.sk;
+          next[cur.id + "/cls2"] = winB.cls;
         }
         if (winA && winB) {
           // 両方の勝者が決まった。目標点を計算して、呼び出し待ちの状態にする
@@ -755,7 +762,7 @@ const GAMES = [
   { id: "8",  label: "8ボール",  balls: 8,  money: 8,  ready: false, sub: "手玉以外を取り切って8番。ラック単位" },
 ];
 const SCORINGS = [
-  { id: "set",       label: "セットマッチ（クラスハンデ）", unit: "rack",  ready: false, sub: "1ラック＝1点。クラスごとの先取数（A5/B4/C3）" },
+  { id: "set",       label: "セットマッチ（クラスハンデ）", unit: "rack",  ready: true,  sub: "1ラック＝1点。クラスごとの先取数（A5/B4/C3）" },
   { id: "jpa_skill", label: "JPA（スキルハンデ）",         unit: "point", ready: true,  sub: "球1点・ゲームボール2点。スキルごとの目標点" },
   { id: "jpa_fixed", label: "JPA（目標点固定）",           unit: "point", ready: true,  sub: "球1点・ゲームボール2点。回戦ごとに全員同じ目標点" },
   { id: "jcl",       label: "JCL（レートハンデ）",         unit: "point", ready: true,  sub: "球1点・落とした側は14点。ファーゴレートで目標点" },
@@ -783,6 +790,25 @@ function normSkill(v) {
 const skillTarget = (v) => JPA_SKILL_TARGETS[normSkill(v)] || 0;
 const skOf = (p) => normSkill(p && p.sk);
 
+/* ========= セットマッチ（クラスハンデ）の先取数 =========
+   何ラック先取すれば勝ちかは、自分のクラスだけで決まる（相手が誰でも変わらない）。
+   お店・大会によって数字が違うので、JPAスキルの表とは違いコードには固定せず、
+   設定タブから編集できる値（端末に保存）を使う。未編集ならNORAの実運用値を初期値にする */
+const CLASS_LEVELS = ["S", "A", "B", "C"];
+const DEFAULT_CLASS_TARGETS = { S: 6, A: 5, B: 4, C: 3 };
+function classTargets() {
+  const t = loadSettings().classTargets;
+  return t && typeof t === "object" ? { ...DEFAULT_CLASS_TARGETS, ...t } : DEFAULT_CLASS_TARGETS;
+}
+function clsOf(p) {
+  const c = ((p && p.cls) || "").trim().toUpperCase();
+  return CLASS_LEVELS.includes(c) ? c : "";
+}
+function classTarget(p) {
+  const c = clsOf(p);
+  return c ? (classTargets()[c] || 0) : 0;
+}
+
 /* 試合レコードの得点方式。v1.220より前に作られた試合には scoring が無いので format から読み替える */
 function matchScoring(m) {
   const sc = m && m.scoring;
@@ -802,6 +828,7 @@ function raceFor(o) {
   const scoring = opt.scoring || "jcl";
   const p1 = opt.p1 || {}, p2 = opt.p2 || {};
   if (scoring === "jpa_skill") return { rt1: skillTarget(p1.sk), rt2: skillTarget(p2.sk) };
+  if (scoring === "set") return { rt1: classTarget(p1), rt2: classTarget(p2) };
   if (scoring === "jpa_fixed") {
     const t = parseInt(opt.fixedTarget, 10) || 0;
     return { rt1: t, rt2: t };
@@ -814,7 +841,21 @@ function raceFor(o) {
 function rosterHandiLabel(p, scoring) {
   if (!p) return "";
   if (scoring === "jpa_skill") return skOf(p) ? `SL${skOf(p)}` : "SL未設定";
+  if (scoring === "set") return clsOf(p) ? `クラス${clsOf(p)}` : "クラス未設定";
   if (scoring === "jcl") return p.r ? `Fargo ${p.r}` : "";
+  return "";
+}
+
+/* ========= 目標点（先取数）が未設定の人を名指しするための共通ヘルパー =========
+   JPAスキルハンデ＝SL未設定、セットマッチ＝クラス未設定の人を拾う。それ以外の方式では常に空 */
+function missingHandicapPlayers(scoring, list) {
+  if (scoring === "jpa_skill") return (list || []).filter((p) => p && p.name && !skOf(p)).map((p) => p.name);
+  if (scoring === "set") return (list || []).filter((p) => p && p.name && !clsOf(p)).map((p) => p.name);
+  return [];
+}
+function handicapFieldLabel(scoring) {
+  if (scoring === "jpa_skill") return "SL";
+  if (scoring === "set") return "クラス";
   return "";
 }
 
@@ -1103,11 +1144,11 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
   const [err, setErr] = useState(null);
 
   const curSpec = loadSpec();
-  const useSkill = curSpec.scoring === "jpa_skill";
+  const missingLabel = handicapFieldLabel(curSpec.scoring);
   const p1 = roster[i1], p2 = roster[i2];
   const R1 = p1 ? parseInt(p1.r, 10) : 0, R2 = p2 ? parseInt(p2.r, 10) : 0;
   const validPlayers = p1 && p2 && i1 !== i2;
-  // 目標点の決め方は得点方式まかせ（ファーゴ計算／固定点／スキル表）。0が返ったら「未設定」の案内を出す
+  // 目標点の決め方は得点方式まかせ（ファーゴ計算／固定点／スキル表／クラス表）。0が返ったら「未設定」の案内を出す
   const race0 = validPlayers
     ? raceFor({ scoring: curSpec.scoring, p1, p2, lenPct, fixedTarget: parseInt(loadSettings().azukiPrelim, 10) || 12 })
     : null;
@@ -1180,7 +1221,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
         <div style={{ textAlign: "center", fontSize: 15 }}>
           目標点：<b style={{ color: C.blue }}>{res.rt1}</b> 対 <b style={{ color: C.red }}>{res.rt2}</b>
         </div>
-      ) : validPlayers && <Notice>{useSkill ? "スキルレベル未設定の選手がいるため、目標点は0で作成されます" : "ファーゴレート未設定の選手がいるため、目標点は0で作成されます"}</Notice>}
+      ) : validPlayers && <Notice>{missingLabel ? `${missingLabel}未設定の選手がいるため、目標点は0で作成されます` : "ファーゴレート未設定の選手がいるため、目標点は0で作成されます"}</Notice>}
       {err && <div style={{ fontSize: 13, color: C.minus, fontWeight: 700, textAlign: "center" }}>{err}</div>}
       <button onClick={submit} disabled={busy || !validPlayers} style={{ ...menuBtn, background: C.blue, color: "#fff", borderColor: C.blue }}>
         {busy ? "作成中…" : existing ? "上書きして作成する" : "この内容で作成する"}
@@ -1282,13 +1323,17 @@ function TimelineSlotCard({
       const subP = roster.find((r) => r.name === toName);
       const subFargo = parseInt(subP && subP.r, 10) || 0;
       const subSkill = skOf(subP);
+      const subCls = clsOf(subP);
       const usesFargo = affected.some(([, mm]) => matchScoring(mm) === "jcl");
       const usesSkill = affected.some(([, mm]) => matchScoring(mm) === "jpa_skill");
+      const usesClass = affected.some(([, mm]) => matchScoring(mm) === "set");
       const fargoWarn = usesFargo && !subFargo
         ? `\n※「${toName}」さんはファーゴレートが未設定のため、目標点が0（未算出）になります。あとで参加予定者リストでレートを入れてから、もう一度代打を出すか手動で目標点を調整してください。`
         : usesSkill && !subSkill
           ? `\n※「${toName}」さんはスキルレベルが未設定のため、目標点が0（未算出）になります。あとで参加予定者リストでSLを入れてから、もう一度代打を出してください。`
-          : "";
+          : usesClass && !subCls
+            ? `\n※「${toName}」さんはクラスが未設定のため、目標点が0（未算出）になります。あとで参加予定者リストでクラスを入れてから、もう一度代打を出してください。`
+            : "";
       if (!window.confirm(`「${fromName}」を「${toName}」に、まだ終わっていない${affected.length}試合すべてで入れ替えます。\n進行中の試合はスコアをそのまま引き継ぎます。ファーゴハンデを使うフォーマットの試合は、目標点も「${toName}」さんのレートで組み直します。${fargoWarn}\n\nよろしいですか？`)) {
         setSaving(false); return;
       }
@@ -1319,6 +1364,14 @@ function TimelineSlotCard({
           sides.forEach((i) => {
             next[id + "/sk" + (i + 1)] = subSkill;
             rt[i] = skillTarget(subSkill);
+          });
+          next[id + "/raceTo"] = rt;
+        } else if (msc === "set") {
+          // セットマッチ：先取数は各自のクラスだけで決まるので、入れ替わった側の先取数だけを差し替える
+          const rt = [...(mm.raceTo || [0, 0])];
+          sides.forEach((i) => {
+            next[id + "/cls" + (i + 1)] = subCls;
+            rt[i] = classTarget({ cls: subCls });
           });
           next[id + "/raceTo"] = rt;
         }
@@ -2549,7 +2602,12 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
   const winnerInfo = (m) => {
     const w = matchWinnerIndex(m);
     if (w == null) return null;
-    return { name: m.names[w], r: w === 0 ? (m.r1 || 0) : (m.r2 || 0), sk: w === 0 ? (m.sk1 || 0) : (m.sk2 || 0) };
+    return {
+      name: m.names[w],
+      r: w === 0 ? (m.r1 || 0) : (m.r2 || 0),
+      sk: w === 0 ? (m.sk1 || 0) : (m.sk2 || 0),
+      cls: w === 0 ? (m.cls1 || "") : (m.cls2 || ""),
+    };
   };
 
   // 4人の時はT1・T2だけ使う。空いている（未終了の対戦を持たない）卓を優先し、
@@ -2615,11 +2673,11 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             const p1 = players[i * 2], p2 = players[i * 2 + 1];
             const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
             const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
-            next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2) });
+            next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2) });
           } else {
             const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
             next[id] = mkMatch({
-              ...common, pending: true, raceTo: [0, 0], r1: 0, r2: 0, sk1: 0, sk2: 0,
+              ...common, pending: true, raceTo: [0, 0], r1: 0, r2: 0, sk1: 0, sk2: 0, cls1: "", cls2: "",
               names: [`${prevLabel}${CIRCLE[i * 2]}の勝者`, `${prevLabel}${CIRCLE[i * 2 + 1]}の勝者`],
             });
           }
@@ -2676,6 +2734,8 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
           next[ph.id + "/r2"] = p2.r;
           next[ph.id + "/sk1"] = p1.sk || 0;
           next[ph.id + "/sk2"] = p2.sk || 0;
+          next[ph.id + "/cls1"] = p1.cls || "";
+          next[ph.id + "/cls2"] = p2.cls || "";
           next[ph.id + "/pending"] = null;
           next[ph.id + "/updatedAt"] = now;
           next[ph.id + "/version"] = (ph.version || 1) + 1;
@@ -2686,7 +2746,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             balls: mkMatchBalls(),
             lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
             names: [p1.name, p2.name], table: nextRound === totalRounds ? 1 : tables[i],
-            r1: p1.r, r2: p2.r, sk1: p1.sk || 0, sk2: p2.sk || 0, lenPct: pct, matchMinutes: plan.mins,
+            r1: p1.r, r2: p2.r, sk1: p1.sk || 0, sk2: p2.sk || 0, cls1: p1.cls || "", cls2: p2.cls || "", lenPct: pct, matchMinutes: plan.mins,
             createdAt: now + i, updatedAt: now,
             bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
             ...ruleFields(),
@@ -2996,6 +3056,34 @@ function SectionLabel({ children }) {
 const HELP = { fontSize: 14, color: "#3F4A55", lineHeight: 1.8 };
 
 /* 骨組み設定の中の「① ② ③」の見出し。選ぶ順番が一目で分かるようにする */
+/* セットマッチ（クラスハンデ）：クラスごとの先取数（ラック数）を編集する。
+   店・大会ごとに数字が違うので端末に保存する（他の詳細設定と同じ扱い）。
+   ここで変えても、すでに組んである試合の先取数は変わらない（次に組む試合から反映） */
+function ClassTargetsEditor() {
+  const [targets, setTargets] = useState(() => classTargets());
+  const update = (cls, v) => {
+    const n = Math.max(1, Math.min(30, parseInt(v, 10) || 0));
+    const next = { ...targets, [cls]: n };
+    setTargets(next);
+    saveSettings({ classTargets: next });
+  };
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 12px", marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginBottom: 7 }}>クラスごとの先取数（何ラック先取で勝ちか）</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {CLASS_LEVELS.map((c) => (
+          <div key={c} style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 4, fontWeight: 700 }}>クラス{c}</div>
+            <input inputMode="numeric" value={targets[c] ?? ""} onChange={(e) => update(c, e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+              style={{ width: "100%", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 15, fontWeight: 800, padding: "8px 0", textAlign: "center", outline: "none", fontFamily: FONT, boxSizing: "border-box" }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ ...HELP, marginTop: 8 }}>参加予定リストで選手にクラスを設定すると、この数字が目標（先取数）になります。</div>
+    </div>
+  );
+}
+
 /* 詳細設定の1軸ぶん（種目／得点方式／ブレイク順）の選択リスト。
    ready:false のものは、選手アプリ・観戦ページがまだ対応していないので「準備中」として押せない */
 function AxisPicker({ title, items, value, onPick }) {
@@ -3252,6 +3340,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
                   <AxisPicker title="種目" items={GAMES} value={spec.game} onPick={(v) => updateSpec({ game: v })} />
                   <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
                   <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
+                  {spec.scoring === "set" && <ClassTargetsEditor />}
                   <div style={{ ...HELP, marginTop: 2, marginBottom: 12 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
 
                   {/* いまの詳細設定に名前をつけて、上のテンプレート一覧に並べる */}
@@ -3761,7 +3850,7 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
     if (dupNames.length && !window.confirm(`既に選手一覧に同名の人がいます：${dupNames.join("・")}\nそれでも追加しますか？（重複登録されます）`)) return;
     setRoster((rs) => [
       ...rs,
-      ...picks.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "", sk: normSkill(p.jpa) ? String(normSkill(p.jpa)) : "" })),
+      ...picks.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "", sk: normSkill(p.jpa) ? String(normSkill(p.jpa)) : "", cls: clsOf(p) })),
     ]);
     persist();
     onClose();
@@ -3810,7 +3899,8 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
 
 function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format, scoring }) {
   const useSkill = scoring === "jpa_skill"; // スキルハンデの時はファーゴ欄の代わりにSL欄を出す
-  const missingSkill = useSkill ? roster.filter((p) => p.name && !skOf(p)).map((p) => p.name) : [];
+  const useClass = scoring === "set"; // セットマッチの時はファーゴ欄の代わりにクラス欄を出す
+  const missingHandicap = missingHandicapPlayers(scoring, roster);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -3845,7 +3935,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
   };
   const add = () => {
     if (roster.length >= 60) return;
-    setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "", sk: "" }]);
+    setRoster((rs) => [...rs, { id: nid(), name: `選手${rs.length + 1}`, r: "", sk: "", cls: "" }]);
     persist();
   };
   const restoreBackup = () => {
@@ -3875,7 +3965,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
     setRegularBusy(true);
     setRoster((rs) => [
       ...rs,
-      ...pendingRegulars.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "", sk: normSkill(p.jpa) ? String(normSkill(p.jpa)) : "" })),
+      ...pendingRegulars.map((p) => ({ id: nid(), name: (p.name || "").slice(0, 12), r: p.fargo ? String(p.fargo) : "", sk: normSkill(p.jpa) ? String(normSkill(p.jpa)) : "", cls: clsOf(p) })),
     ]);
     persist();
     setRegularMsg(`常連${pendingRegulars.length}人を追加しました`);
@@ -3885,7 +3975,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
   return (
     <div style={{ color: C.ink }}>
       <div style={{ textAlign: "center", marginBottom: 10 }}>
-        <div style={{ fontSize: 12, color: C.sub }}>{saving ? "保存中…" : useSkill ? "名前とスキルレベル（共有）" : "名前とファーゴレート（共有）"}</div>
+        <div style={{ fontSize: 12, color: C.sub }}>{saving ? "保存中…" : useSkill ? "名前とスキルレベル（共有）" : useClass ? "名前とクラス（共有）" : "名前とファーゴレート（共有）"}</div>
         <button onClick={() => Promise.resolve(onRefresh()).catch(() => {})} style={{ marginTop: 6, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 12, fontWeight: 700, padding: "6px 10px", cursor: "pointer", fontFamily: FONT }}>🔄 更新</button>
       </div>
 
@@ -3899,8 +3989,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
           <button onClick={restoreBackup} style={{ width: "100%", background: C.win, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>↺ バックアップから復元する</button>
         </div>
       )}
-      {useSkill && missingSkill.length > 0 && (
-        <Notice>スキルハンデは各自のSLで目標点が決まります。未設定：{missingSkill.join("・")}</Notice>
+      {(useSkill || useClass) && missingHandicap.length > 0 && (
+        <Notice>{useSkill ? "スキルハンデは各自のSLで目標点が決まります。" : "セットマッチは各自のクラスで先取数が決まります。"}未設定：{missingHandicap.join("・")}</Notice>
       )}
       {roster.map((p) => (
         <div key={p.id} style={{ display: "flex", gap: 5, marginBottom: 6, alignItems: "center" }}>
@@ -3911,6 +4001,12 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
               style={{ width: 62, flexShrink: 0, background: skOf(p) ? "#fff" : C.hillBg, border: `1px solid ${skOf(p) ? C.line : C.hill}`, borderRadius: 9, color: C.ink, fontSize: 12.5, fontWeight: 700, padding: "8px 0", textAlign: "center", outline: "none", fontFamily: FONT }}>
               <option value="">SL</option>
               {SKILL_LEVELS.map((n) => <option key={n} value={n}>{`SL${n}`}</option>)}
+            </select>
+          ) : useClass ? (
+            <select value={clsOf(p) || ""} onChange={(e) => update(p.id, "cls", e.target.value)} title="クラス（先取数のハンデ）"
+              style={{ width: 62, flexShrink: 0, background: clsOf(p) ? "#fff" : C.hillBg, border: `1px solid ${clsOf(p) ? C.line : C.hill}`, borderRadius: 9, color: C.ink, fontSize: 12.5, fontWeight: 700, padding: "8px 0", textAlign: "center", outline: "none", fontFamily: FONT }}>
+              <option value="">クラス</option>
+              {CLASS_LEVELS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           ) : format !== "azuki" ? (
             <input inputMode="numeric" value={p.r} onChange={(e) => update(p.id, "r", e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
@@ -4566,7 +4662,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
       const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct, fixedTarget: azukiPrelim });
       const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
-      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, sk1: skOf(p1), sk2: skOf(p2), rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
+      return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
     });
   }, [result, todayRoster, lenPct, per100Min, curSpec.scoring, azukiPrelim]);
 
@@ -4594,7 +4690,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           balls: mkMatchBalls(),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null,
-          r1: m.r1 || 0, r2: m.r2 || 0, sk1: m.sk1 || 0, sk2: m.sk2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
+          r1: m.r1 || 0, r2: m.r2 || 0, sk1: m.sk1 || 0, sk2: m.sk2 || 0, cls1: m.cls1 || "", cls2: m.cls2 || "", lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: now, ...ruleFields(),
           ...(rivalTeamA ? { rival: true, teamNames: [rivalNameA || "Aチーム", rivalNameB || "Bチーム"] } : {}),
         };
@@ -4619,6 +4715,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
 
   const noRatings = rows && rows.some((m) => !m.rt1 && !m.rt2);
   const useSkill = curSpec.scoring === "jpa_skill";
+  // SL・クラスが無いと目標点が出ないので、入れ忘れている人を名指しで出す
+  const missingHandicap = missingHandicapPlayers(curSpec.scoring, todayRoster);
 
   // 選んだ予選方式に応じて、その方式だけに必要な設定（グループ数・チーム分けなど）を1ステップぶん挟む。
   // 必要ない方式では番号を詰めて、見出しが「1→2→3→4」と素直につながるようにする
@@ -4780,6 +4878,9 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
             style={{ display: "inline-block", fontSize: 11.5, color: C.blue, fontWeight: 700, marginBottom: 6, textDecoration: "underline" }}>
             🔗 メンバーDBを編集する
           </a>
+          {missingHandicap.length > 0 && (
+            <Notice>{handicapFieldLabel(curSpec.scoring)}未設定：{missingHandicap.join("・")}　目標点が0になります。下の欄を選んでください。</Notice>
+          )}
           <MembersTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError}
             onRemoveFromToday={removeFromToday} format={fmt} scoring={curSpec.scoring} />
         </div>
@@ -4788,6 +4889,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       <StepHead n={stepNo.score} title={curSpec.scoring === "jpa_fixed" ? "目標点" : "試合の長さ"}
         sub={curSpec.scoring === "jpa_fixed" ? "ファーゴハンデを使わないので、回戦ごとに目標点を決めます"
           : useSkill ? "目標点は各自のスキルレベルから決まります。ここでは1試合の長さ（持ち時間）だけを決めます"
+          : curSpec.scoring === "set" ? "先取数は各自のクラスから決まります。ここでは1試合のだいたいの長さ（持ち時間）だけを決めます"
           : "ファーゴハンデの目標点は、この長さから自動で計算されます"} />
 
       {curSpec.scoring !== "jpa_fixed" ? (
@@ -4906,7 +5008,13 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
             </div>
           )}
 
-          {noRatings && <Notice>{useSkill ? "スキルレベル未設定の選手がいるため、目標点が0のカードがあります。参加予定リストのSL欄を埋めてから組み直してください。" : "ファーゴレート未設定の選手がいるため、目標点が0のカードがあります。メンバータブで登録しておくと目標点も入ります。"}</Notice>}
+          {noRatings && (
+            <Notice>
+              {handicapFieldLabel(curSpec.scoring)
+                ? `${handicapFieldLabel(curSpec.scoring)}未設定の選手がいるため、目標点が0のカードがあります。参加予定リストの${handicapFieldLabel(curSpec.scoring)}欄を埋めてから組み直してください。`
+                : "ファーゴレート未設定の選手がいるため、目標点が0のカードがあります。メンバータブで登録しておくと目標点も入ります。"}
+            </Notice>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
             <div />
@@ -4943,12 +5051,14 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
    「組めることを優先」なので、必要なら再戦も許容して必ず組み切る */
 function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, lenPct, per100Min, azukiPrelim, gamesDefault }) {
   const useSkill = scoring === "jpa_skill";
+  const useClass = scoring === "set";
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState("existing"); // "existing"=参加予定者から選ぶ／"new"=新しい人を追加
   const [pickId, setPickId] = useState("");
   const [newName, setNewName] = useState("");
   const [newFargo, setNewFargo] = useState("");
   const [newSkill, setNewSkill] = useState("");
+  const [newClass, setNewClass] = useState("");
   const [targetGames, setTargetGames] = useState(gamesDefault || 4);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -4981,11 +5091,11 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
 
   const run = () => {
     setMsg(null);
-    let addName = "", addFargo = "", addSk = "";
+    let addName = "", addFargo = "", addSk = "", addCls = "";
     if (mode === "existing") {
       const p = roster.find((r) => String(r.id) === String(pickId));
       if (!p) { setResult({ error: "追加する人を選んでください" }); return; }
-      addName = p.name; addFargo = p.r || ""; addSk = p.sk || "";
+      addName = p.name; addFargo = p.r || ""; addSk = p.sk || ""; addCls = p.cls || "";
     } else {
       addName = newName.trim();
       if (!addName) { setResult({ error: "名前を入力してください" }); return; }
@@ -4994,6 +5104,7 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
       }
       addFargo = newFargo;
       addSk = newSkill;
+      addCls = newClass;
     }
     const T = Math.max(1, parseInt(targetGames, 10) || 1);
     // まだ目標試合数に届いていない人だけを対象にする（既に届いている人は卓割りの分母から外し、組みやすくする）
@@ -5024,18 +5135,18 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
       const base = Date.now();
       const board = gen.board.map((m, i) => {
         const n1 = names[m.a - 1], n2 = names[m.b - 1];
-        const p1 = roster.find((r) => r.name === n1) || (n1 === addName ? { name: addName, r: addFargo, sk: addSk } : null);
-        const p2 = roster.find((r) => r.name === n2) || (n2 === addName ? { name: addName, r: addFargo, sk: addSk } : null);
+        const p1 = roster.find((r) => r.name === n1) || (n1 === addName ? { name: addName, r: addFargo, sk: addSk, cls: addCls } : null);
+        const p2 = roster.find((r) => r.name === n2) || (n2 === addName ? { name: addName, r: addFargo, sk: addSk, cls: addCls } : null);
         const R1 = parseInt(p1 && p1.r, 10), R2 = parseInt(p2 && p2.r, 10);
         const race = raceFor({ scoring, p1, p2, lenPct, fixedTarget: azukiPrelim });
         const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
         return {
           table: m.table + 1, isRematch: historyPairs.has(m.a * 32 + m.b),
           matchId: randomMatchId(), createdAt: base + i * 1000,
-          n1, n2, r1: R1 || 0, r2: R2 || 0, sk1: skOf(p1), sk2: skOf(p2), rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins,
+          n1, n2, r1: R1 || 0, r2: R2 || 0, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins,
         };
       });
-      setResult({ board, addName, addFargo, addSk, usedRelaxed: gen.usedRelaxed, usedIgnoreDedup: gen.usedIgnoreDedup });
+      setResult({ board, addName, addFargo, addSk, addCls, usedRelaxed: gen.usedRelaxed, usedIgnoreDedup: gen.usedIgnoreDedup });
       setBusy(false);
     }, 20);
   };
@@ -5054,13 +5165,13 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
           balls: mkMatchBalls(),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
           names: [m.n1, m.n2], table: m.table, slot: null,
-          r1: m.r1 || 0, r2: m.r2 || 0, sk1: m.sk1 || 0, sk2: m.sk2 || 0, lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
+          r1: m.r1 || 0, r2: m.r2 || 0, sk1: m.sk1 || 0, sk2: m.sk2 || 0, cls1: m.cls1 || "", cls2: m.cls2 || "", lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: Date.now(), ...ruleFields(),
         };
       });
       await dbUpdate("matches", upd);
       if (mode === "new" && !roster.some((r) => r.name === result.addName)) {
-        const nextRoster = [...roster, { id: nid(), name: result.addName, r: result.addFargo || "", sk: result.addSk || "" }];
+        const nextRoster = [...roster, { id: nid(), name: result.addName, r: result.addFargo || "", sk: result.addSk || "", cls: result.addCls || "" }];
         setRoster(nextRoster);
         await saveRoster(nextRoster);
       }
@@ -5134,6 +5245,14 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
                       <select value={newSkill} onChange={(e) => setNewSkill(e.target.value)} style={selectStyle}>
                         <option value="">未設定（目標点0で作成されます）</option>
                         {SKILL_LEVELS.map((n) => <option key={n} value={n}>{`SL${n}（目標点 ${JPA_SKILL_TARGETS[n]}）`}</option>)}
+                      </select>
+                    </Field>
+                  )}
+                  {useClass && (
+                    <Field label="クラス">
+                      <select value={newClass} onChange={(e) => setNewClass(e.target.value)} style={selectStyle}>
+                        <option value="">未設定（目標点0で作成されます）</option>
+                        {CLASS_LEVELS.map((c) => <option key={c} value={c}>{`クラス${c}（先取 ${classTargets()[c] || 0}）`}</option>)}
                       </select>
                     </Field>
                   )}
@@ -5270,7 +5389,7 @@ function ScheduleTab({ roster }) {
       balls: mkMatchBalls(),
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
-      r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+      r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
       ...ruleFields(),
     };
     await saveMatch(matchId, state).catch(() => {});
