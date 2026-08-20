@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.222";
-const BUILD_TIME = "2026-08-20 プレイヤータブの成績表：対戦が組まれていない参加予定者が0勝0敗で並んでしまう不具合を修正";
+const APP_VERSION = "1.223";
+const BUILD_TIME = "2026-08-20 ひとことバナーが長い時に頭が切れて見える不具合を修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -5621,7 +5621,9 @@ function BannerLine({ style, boxed }) {
   const h = boxed ? 50 : 26;
   const box = {
     height: "100%", boxSizing: "border-box",
-    display: "flex", alignItems: "center", justifyContent: "center",
+    display: "flex", alignItems: "center",
+    // 収まる時は中央寄せ、はみ出す時は左端から（＝頭から）見せて、そこから右へゆっくり流す
+    justifyContent: shift > 0 ? "flex-start" : "center",
     overflow: "hidden",
     opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
     ...(boxed ? {
