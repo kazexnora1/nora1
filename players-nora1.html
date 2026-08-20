@@ -96,8 +96,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.026";
-const BUILD_TIME = "2026-08-20 ひとことバナーが長い時に頭が切れて見える不具合を修正。セットマッチのラック履歴：見出しを「ラックの履歴」に、古い順（R1→R2…）に並べ、スコアの代わりに時刻を表示";
+const APP_VERSION = "1.027";
+const BUILD_TIME = "2026-08-20 JCLの8ボールに対応：球を1個ずつ追わず、「負けた方の残り球数（0〜7）」を選んで勝者をタップするだけでラックを確定できる専用画面を追加";
+
 
 const C = {
     bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
@@ -210,6 +211,9 @@ function makeRuleset(spec) {
         ballCount: g.balls, // 1ラックで使う球の数
         money: g.money, // ゲームボール（これを落とすとラック確定）
         hillThreshold: sc.hill, // JCLだけ持つ「ヒル」の閾値。null ならヒル概念なし＝「あと◯」表記
+        // JCLの8ボールだけは、毎ショットの球の出入りを追わず、ラック終了時に「勝者は誰か」と「負けた側の残り球数（0〜7）」だけ聞けば
+        // 点数が決まる（勝者=14点固定、負け側＝台上に残った自分の球の数）。球エリアを出さず、この2つの入力だけで済ませる
+        simplified8: spec.game === "8" && spec.scoring === "jcl",
         label: `${g.label}・${sc.label}`,
         calcAdd: (balls, w) => sc.calcAdd(balls, w, g),
         calcLive: (balls, side) => sc.calcLive(balls, side, g),
@@ -1820,6 +1824,7 @@ function MatchScreen({ setupInfo, onExit }) {
     const [selectedBall, setSelectedBall] = useState(null); // タップで選んだ球（スワイプが苦手な人向けの代替操作）
     const [dragDir, setDragDir] = useState(null); // ドラッグ中の向き（ライブ表示用）
     const [undoStack, setUndoStack] = useState([]);
+    const [loserCount, setLoserCount] = useState(0); // JCL8ボール専用：ラック終了時に選ぶ「負けた側の残り球数（0〜7）」
     const [toolsOpen, setToolsOpen] = useState(false); // タイマー設定（延長／降りる）の下シート。一時停止/再開は時間表示を直接タップ
     // 球のデザインセット（見た目の好み、端末ごとに保存）。準備中のものは含めず、実装済みの中だけを巡回する
     const [ballDesign, setBallDesign] = useState(() => loadBallDesign());
@@ -2099,6 +2104,19 @@ function MatchScreen({ setupInfo, onExit }) {
         const add = [0, 0];
         add[w] = 1;
         applyLocal((s) => ({ ...s, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], rack: s.rack + 1, brk: ruleset.nextBrk({ w }, s.brk), hist: [...s.hist, { rack: s.rack, w, add, brk: s.brk, hill: false, at: Date.now() }] }));
+    };
+    // JCLの8ボール専用：球を1個ずつ追わず、「勝者」と「負けた側の残り球数（0〜7）」の2つだけでラックを確定する。
+    // 勝者は14点固定、負け側はそのまま選んだ数（8番を落とした瞬間の台上の残り球＝負け側がまだ落としていない自分の球の数）
+    const recordEightBallRack = (w) => {
+        if (!ruleset.simplified8 || phase !== "play" || matchWinner != null || bothLose)
+            return;
+        pushUndo();
+        saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
+        const add = [0, 0];
+        add[w] = 14;
+        add[1 - w] = Math.max(0, Math.min(7, loserCount));
+        applyLocal((s) => ({ ...s, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], rack: s.rack + 1, brk: ruleset.nextBrk({ w }, s.brk), hist: [...s.hist, { rack: s.rack, w, add, brk: s.brk, hill: false, at: Date.now() }] }));
+        setLoserCount(0);
     };
     const rematch = () => {
         pushUndo();
@@ -2403,6 +2421,23 @@ function MatchScreen({ setupInfo, onExit }) {
             // セットマッチ：球エリアは無く、上のスコアカードをタップしてラックを記録する。取り消しは1本だけ
             React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 6 } },
                 React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 \u30E9\u30C3\u30AF\u3092\u53D6\u308A\u6D88\u3059"))
+        ) : ruleset.simplified8 ? (
+            // JCLの8ボール：球を動かさず「負けた方の残り球数」を選んでから、勝った方をタップして確定する
+            React.createElement("div", { style: { marginBottom: 6 } },
+                React.createElement("div", { style: { fontSize: 12.5, color: C.sub, fontWeight: 700, textAlign: "center", marginBottom: 6 } }, "\u8ca0\u3051\u305f\u65b9\u306e\u6b8b\u308a\u7403\u6570\uff080\uff5e7\uff09"),
+                React.createElement("div", { style: { display: "flex", gap: 4, justifyContent: "center", marginBottom: 8 } },
+                    [0, 1, 2, 3, 4, 5, 6, 7].map((n) => React.createElement("button", { key: n, onClick: () => setLoserCount(n), style: {
+                        width: 30, height: 30, borderRadius: 8, fontFamily: FONT, padding: 0,
+                        border: `1.5px solid ${loserCount === n ? C.ink : C.line}`,
+                        background: loserCount === n ? C.ink : "#fff",
+                        color: loserCount === n ? "#fff" : C.ink,
+                        fontWeight: 800, fontSize: 14, cursor: "pointer",
+                    } }, n))),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
+                    React.createElement("button", { onClick: () => recordEightBallRack(0), style: { ...ctrl, flex: 1, background: C.blue, color: "#fff", border: "none" } }, `${pl[0].name} \u306e\u52dd\u3061`),
+                    React.createElement("button", { onClick: () => recordEightBallRack(1), style: { ...ctrl, flex: 1, background: C.red, color: "#fff", border: "none" } }, `${pl[1].name} \u306e\u52dd\u3061`)),
+                React.createElement("div", { style: { display: "flex", justifyContent: "center" } },
+                    React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 \u30E9\u30C3\u30AF\u3092\u53D6\u308A\u6D88\u3059")))
         ) : (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 } },
 
             phase === "done" && lastResult ? (React.createElement("button", { onClick: correct, style: { ...ctrl, flex: 1 } }, "\u25C0 \u8A02\u6B63")) : (React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 1\u624B\u623B\u3059")),
@@ -2414,7 +2449,7 @@ function MatchScreen({ setupInfo, onExit }) {
                 React.createElement("span", { style: { color: C.sub, margin: "0 4px" } }, "-"),
                 React.createElement("span", { style: { color: C.red } }, live[1]))) : null),
             phase === "done" && lastResult ? (React.createElement("button", { onClick: nextRack, style: { ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" } }, "\u6B21\u306E\u30E9\u30C3\u30AF \u25B6")) : (React.createElement("button", { onClick: undoRack, disabled: !hist.length, style: { ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 } }, "\u25C0 1\u30E9\u30C3\u30AF\u623B\u3059"))))),
-        ruleset.unit !== "rack" && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
+        ruleset.unit !== "rack" && !ruleset.simplified8 && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
             React.createElement(Zone, { label: pl[0].name, team: rival && teamNames ? teamNames[0] : null, side: "up", color: C.blue, balls: col("p1"), money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === "p1", pressed: pressed, selectedBall: selectedBall, highlight: phase === "play" && highlightUp, onPress: onPress, onGesture: onGesture, onDrag: onDrag, onZoneTap: () => commitSelectedTo("up") }),
             React.createElement("div", { onClick: returnSelectedToCenter, style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0", cursor: selectedBall != null ? "pointer" : "default" } },
                 React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } }, selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
