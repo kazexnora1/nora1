@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.221";
-const BUILD_TIME = "2026-08-20 セットマッチ（クラスハンデ）に対応。設定タブでクラスごとの先取数を編集可能に";
+const APP_VERSION = "1.222";
+const BUILD_TIME = "2026-08-20 プレイヤータブの成績表：対戦が組まれていない参加予定者が0勝0敗で並んでしまう不具合を修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -551,14 +551,19 @@ function buildStandings(matches, roster, scope) {
     if (!stats[name]) stats[name] = { name, win: 0, loss: 0, rates: [], pf: 0, pa: 0 };
     return stats[name];
   };
-  roster.forEach((p) => { if (p.name) ensure(p.name); });
+  // このscope（予選／決勝トーナメント）に該当し、直近のものだけを対象にする。
+  // 参加予定リストにいるだけ（まだ対戦が組まれていない）選手はここに含まれないので、成績表にも出ない
+  const inScope = Object.values(matches || {}).filter((m) => {
+    if (!m) return false;
+    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) return false;
+    if (scope === "prelim" && m.bracket) return false;
+    if (scope === "bracket" && !m.bracket) return false;
+    return true;
+  });
+  inScope.forEach((m) => { (m.names || []).forEach((n) => { if (n) ensure(n); }); });
 
-  for (const id in matches) {
-    const m = matches[id];
-    if (!m || !isMatchFinished(m)) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
-    if (scope === "prelim" && m.bracket) continue;
-    if (scope === "bracket" && !m.bracket) continue;
+  inScope.forEach((m) => {
+    if (!isMatchFinished(m)) return;
     const names = m.names || [];
     const tot = m.tot || [0, 0];
     const rt = m.raceTo || [0, 0];
@@ -574,7 +579,7 @@ function buildStandings(matches, roster, scope) {
         if (rt[i] > 0) s.rates.push(Math.min(1, (tot[i] || 0) / rt[i])); // 100%を上限にする
       }
     });
-  }
+  });
 
   const rows = Object.values(stats).map((s) => ({
     ...s,
