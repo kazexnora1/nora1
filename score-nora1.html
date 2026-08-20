@@ -95,8 +95,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
-const APP_VERSION = "1.005";
-const BUILD_TIME = "2026-08-19 10ボール対応：ヒルヒル時の「◯番勝負！」表記をマネーボール番号（10ボールなら10番）に合わせて一般化";
+const APP_VERSION = "1.006";
+const BUILD_TIME = "2026-08-20 ひとことバナーが長い時に頭が切れて見える不具合を修正";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -852,7 +852,9 @@ function BannerLine({ style, boxed }) {
   const h = boxed ? 50 : 26;
   const box = {
     height: "100%", boxSizing: "border-box",
-    display: "flex", alignItems: "center", justifyContent: "center",
+    display: "flex", alignItems: "center",
+    // 収まる時は中央寄せ、はみ出す時は左端から（＝頭から）見せて、そこから右へゆっくり流す
+    justifyContent: shift > 0 ? "flex-start" : "center",
     overflow: "hidden",
     opacity: vis ? 1 : 0, transition: "opacity 600ms ease",
     ...(boxed ? {
