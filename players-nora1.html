@@ -17,11 +17,11 @@
     0%, 10%   { transform: translateX(0); }
     90%, 100% { transform: translateX(var(--shift, 0px)); }
   }
-  /* JCL8ボール：勝者を選んだ直後、次にタップすべき「点数入力」を目立たせる（枠がじわっと広がって消える） */
+  /* JCL8ボール：勝者を選んだ直後、次にタップすべき「点数入力」を目立たせる（金色の枠がふくらんで光る） */
   @keyframes eightBallAsk {
-    0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.9); }
-    70%  { box-shadow: 0 0 0 9px rgba(255,255,255,0); }
-    100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+    0%   { transform: scale(1);    box-shadow: 0 0 0 0px #FFD23F; }
+    50%  { transform: scale(1.05); box-shadow: 0 0 0 5px rgba(255,210,63,0.55); }
+    100% { transform: scale(1);    box-shadow: 0 0 0 0px #FFD23F; }
   }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -102,8 +102,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.030";
-const BUILD_TIME = "2026-08-20 JCLの8ボール：勝者を選んだ後、次にタップすべき点数入力の枠がじわっと光って目立つように";
+const APP_VERSION = "1.031";
+const BUILD_TIME = "2026-08-20 JCLの8ボール：点数入力欄の目立たせ方を強化（金色の太枠＋拡大しながら光るアニメーション＋👉アイコン）";
+
 
 
 
@@ -2448,9 +2449,9 @@ function MatchScreen({ setupInfo, onExit }) {
                             key: i,
                             value: "",
                             onChange: (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) recordEightBallRack(pendingWinner8, v); },
-                            style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "2px solid rgba(255,255,255,0.85)", textAlignLast: "center", textAlign: "center", animation: "eightBallAsk 1.4s ease-out infinite" },
+                            style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "3px solid #FFD23F", textAlignLast: "center", textAlign: "center", animation: "eightBallAsk 1.1s ease-in-out infinite", fontWeight: 900 },
                         },
-                            React.createElement("option", { value: "", disabled: true }, `${pl[i].name}\u306f\u4f55\u70b9\uff1f`),
+                            React.createElement("option", { value: "", disabled: true }, `\u{1F449} ${pl[i].name}\u306f\u4f55\u70b9\uff1f`),
                             [0, 1, 2, 3, 4, 5, 6, 7].map((n) => React.createElement("option", { key: n, value: n }, n)));
                     })),
                 React.createElement("div", { style: { display: "flex", justifyContent: "center" } },
