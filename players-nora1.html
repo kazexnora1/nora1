@@ -17,6 +17,12 @@
     0%, 10%   { transform: translateX(0); }
     90%, 100% { transform: translateX(var(--shift, 0px)); }
   }
+  /* JCL8ボール：勝者を選んだ直後、次にタップすべき「点数入力」を目立たせる（枠がじわっと広がって消える） */
+  @keyframes eightBallAsk {
+    0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.9); }
+    70%  { box-shadow: 0 0 0 9px rgba(255,255,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+  }
 </style>
 <script crossorigin="anonymous" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -96,8 +102,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.029";
-const BUILD_TIME = "2026-08-20 JCLの8ボール：勝者を押した時、もう片方のボタンを同じ形・同じ位置のまま点数入力（0〜7）に変えるよう変更";
+const APP_VERSION = "1.030";
+const BUILD_TIME = "2026-08-20 JCLの8ボール：勝者を選んだ後、次にタップすべき点数入力の枠がじわっと光って目立つように";
+
 
 
 
@@ -2441,7 +2448,7 @@ function MatchScreen({ setupInfo, onExit }) {
                             key: i,
                             value: "",
                             onChange: (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) recordEightBallRack(pendingWinner8, v); },
-                            style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "none", textAlignLast: "center", textAlign: "center" },
+                            style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "2px solid rgba(255,255,255,0.85)", textAlignLast: "center", textAlign: "center", animation: "eightBallAsk 1.4s ease-out infinite" },
                         },
                             React.createElement("option", { value: "", disabled: true }, `${pl[i].name}\u306f\u4f55\u70b9\uff1f`),
                             [0, 1, 2, 3, 4, 5, 6, 7].map((n) => React.createElement("option", { key: n, value: n }, n)));
