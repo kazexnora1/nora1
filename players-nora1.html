@@ -96,8 +96,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.028";
-const BUILD_TIME = "2026-08-20 JCLの8ボール入力の順番を変更：先に勝者をタップ（14点自動）→負け側の点数はタップすると出る欄で0〜7を選ぶ（実機ではドラム状のピッカーになる）";
+const APP_VERSION = "1.029";
+const BUILD_TIME = "2026-08-20 JCLの8ボール：勝者を押した時、もう片方のボタンを同じ形・同じ位置のまま点数入力（0〜7）に変えるよう変更";
+
 
 
 
@@ -2425,25 +2426,26 @@ function MatchScreen({ setupInfo, onExit }) {
                 React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 \u30E9\u30C3\u30AF\u3092\u53D6\u308A\u6D88\u3059"))
         ) : ruleset.simplified8 ? (
             // JCLの8ボール：「8番落ちた→どっちが勝った→負けた側は何点」の順に合わせる。
-            // まず勝者をタップ（14点は自動）。すると負け側の点数欄が出るので、そこをタップして0〜7をドラムで選ぶと確定する
+            // まず勝者をタップ（14点は自動）。すると"もう片方"のボタンが同じ形のまま点数入力（0〜7）に変わる。
+            // 勝者側は選び直したい時のためにそのままタップ可能にしておく（もう一度押すと選び直し）
             React.createElement("div", { style: { marginBottom: 6 } },
-                pendingWinner8 == null
-                    ? React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
-                        React.createElement("button", { onClick: () => setPendingWinner8(0), style: { ...ctrl, flex: 1, background: C.blue, color: "#fff", border: "none" } }, `${pl[0].name} \u306e\u52dd\u3061\uff0814\u70b9\uff09`),
-                        React.createElement("button", { onClick: () => setPendingWinner8(1), style: { ...ctrl, flex: 1, background: C.red, color: "#fff", border: "none" } }, `${pl[1].name} \u306e\u52dd\u3061\uff0814\u70b9\uff09`))
-                    : React.createElement("div", { style: { background: C.zone, border: `1.5px solid ${PC[pendingWinner8]}`, borderRadius: 12, padding: "10px 12px", marginBottom: 6 } },
-                        React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: PC[pendingWinner8], marginBottom: 8, textAlign: "center" } },
-                            `${pl[pendingWinner8].name} \u306e\u52dd\u3061\uff0814\u70b9\uff09`),
-                        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-                            React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.ink, whiteSpace: "nowrap" } }, `${pl[1 - pendingWinner8].name} \u306f\u4f55\u70b9\uff1f`),
-                            React.createElement("select", {
-                                value: "",
-                                onChange: (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) recordEightBallRack(pendingWinner8, v); },
-                                style: { flex: 1, fontSize: 17, fontWeight: 800, padding: "8px 10px", borderRadius: 10, border: `1.5px solid ${C.line}`, background: "#fff", color: C.ink, fontFamily: FONT },
-                            },
-                                React.createElement("option", { value: "", disabled: true }, "\u30bf\u30c3\u30d7\u3057\u3066\u9078\u3076"),
-                                [0, 1, 2, 3, 4, 5, 6, 7].map((n) => React.createElement("option", { key: n, value: n }, n)))),
-                        React.createElement("button", { onClick: () => setPendingWinner8(null), style: { ...ctrl, marginTop: 8, fontSize: 12.5, padding: "6px 0" } }, "\u52dd\u8005\u3092\u9078\u3073\u76f4\u3059")),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
+                    [0, 1].map((i) => {
+                        if (pendingWinner8 == null || pendingWinner8 === i) {
+                            const chosen = pendingWinner8 === i;
+                            return React.createElement("button", { key: i, onClick: () => setPendingWinner8(chosen ? null : i), style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "none", opacity: pendingWinner8 == null || chosen ? 1 : 0.5 } },
+                                `${chosen ? "\u2713 " : ""}${pl[i].name} \u306e\u52dd\u3061\uff0814\u70b9\uff09`);
+                        }
+                        // 勝者が決まった側の"もう片方"：同じ形のまま点数入力に変える
+                        return React.createElement("select", {
+                            key: i,
+                            value: "",
+                            onChange: (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) recordEightBallRack(pendingWinner8, v); },
+                            style: { ...ctrl, flex: 1, background: PC[i], color: "#fff", border: "none", textAlignLast: "center", textAlign: "center" },
+                        },
+                            React.createElement("option", { value: "", disabled: true }, `${pl[i].name}\u306f\u4f55\u70b9\uff1f`),
+                            [0, 1, 2, 3, 4, 5, 6, 7].map((n) => React.createElement("option", { key: n, value: n }, n)));
+                    })),
                 React.createElement("div", { style: { display: "flex", justifyContent: "center" } },
                     React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 \u30E9\u30C3\u30AF\u3092\u53D6\u308A\u6D88\u3059")))
         ) : (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 } },
