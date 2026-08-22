@@ -84,8 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.224";
-const BUILD_TIME = "2026-08-20 8ボールを解禁（種目の3軸目）。JCLの8ボールはB2側で専用の簡易入力（勝者＋負け側の残り球数）を使う";
+const APP_VERSION = "1.225";
+const BUILD_TIME = "2026-08-20 🎱/⏰の事前表示はJCLだけに（他の得点方式では意味がないため非表示）。タイムラインに実績ペース（平均所要時間×残り試合数で終了予定と比較）を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
   blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -1580,7 +1580,7 @@ function TimelineSlotCard({
           <div style={{
             textAlign: "center", fontSize: 11.5, fontWeight: 700, color: C.sub, flexShrink: 0,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3,
-          }}>🎱{m.lenPct || 100}% ⏰{m.matchMinutes || 30}分</div>
+          }}>{m && matchScoring(m) === "jcl" ? `🎱${m.lenPct || 100}% ⏰${m.matchMinutes || 30}分` : ""}</div>
 
           {/* 4: 中央揃えでヒント（終了=✏️）かステータスバー（試合中） */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 14, flexShrink: 0 }}>
@@ -5826,10 +5826,14 @@ function LiveTablePanel({ tableNum, m }) {
   };
 
   // 残り時間。deadline（絶対時刻）から逆算し、決着したらその時点で止める
+  // ※「⏰◯分」の事前表示（試合開始前・バンキング中）は、JCLレートハンデの持ち時間だからこそ意味がある数字。
+  //   それ以外の得点方式では試合の長さは目標点／先取数で決まるので、紛らわしいこの事前表示だけは出さない
+  //   （時間切れの実カウントダウン自体は、時間制限が有効なら方式に関係なく従来通り出す）
   const clockJsx = (() => {
-    if (m.pending) return <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span>;
+    const showPreLabel = matchScoring(m) === "jcl";
+    if (m.pending) return showPreLabel ? <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ {m.matchMinutes || 30}分</span> : null;
     if (m.phase === "banking") {
-      return <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span>;
+      return showPreLabel ? <span style={{ fontSize: 14.5, fontWeight: 900, color: C.sub, whiteSpace: "nowrap" }}>⏰ 持ち時間 {m.matchMinutes || 30}分</span> : null;
     }
     if (!m.deadline) return null;
     const left = m.deadline - (m.finishedAt || nowTs);
@@ -6395,6 +6399,34 @@ function HomeTab() {
   const slots = Math.max(0, ...cols.map((c) => c.length));
   const totalMatches = cols.reduce((s, c) => s + c.length, 0);
   const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
+
+  // ========= 実績ペース：ここまで終わった試合の「実際にかかった時間」の平均から、残り試合数ぶんを見積もる =========
+  // 各試合に設定した持ち時間（matchMinutes）はあくまで事前の目安。得点方式によっては実際の所要時間が大きくぶれるので、
+  // 「終了予定時刻」に対して本当に間に合いそうかは、これまでの実績から逆算したほうが実態に近い
+  const paceInfo = (() => {
+    const finishedMin = [];
+    cols.forEach((col) => col.forEach((e) => {
+      if (e.st !== "done") return;
+      const s = e.m.startedAt, f = e.m.finishedAt || e.m.updatedAt;
+      if (s && f && f > s) finishedMin.push((f - s) / 60000);
+    }));
+    const remaining = totalMatches - doneCount;
+    if (!finishedMin.length || remaining <= 0) return null;
+    const avgMin = finishedMin.reduce((a, b) => a + b, 0) / finishedMin.length;
+    const tablesInUse = cols.filter((c) => c.length > 0).length || 1;
+    const chg = parseInt(loadSettings().changeoverMin, 10) || 5;
+    const projRemainMin = (remaining / tablesInUse) * (avgMin + chg);
+    const projEnd = Date.now() + projRemainMin * 60000;
+    const cfg = loadSettings();
+    const eH = parseInt(cfg.endH, 10), eM = parseInt(cfg.endM, 10);
+    let diffMin = null, ok = null;
+    if (!isNaN(eH) && !isNaN(eM)) {
+      const targetD = new Date(); targetD.setHours(eH, eM, 0, 0);
+      diffMin = Math.round((targetD - projEnd) / 60000);
+      ok = diffMin >= -5;
+    }
+    return { avgMin: Math.round(avgMin), remaining, projEnd, diffMin, ok, sampleSize: finishedMin.length };
+  })();
   // 終了した試合の勝者一覧。決勝トーナメントの「◯回戦①の勝者」枠を手で埋め直したい時などに使う
   const winnerChoices = [];
   cols.forEach((col) => col.forEach((e) => {
@@ -6472,6 +6504,27 @@ function HomeTab() {
           </div>
           <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
         </div>
+
+        {/* 実績ペース：これまでの平均所要時間×残り試合数で、終了予定時刻に対して順調かを見る */}
+        {paceInfo && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap",
+            fontSize: 12.5, fontWeight: 700, color: paceInfo.ok == null ? C.sub : paceInfo.ok ? C.win : C.minus,
+            background: paceInfo.ok == null ? C.zone : paceInfo.ok ? "#EAF7EE" : "#FFF5F4",
+            border: `1px solid ${paceInfo.ok == null ? C.line : paceInfo.ok ? C.win : C.minus}`,
+            borderRadius: 10, padding: "6px 10px", marginBottom: 10,
+          }}>
+            <span>実績ペース：1試合平均{paceInfo.avgMin}分（{paceInfo.sampleSize}試合分）</span>
+            <span style={{ opacity: 0.5 }}>｜</span>
+            <span>残り{paceInfo.remaining}試合→{fmtClock(paceInfo.projEnd)}頃終了見込み</span>
+            {paceInfo.diffMin != null && (
+              <>
+                <span style={{ opacity: 0.5 }}>｜</span>
+                <span style={{ fontWeight: 900 }}>{paceInfo.ok ? `☑️ 余裕${Math.max(0, paceInfo.diffMin)}分` : `⚠️ 押し${Math.abs(paceInfo.diffMin)}分`}</span>
+              </>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "44px repeat(3, minmax(0, 1fr))", columnGap: 4, rowGap: 6 }}>
           <div />
