@@ -84,7 +84,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.225";
+const APP_VERSION = "1.226";
+const BUILD_TIME = "2026-08-20 タイムラインに「ℹ️ 設定」ボタンを追加。種目・得点方式・ブレイク順・予選の組み方・1人あたりの試合数（実績）・決勝トーナメントの有無をまとめて確認できる";
 const BUILD_TIME = "2026-08-20 🎱/⏰の事前表示はJCLだけに（他の得点方式では意味がないため非表示）。タイムラインに実績ペース（平均所要時間×残り試合数で終了予定と比較）を追加";
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
@@ -6003,6 +6004,62 @@ function LiveTablesTab() {
   );
 }
 
+/* ========= 今日の設定まとめ（ホームの「ℹ️ 設定」ボタンから開く） =========
+   種目・得点方式・ブレイク順の3軸と、予選の組み方（総当たり／ランダムなど）、
+   決勝トーナメントの有無、実際に組まれた試合数から逆算した「1人あたりの試合数」をまとめて見せる。
+   対戦表を組んだ後で「あれ、今どういう設定だっけ」となった時のためのもの */
+function EventInfoSheet({ cols, roster, onClose }) {
+  const spec = loadSpec();
+  const prelimMode = loadPrelimMode();
+  const pInfo = prelimModeInfo(prelimMode);
+  const finalMode = loadFinalMode();
+
+  const prelimEntries = cols.flatMap((c) => c.filter((e) => e.m && !e.m.bracket));
+  const bracketEntries = cols.flatMap((c) => c.filter((e) => e.m && e.m.bracket));
+  const hasBracket = bracketEntries.length > 0;
+
+  // 実際に組まれた予選の対戦から、選手ごとの試合数を数え直す（生成時の設定値ではなく実績で見せる）
+  const perPlayerCount = {};
+  prelimEntries.forEach((e) => (e.m.names || []).forEach((n) => { if (n) perPlayerCount[n] = (perPlayerCount[n] || 0) + 1; }));
+  const counts = Object.values(perPlayerCount);
+  const gamesRange = counts.length
+    ? (Math.min(...counts) === Math.max(...counts) ? `${Math.min(...counts)}試合` : `${Math.min(...counts)}〜${Math.max(...counts)}試合`)
+    : null;
+
+  const row = (label, value, sub) => (
+    <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: C.sub, marginTop: 2, lineHeight: 1.5 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <Portal>
+      <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 5000 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{
+          background: "#fff", borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
+          maxWidth: 420, width: "100%", maxHeight: "82vh", overflowY: "auto", boxSizing: "border-box", fontFamily: FONT,
+        }}>
+          <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 12px" }} />
+          <div style={{ fontSize: 16, fontWeight: 900, textAlign: "center", marginBottom: 8 }}>ℹ️ 今日の設定</div>
+
+          {row("種目", gameInfo(spec.game).label)}
+          {row("得点方式", scoringInfo(spec.scoring).label, scoringInfo(spec.scoring).sub)}
+          {row("ブレイク順", breakInfo(spec.breakMode).label)}
+          {row("予選の組み方", pInfo.label, pInfo.sub)}
+          {row("1人あたりの試合数（予選・実績）", gamesRange || "まだ試合がありません")}
+          {row("決勝トーナメント", hasBracket
+            ? `あり（${bracketEntries.length}試合・進出方式：${finalMode === "group" ? "各グループ1位＋上位" : "全体の成績上位"}）`
+            : "まだ組んでいません")}
+
+          <button onClick={onClose} style={{ width: "100%", marginTop: 14, background: C.zone, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: C.ink, cursor: "pointer", fontFamily: FONT }}>閉じる</button>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
 function HomeTab() {
   const [queues, setQueues] = useState([[], [], []]);
   const refereeEnabled = loadSettings().refereeEnabled !== false; // 設定タブでオフにできる
@@ -6016,6 +6073,7 @@ function HomeTab() {
   const [tableAdjust, setTableAdjust] = useState(null); // 展開中の卓番号(0-2) or null
   const [foldPrelim, setFoldPrelim] = useState(null); // 予選のコマをたたむ。null=まだ自動判定していない
   const [showGlobalAdjust, setShowGlobalAdjust] = useState(false);
+  const [showEventInfo, setShowEventInfo] = useState(false);
   const [globalBusy, setGlobalBusy] = useState(false);
   const [tLenPct, setTLenPct] = useState(100);
   const [tPer100, setTPer100] = useState(60);
@@ -6502,7 +6560,11 @@ function HomeTab() {
               <div style={{ height: "100%", width: `${totalMatches ? Math.round((doneCount / totalMatches) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
             </div>
           </div>
-          <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
+          <div style={{ position: "absolute", right: 0, display: "flex", gap: 6 }}>
+            <button onClick={() => setShowEventInfo(true)} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>ℹ️ 設定</button>
+            <button onClick={toggleGlobalAdjust} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
+          </div>
+          {showEventInfo && <EventInfoSheet cols={cols} roster={roster} onClose={() => setShowEventInfo(false)} />}
         </div>
 
         {/* 実績ペース：これまでの平均所要時間×残り試合数で、終了予定時刻に対して順調かを見る */}
