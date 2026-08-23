@@ -29,6 +29,7 @@
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -84,8 +85,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.227";
-const BUILD_TIME = "2026-08-20 タイムラインの設定確認ボタンを左側に移動し「📋 試合フォーマット」に改名";
+const APP_VERSION = "1.228";
+const BUILD_TIME = "2026-08-22 設定タブの「その他」にB2のURLをQRコードで表示する機能を追加";
 
 
 const C = {
@@ -3004,6 +3005,39 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
 }
 
 /* ========= 接続診断：保存できない原因（通信・上限・データ量）をその場で確認する ========= */
+/* B2（players-nora1.html）のURL。B1と同じフォルダに置いてある前提で、自分のURLのファイル名だけ差し替える */
+function b2Url() {
+  const path = window.location.pathname.replace(/[^/]*$/, "players-nora1.html");
+  return window.location.origin + path;
+}
+/* B2のURLをQRコードで見せる。選手が自分のスマホでスキャンして開けるようにするためのもの。
+   QRの生成はライブラリ（qrcodejs）にDOM要素を直接渡す作りなので、useRefで掴んだ空divに描かせる */
+function QRPanel() {
+  const boxRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const url = b2Url();
+  useEffect(() => {
+    if (!open || !boxRef.current) return;
+    boxRef.current.innerHTML = "";
+    try {
+      new QRCode(boxRef.current, { text: url, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+    } catch {}
+  }, [open, url]);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button onClick={() => setOpen((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "11px 0", cursor: "pointer", fontFamily: FONT }}>
+        📱 B2（選手用スコアラー）のQRコードを表示
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, textAlign: "center" }}>
+          <div ref={boxRef} style={{ display: "inline-block", background: "#fff", padding: 8, borderRadius: 8 }} />
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 8, wordBreak: "break-all" }}>{url}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConnectionTest() {
   const [log, setLog] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3513,6 +3547,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
           <BackupPanel />
           <ConnectionTest />
+          <QRPanel />
         </div>
         <div style={{ marginTop: 18 }}>
           <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
