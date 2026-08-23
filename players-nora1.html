@@ -30,6 +30,7 @@
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script crossorigin="anonymous" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/canvas-confetti/1.9.2/confetti.browser.min.js"></script>
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <div id="root"><div id="boot" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;color:#1C2530;background:#fff;">
@@ -102,8 +103,9 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.031";
-const BUILD_TIME = "2026-08-20 JCLの8ボール：点数入力欄の目立たせ方を強化（金色の太枠＋拡大しながら光るアニメーション＋👉アイコン）";
+const APP_VERSION = "1.032";
+const BUILD_TIME = "2026-08-22 左上のルールボタンを「☰ メニュー」に統合（ルール／QRコードを表示／スコアラーを降りる）。右側のメニューは時間延長と球のデザインだけに整理";
+
 
 
 
@@ -519,7 +521,7 @@ function TimelineTab({ myMatchId, onPick }) {
     return (React.createElement("div", { style: { padding: "16px 12px 32px", color: C.ink, fontFamily: FONT } },
         React.createElement(RivalBanner, { teamNames: rivalTeamNames }),
         React.createElement("div", { style: { position: "relative", textAlign: "center", marginBottom: 14 } },
-            React.createElement(RulesButtonAuto, { style: { position: "absolute", left: 0, top: -2 } }),
+            React.createElement(ScorerMenuButtonAuto, { style: { position: "absolute", left: 0, top: -2 } }),
             React.createElement("div", { style: { fontSize: 18, color: C.ink, fontWeight: 800 } },
                 "\u7D42\u4E86 ",
                 doneCount,
@@ -762,18 +764,38 @@ function useRules(format) {
     }, [key]);
     return text;
 }
-function RulesButton({ style, format }) {
+/* このB2自身のURL（クエリなし）。QRコードを表示する時に使う */
+function b2SelfUrl() {
+    return window.location.origin + window.location.pathname;
+}
+/* ========= 左上の「☰ メニュー」ボタン =========
+   ルール・QRコード表示・（試合中なら）スコアラーを降りる、をひとつのメニューにまとめたもの。
+   onStepDown を渡さない画面（対戦表など、まだ試合が始まっていない場面）では「降りる」は出さない */
+function ScorerMenuButton({ style, format, onStepDown }) {
     const text = useRules(format);
     const [open, setOpen] = useState(false);
-    if (!text.trim())
-        return null;
+    const [view, setView] = useState(null); // null=一覧 | "rules" | "qr"
+    const qrRef = useRef(null);
+    const url = b2SelfUrl();
+    useEffect(() => {
+        if (view !== "qr" || !qrRef.current) return;
+        qrRef.current.innerHTML = "";
+        try {
+            new QRCode(qrRef.current, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        } catch { }
+    }, [view, url]);
+    const closeAll = () => { setOpen(false); setView(null); };
+    const menuBtnStyle = {
+        width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
+        padding: "13px 14px", fontSize: 14.5, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT, marginBottom: 8,
+    };
     return (React.createElement(React.Fragment, null,
-        React.createElement("button", { onClick: () => setOpen(true), style: {
+        React.createElement("button", { onClick: () => { setOpen(true); setView(null); }, style: {
                 background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10,
                 padding: "6px 11px", fontSize: 13, fontWeight: 800, color: C.ink,
                 cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", ...style,
-            } }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB"),
-        open && (React.createElement("div", { onClick: () => setOpen(false), style: {
+            } }, "\u2630 \u30E1\u30CB\u30E5\u30FC"),
+        open && (React.createElement("div", { onClick: closeAll, style: {
                 position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000,
                 display: "flex", alignItems: "flex-end",
             } },
@@ -781,21 +803,34 @@ function RulesButton({ style, format }) {
                     background: "#fff", width: "100%", maxHeight: "86vh", overflowY: "auto",
                     borderRadius: "18px 18px 0 0", padding: "16px 16px 26px", boxSizing: "border-box",
                 } },
-                React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: 10 } },
-                    React.createElement("span", { style: { fontSize: 17, fontWeight: 900, flex: 1 } }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB"),
-                    React.createElement("button", { onClick: () => setOpen(false), style: {
-                            background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
-                            padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: C.ink,
-                            fontFamily: FONT, cursor: "pointer",
-                        } }, "\u9589\u3058\u308B")),
-                React.createElement("div", { style: { fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" } }, text))))));
+                view === null && React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontSize: 17, fontWeight: 900, marginBottom: 12 } }, "\u2630 \u30E1\u30CB\u30E5\u30FC"),
+                    React.createElement("button", { onClick: () => setView("rules"), style: menuBtnStyle }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB"),
+                    React.createElement("button", { onClick: () => setView("qr"), style: menuBtnStyle }, "\uD83D\uDCF1 QR\u30B3\u30FC\u30C9\u3092\u8868\u793A"),
+                    onStepDown && React.createElement("button", { onClick: () => { closeAll(); onStepDown(); }, style: { ...menuBtnStyle, borderColor: C.minus, color: C.minus, marginBottom: 0 } }, "\uD83D\uDEAB \u30B9\u30B3\u30A2\u30E9\u30FC\u3092\u964D\u308A\u308B")),
+                view === "rules" && React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: 10 } },
+                        React.createElement("button", { onClick: () => setView(null), style: { background: "none", border: "none", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT, padding: 0, marginRight: 8 } }, "\u2039 \u623B\u308B"),
+                        React.createElement("span", { style: { fontSize: 17, fontWeight: 900, flex: 1 } }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB")),
+                    React.createElement("div", { style: { fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" } }, text.trim() ? text : "\u307E\u3060\u30EB\u30FC\u30EB\u306F\u767B\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093")),
+                view === "qr" && React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: 10 } },
+                        React.createElement("button", { onClick: () => setView(null), style: { background: "none", border: "none", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT, padding: 0, marginRight: 8 } }, "\u2039 \u623B\u308B"),
+                        React.createElement("span", { style: { fontSize: 17, fontWeight: 900, flex: 1 } }, "\uD83D\uDCF1 QR\u30B3\u30FC\u30C9")),
+                    React.createElement("div", { style: { textAlign: "center" } },
+                        React.createElement("div", { ref: qrRef, style: { display: "inline-block", background: "#fff", padding: 8, borderRadius: 8, border: `1px solid ${C.line}` } }),
+                        React.createElement("div", { style: { fontSize: 11, color: C.sub, marginTop: 8, wordBreak: "break-all" } }, url))),
+                React.createElement("button", { onClick: closeAll, style: {
+                        width: "100%", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12,
+                        padding: "12px 0", fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT, marginTop: 14,
+                    } }, "\u9589\u3058\u308B"))))));
 }
 /* 対戦表など、特定の試合に紐づかない画面用。現在の大会全体のフォーマット（config/format）を見て、
    そのフォーマットのルールメモを出す */
-function RulesButtonAuto({ style }) {
+function ScorerMenuButtonAuto({ style }) {
     const [format, setFormat] = useState("jcl");
     useEffect(() => subscribeConfig((c) => setFormat(c.format || "jcl")), []);
-    return React.createElement(RulesButton, { style: style, format: format });
+    return React.createElement(ScorerMenuButton, { style: style, format: format });
 }
 /* ========= 新しいバージョンの検知 =========
    サーバー側の仕組みは不要。自分自身のURLをキャッシュ無視で定期的に取りに行き、
@@ -2318,7 +2353,7 @@ function MatchScreen({ setupInfo, onExit }) {
         rival && teamNames && React.createElement(RivalBanner, { teamNames: teamNames }),
         React.createElement("div", { style: { position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
             React.createElement("span", { style: { width: 90 } },
-                React.createElement(RulesButton, { format: setupInfo.format })),
+                React.createElement(ScorerMenuButton, { format: setupInfo.format, onStepDown: stepDown })),
             React.createElement("div", { onClick: () => { if (timeLimitEnabled && matchWinner == null && !bothLose)
                     togglePause(); }, style: {
                     position: "absolute", left: "50%", transform: "translateX(-50%)",
@@ -2335,7 +2370,7 @@ function MatchScreen({ setupInfo, onExit }) {
                         background: paused ? C.hillBg : "#fff", border: `1px solid ${paused ? C.hill : C.line}`,
                         borderRadius: 8, padding: "3px 8px", fontSize: 12, fontWeight: 800,
                         color: paused ? C.hill : C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
-                    } }, !timeLimitEnabled ? "⋯ メニュー" : paused ? "⏸ 停止中" : "⏱ タイマー設定")),
+                    } }, !timeLimitEnabled ? "🎱 球のデザイン" : paused ? "⏸ 停止中" : "⏱ タイマー設定")),
                 React.createElement("span", { style: { fontSize: 12.5, color: C.sub } },
                     "T",
                     table,
@@ -2349,7 +2384,7 @@ function MatchScreen({ setupInfo, onExit }) {
                     borderRadius: "18px 18px 0 0", padding: "16px 18px calc(18px + env(safe-area-inset-bottom, 0px))",
                 } },
                 React.createElement("div", { style: { width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 14px" } }),
-                React.createElement("div", { style: { fontSize: 16, fontWeight: 900, textAlign: "center", marginBottom: 4 } }, timeLimitEnabled ? "タイマー設定" : "メニュー"),
+                React.createElement("div", { style: { fontSize: 16, fontWeight: 900, textAlign: "center", marginBottom: 4 } }, timeLimitEnabled ? "タイマー設定" : "球のデザイン"),
                 timeLimitEnabled && (React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 } },
                         "\u6642\u9593\u306E\u8868\u793A\u3092\u30BF\u30C3\u30D7\u3059\u308B\u3068\u4E00\u6642\u505C\u6B62\u30FB\u518D\u958B\u3067\u304D\u307E\u3059\uFF08",
@@ -2363,11 +2398,7 @@ function MatchScreen({ setupInfo, onExit }) {
                         "+",
                         min,
                         "\u5206")))))),
-                React.createElement("button", { onClick: stepDown, style: {
-                        width: "100%", background: "#fff", border: `1.5px solid ${C.minus}`, color: C.minus, borderRadius: 12,
-                        padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 8,
-                    } }, "\uD83D\uDEAB \u30B9\u30B3\u30A2\u30E9\u30FC\u3092\u964D\u308A\u308B"),
-                React.createElement("div", { style: { borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 14 } },
+                React.createElement("div", { style: { borderTop: timeLimitEnabled ? `1px solid ${C.line}` : "none", marginTop: timeLimitEnabled ? 4 : 0, paddingTop: timeLimitEnabled ? 14 : 0 } },
                     React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 } }, "\u7403\u306E\u30C7\u30B6\u30A4\u30F3"),
                     React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 6 } }, BALL_DESIGN_SETS.map((d) => (React.createElement("button", { key: d.id, onClick: () => { if (d.ready)
                             updateBallDesign(d.id); }, disabled: !d.ready, style: {
