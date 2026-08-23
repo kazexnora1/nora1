@@ -85,8 +85,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.228";
-const BUILD_TIME = "2026-08-22 設定タブの「その他」にB2のURLをQRコードで表示する機能を追加";
+const APP_VERSION = "1.229";
+const BUILD_TIME = "2026-08-23 タイムライン上部のボタンが進捗表示と重なることがあった不具合を修正（グリッドレイアウトに変更）";
 
 
 const C = {
@@ -6589,15 +6589,15 @@ function HomeTab() {
       {/* ===== 固定エリア：進捗・卓見出し・卓調整 ===== */}
       <div style={{ flexShrink: 0, padding: "14px 8px 10px", borderBottom: `2px solid ${C.line}`, background: C.bg }}>
         {loadErr && <Notice>データを取得できません：{loadErr}</Notice>}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", marginBottom: 10, columnGap: 6 }}>
+          <button onClick={() => setShowEventInfo(true)} style={{ justifySelf: "start", background: "none", border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>📋 試合フォーマット</button>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 17.5, color: C.ink, fontWeight: 900 }}>終了 {doneCount} / 全{totalMatches}試合</div>
+            <div style={{ fontSize: 17.5, color: C.ink, fontWeight: 900, whiteSpace: "nowrap" }}>終了 {doneCount} / 全{totalMatches}試合</div>
             <div style={{ height: 7, width: 160, background: C.line, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
               <div style={{ height: "100%", width: `${totalMatches ? Math.round((doneCount / totalMatches) * 100) : 0}%`, background: C.win, borderRadius: 4, transition: "width 400ms ease" }} />
             </div>
           </div>
-          <button onClick={() => setShowEventInfo(true)} style={{ position: "absolute", left: 0, background: "none", border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT }}>📋 試合フォーマット</button>
-          <button onClick={toggleGlobalAdjust} style={{ position: "absolute", right: 0, background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>⚙ 全卓調整</button>
+          <button onClick={toggleGlobalAdjust} style={{ justifySelf: "end", background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>⚙ 全卓調整</button>
           {showEventInfo && <EventInfoSheet cols={cols} roster={roster} onClose={() => setShowEventInfo(false)} />}
         </div>
 
