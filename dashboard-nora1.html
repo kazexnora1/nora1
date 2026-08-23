@@ -85,8 +85,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.229";
-const BUILD_TIME = "2026-08-23 タイムライン上部のボタンが進捗表示と重なることがあった不具合を修正（グリッドレイアウトに変更）";
+const APP_VERSION = "1.230";
+const BUILD_TIME = "2026-08-23 セットマッチの試合時間設定を「5先◯分」（初期値45分）に変更。％のバーは廃止し、先取数に応じて比例配分する";
 
 
 const C = {
@@ -749,7 +749,7 @@ function saveSettings(patch) {
   // 時間割に関わる値だけは共有側にも書いておく。
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
-  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "tournamentName", "liveUrl", "format", "timeLimitEnabled",
+  ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "setBaseMinutes", "tournamentName", "liveUrl", "format", "timeLimitEnabled",
    "game", "scoring", "breakMode"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
@@ -843,6 +843,19 @@ function raceFor(o) {
   }
   const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
   return R1 > 0 && R2 > 0 ? computeRace(R1, R2, opt.lenPct || 100) : { rt1: 0, rt2: 0 };
+}
+
+/* ========= 1試合の持ち時間（分）を決める窓口 =========
+   セットマッチだけは「％のバー」ではなく「5先で何分か」という直感的な基準で決める（設定は setBaseMinutes、初期値45分）。
+   実際の先取数（クラスによってA5・C3などバラつく）に合わせて、5先を基準に比例配分する。
+   それ以外の方式（JCL・JPAスキル）は今まで通り per100Min × lenPct% で決まる */
+function matchMinutesFor(scoring, race, lenPct, per100Min) {
+  if (scoring === "set") {
+    const base = parseInt(loadSettings().setBaseMinutes, 10) || 45;
+    const target = Math.max(race && race.rt1 || 0, race && race.rt2 || 0) || 5;
+    return Math.max(5, Math.round(base * (target / 5) / 5) * 5);
+  }
+  return Math.round((parseInt(per100Min, 10) || 60) * ((lenPct || 100) / 100));
 }
 
 /* 選手を選ぶリストで、名前の右に出す補足。得点方式によって見せるものが変わる */
@@ -1179,7 +1192,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
         lastResult: null, hist: [], raceTo: rt,
         names: [p1.name, p2.name], table,
         r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), lenPct,
-        matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+        matchMinutes: matchMinutesFor(curSpec.scoring, res, lenPct, loadSettings().per100Min),
         createdAt: existing ? existing.createdAt : now, updatedAt: now,
         ...ruleFields(),
       };
@@ -4506,6 +4519,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const [endM, setEndM] = useState(d0.endM);
   const [changeoverMin, setChangeoverMin] = useState(s0.changeoverMin || "5");
   const [per100Min, setPer100Min] = useState(s0.per100Min || "60");
+  // セットマッチ用：「5先を基準に何分か」。％のバーではなく、この1つの数字だけで時間を決める
+  const [setBaseMinutes, setSetBaseMinutes] = useState(s0.setBaseMinutes || 45);
   const [group1, setGroup1] = useState(s0.group1 || 5);
   const [group2, setGroup2] = useState(s0.group2 || 5);
   const [groupCount, setGroupCount] = useState(s0.groupCount || 3);
@@ -4531,8 +4546,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
 
   // 変更のたびに端末へ保存し、次回起動時に復元できるようにする
   useEffect(() => {
-    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly });
-  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly]);
+    saveSettings({ players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, setBaseMinutes, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly });
+  }, [players, games, lenPct, startH, startM, endH, endM, changeoverMin, per100Min, setBaseMinutes, avoidGroups, group1, group2, perTableRR, groupCount, fixedGroupTable, rivalMode, rivalA, rivalNameA, rivalNameB, azukiPrelim, todayIds, todayLate, todayEarly]);
   // 人数が変わってグループ数の候補が変わったら、選んでいたグループ数が候補から外れていないか確認する。
   // 外れていたら3グループ（既定）→候補の先頭の順で選び直す
   useEffect(() => {
@@ -4703,10 +4718,10 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       const p2 = todayRoster[m.b - 1] || { name: `選手${m.b}`, r: "" };
       const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
       const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct, fixedTarget: azukiPrelim });
-      const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
+      const mins = matchMinutesFor(curSpec.scoring, race, lenPct, per100Min);
       return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000, n1: p1.name, n2: p2.name, r1: R1 || 0, r2: R2 || 0, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), rt1: race.rt1, rt2: race.rt2, lenPct, matchMinutes: mins };
     });
-  }, [result, todayRoster, lenPct, per100Min, curSpec.scoring, azukiPrelim]);
+  }, [result, todayRoster, lenPct, per100Min, curSpec.scoring, azukiPrelim, setBaseMinutes]);
 
   const grid = useMemo(() => {
     if (!rows) return null;
@@ -4934,7 +4949,16 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           : curSpec.scoring === "set" ? "先取数は各自のクラスから決まります。ここでは1試合のだいたいの長さ（持ち時間）だけを決めます"
           : "ファーゴハンデの目標点は、この長さから自動で計算されます"} />
 
-      {curSpec.scoring !== "jpa_fixed" ? (
+      {curSpec.scoring === "set" ? (
+        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>5先で何分くらいか</span>
+            <span style={{ fontSize: 16, fontWeight: 800 }}>{setBaseMinutes}分</span>
+          </div>
+          <input type="range" min={15} max={90} step={5} value={setBaseMinutes} onChange={(e) => setSetBaseMinutes(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
+          <div style={{ ...HELP, marginTop: 8 }}>クラスによって先取数が違う場合は、この数字を基準に比例配分します（例：5先{setBaseMinutes}分なら、6先は{Math.round(setBaseMinutes * 6 / 5 / 5) * 5}分）。</div>
+        </div>
+      ) : curSpec.scoring !== "jpa_fixed" ? (
         <>
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
@@ -5181,7 +5205,7 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
         const p2 = roster.find((r) => r.name === n2) || (n2 === addName ? { name: addName, r: addFargo, sk: addSk, cls: addCls } : null);
         const R1 = parseInt(p1 && p1.r, 10), R2 = parseInt(p2 && p2.r, 10);
         const race = raceFor({ scoring, p1, p2, lenPct, fixedTarget: azukiPrelim });
-        const mins = Math.round((parseInt(per100Min, 10) || 60) * (lenPct / 100));
+        const mins = matchMinutesFor(scoring, race, lenPct, per100Min);
         return {
           table: m.table + 1, isRematch: historyPairs.has(m.a * 32 + m.b),
           matchId: randomMatchId(), createdAt: base + i * 1000,
@@ -5431,7 +5455,7 @@ function ScheduleTab({ roster }) {
       balls: mkMatchBalls(),
       lastResult: null, hist: [], raceTo: [res.rt1, res.rt2],
       names: [p1.name, p2.name], table, createdAt: Date.now(),
-      r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), lenPct, matchMinutes: Math.round((parseInt(loadSettings().per100Min, 10) || 60) * (lenPct / 100)),
+      r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2), lenPct, matchMinutes: matchMinutesFor(curSpec.scoring, res, lenPct, loadSettings().per100Min),
       ...ruleFields(),
     };
     await saveMatch(matchId, state).catch(() => {});
