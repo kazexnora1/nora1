@@ -55,8 +55,8 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに数字を上げる。新しいファイルを置くと、開いている端末に更新バナーが出る
-const APP_VERSION = "1.000";
-const BUILD_TIME = "2026-09-01 単体版の初版";
+const APP_VERSION = "1.001";
+const BUILD_TIME = "2026-09-01 用語調整・時間制限撤廃・ラック修正・目標点UI変更";
 
 const C = {
   bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
@@ -94,7 +94,7 @@ const ballPts = (balls, loc, money) =>
 
 const SCORING_DEFS = {
   jcl: {
-    label: "14点制（レートハンデ）", unit: "point", hill: 14,
+    label: "JCL", unit: "point", hill: 14,
     sub: "ゲームボールを落とした側が14点、相手は落とした球の数",
     calcAdd: (balls, w) => {
       const ll = w === 0 ? "p2" : "p1";
@@ -107,7 +107,7 @@ const SCORING_DEFS = {
     calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length,
   },
   jpa_fixed: {
-    label: "ボール加点（目標点）", unit: "point", hill: null,
+    label: "JPA", unit: "point", hill: null,
     sub: "球1点・ゲームボール2点。先に目標点へ届いた方が勝ち",
     calcAdd: (balls, _w, g) => [ballPts(balls, "p1", g.money), ballPts(balls, "p2", g.money)],
     calcLive: (balls, side, g) => ballPts(balls, side, g.money),
@@ -233,12 +233,9 @@ function initialMatchState(setup) {
     raceTo: [setup.raceTo[0], setup.raceTo[1]],
     names: [setup.names[0], setup.names[1]],
     startedAt: null,
-    deadline: null,       // 時間切れの時刻（絶対時刻）
-    pauseStart: null,
     finishedAt: null,
     elapsedMs: null,
     winner: null,
-    bothLose: false,
   };
 }
 
@@ -291,13 +288,30 @@ const inputStyle = {
 
 function Stepper({ label, value, min, max, step, onChange }) {
   const st = step || 1;
-  const b = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT };
+  const [editing, setEditing] = useState(false);
+  const b = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT, flexShrink: 0 };
+  const commit = (raw) => {
+    const v = parseInt(raw, 10);
+    if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
+    setEditing(false);
+  };
   return (
     <div style={{ flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px" }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>{label}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <button style={b} onClick={() => onChange(Math.max(min, value - st))}>−</button>
-        <div style={{ flex: 1, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        {editing ? (
+          <input type="number" inputMode="numeric" defaultValue={value} autoFocus
+            onFocus={(e) => e.target.select()}
+            onBlur={(e) => commit(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commit(e.target.value); }}
+            style={{
+              flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+              border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "4px 0", outline: "none", fontFamily: FONT, background: "#fff",
+            }} />
+        ) : (
+          <div onClick={() => setEditing(true)} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", cursor: "pointer" }}>{value}</div>
+        )}
         <button style={b} onClick={() => onChange(Math.min(max, value + st))}>＋</button>
       </div>
     </div>
@@ -428,8 +442,8 @@ function MenuButton({ style, ballDesign, onSetBallDesign, onQuit }) {
    試合をつくる画面
    ========================================================= */
 const TEMPLATES = [
-  { id: "t14", name: "14点制", spec: { game: "9", scoring: "jcl", breakMode: "alternate" }, sub: "レートハンデ・交互ブレイク" },
-  { id: "tpt", name: "ボール加点", spec: { game: "9", scoring: "jpa_fixed", breakMode: "winner" }, sub: "目標点・勝者ブレイク" },
+  { id: "t14", name: "JCL", spec: { game: "9", scoring: "jcl", breakMode: "alternate" }, sub: "レートハンデ・交互ブレイク" },
+  { id: "tpt", name: "JPA", spec: { game: "9", scoring: "jpa_fixed", breakMode: "winner" }, sub: "目標点・勝者ブレイク" },
   { id: "tset", name: "セットマッチ", spec: { game: "9", scoring: "set", breakMode: "winner" }, sub: "ラック先取・勝者ブレイク" },
 ];
 const sameSpec = (a, b) => a && b && a.game === b.game && a.scoring === b.scoring && a.breakMode === b.breakMode;
@@ -457,22 +471,33 @@ function Picker({ title, items, value, onPick }) {
   );
 }
 
+const DEFAULT_RATE = 500;
+
 function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign }) {
   const d0 = loadSetupDefaults() || {};
   const [names, setNames] = useState(() => (Array.isArray(d0.names) ? d0.names : ["", ""]));
   const [spec, setSpec] = useState(() => specOf(d0));
-  const [rates, setRates] = useState(() => (Array.isArray(d0.rates) ? d0.rates.map(String) : ["", ""]));
+  const [rates, setRates] = useState(() => (Array.isArray(d0.rates) && d0.rates[0] > 0 && d0.rates[1] > 0 ? d0.rates : [DEFAULT_RATE, DEFAULT_RATE]));
   const [lenPct, setLenPct] = useState(() => d0.lenPct || 100);
   const [manual, setManual] = useState(false);
-  const [race, setRace] = useState(() => (Array.isArray(d0.raceTo) ? d0.raceTo : [0, 0]));
-  const [timeLimit, setTimeLimit] = useState(() => !!d0.timeLimit);
-  const [minutes, setMinutes] = useState(() => d0.minutes || 30);
+  // 初期表示から目標点が入った状態にする（何も入力しなくても即座に始められるように）
+  const [race, setRace] = useState(() => {
+    if (Array.isArray(d0.raceTo) && d0.raceTo[0] > 0) return d0.raceTo;
+    const d0spec = specOf(d0);
+    if (d0spec.scoring === "set") return [5, 5];
+    if (d0spec.scoring === "jpa_fixed") return [25, 25];
+    const r0 = Array.isArray(d0.rates) && d0.rates[0] > 0 ? d0.rates[0] : DEFAULT_RATE;
+    const r1 = Array.isArray(d0.rates) && d0.rates[1] > 0 ? d0.rates[1] : DEFAULT_RATE;
+    const rc = computeRace(r0, r1, d0.lenPct || 100);
+    return [rc.rt1, rc.rt2];
+  });
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showLenAdvanced, setShowLenAdvanced] = useState(false);
 
   const ruleset = getRuleset(spec);
-  const R1 = parseInt(rates[0], 10) || 0, R2 = parseInt(rates[1], 10) || 0;
+  const R1 = rates[0], R2 = rates[1];
 
-  // 14点制：2人のレートと試合の長さから目標点を自動で出す（手動に切り替えることもできる）
+  // JCL：2人のレートと試合の長さから目標点を自動で出す（手動に切り替えることもできる）
   const autoRace = useMemo(
     () => (spec.scoring === "jcl" && R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : null),
     [spec.scoring, R1, R2, lenPct]
@@ -482,23 +507,24 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
   }, [autoRace, manual, spec.scoring]);
   // 得点方式を変えたら、その方式に合った初期値へ寄せる
   useEffect(() => {
-    if (spec.scoring === "set") setRace((r) => (r[0] >= 1 && r[0] <= 30 && r[1] >= 1 && r[1] <= 30 ? r : [5, 5]));
-    else if (spec.scoring === "jpa_fixed") setRace((r) => (r[0] >= 5 ? r : [25, 25]));
+    if (spec.scoring === "set") { setRace((r) => (r && r[0] >= 1 && r[0] <= 30 ? r : [5, 5])); setManual(true); }
+    else if (spec.scoring === "jpa_fixed") { setRace((r) => (r && r[0] >= 1 ? r : [25, 25])); setManual(true); }
+    else setManual(false);
   }, [spec.scoring]);
 
   const setName = (i, v) => setNames((n) => (i === 0 ? [v, n[1]] : [n[0], v]));
   const setRate = (i, v) => setRates((r) => (i === 0 ? [v, r[1]] : [r[0], v]));
-  const setRaceAt = (i, v) => setRace((r) => (i === 0 ? [v, r[1]] : [r[0], v]));
+  const setRaceAt = (i, v) => setRace((r) => (i === 0 ? [v, (r || [0, 0])[1]] : [(r || [0, 0])[0], v]));
 
-  const finalNames = [names[0].trim() || "プレイヤー1", names[1].trim() || "プレイヤー2"];
-  const ready = race[0] > 0 && race[1] > 0;
+  const finalNames = [names[0].trim() || "プレイヤーA", names[1].trim() || "プレイヤーB"];
+  const raceVal = race || [0, 0];
+  const ready = raceVal[0] > 0 && raceVal[1] > 0;
 
   const start = () => {
     if (!ready) return;
     const setup = {
       names: finalNames, game: spec.game, scoring: spec.scoring, breakMode: spec.breakMode,
-      raceTo: [race[0], race[1]], rates: [R1, R2], lenPct,
-      timeLimit, minutes: timeLimit ? minutes : 0, createdAt: Date.now(),
+      raceTo: [raceVal[0], raceVal[1]], rates: [R1, R2], lenPct, createdAt: Date.now(),
     };
     saveSetupDefaults(setup);
     onStart(setup);
@@ -529,8 +555,8 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
         </div>
       )}
 
-      <div style={{ fontSize: 21, fontWeight: 900, marginBottom: 2 }}>試合をつくる</div>
-      <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>対戦者とルールを決めると、すぐスコアを付けられます</div>
+      <div style={{ fontSize: 21, fontWeight: 900, marginBottom: 2 }}>対戦を作成</div>
+      <div style={{ fontSize: 13, color: C.sub, marginBottom: 16 }}>何も入力しなくても、すぐ始められます</div>
 
       {/* 対戦者 */}
       <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6 }}>対戦者</div>
@@ -538,11 +564,7 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <span style={{ width: 10, height: 38, borderRadius: 4, background: PC[i], flexShrink: 0 }} />
           <input value={names[i]} onChange={(e) => setName(i, e.target.value.slice(0, 14))}
-            placeholder={i === 0 ? "プレイヤー1" : "プレイヤー2"} style={{ ...inputStyle, flex: 1 }} />
-          {spec.scoring === "jcl" && (
-            <input inputMode="numeric" value={rates[i]} onChange={(e) => setRate(i, e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-              placeholder="レート" style={{ ...inputStyle, width: 78, flexShrink: 0, textAlign: "center", padding: "12px 4px", fontSize: 15 }} />
-          )}
+            placeholder={i === 0 ? "プレイヤーA" : "プレイヤーB"} style={{ ...inputStyle, flex: 1 }} />
         </div>
       ))}
 
@@ -581,76 +603,91 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
         </div>
       )}
 
+      {/* レート（JCLのみ） */}
+      {spec.scoring === "jcl" && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" }}>レート</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+            {[0, 1].map((i) => (
+              <div key={i} style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {finalNames[i]}
+                </div>
+                <Stepper label="レート" value={rates[i]} min={0} max={999} step={25} onChange={(v) => setRate(i, v)} />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 4, lineHeight: 1.6 }}>
+            そのままでも始められます（初期値500・500）。数字をタップすると直接入力できます
+          </div>
+        </>
+      )}
+
       {/* 目標点 */}
       <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" }}>{label}</div>
 
       {spec.scoring === "jcl" && (
-        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
-            <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[["ロングゲーム", 100], ["ショートゲーム", 50]].map(([t, v]) => (
+              <button key={v} onClick={() => { setManual(false); setLenPct(v); }} style={{
+                flex: 1, background: !manual && lenPct === v ? C.blue : "#fff",
+                color: !manual && lenPct === v ? "#fff" : C.ink,
+                border: `2px solid ${!manual && lenPct === v ? C.blue : C.line}`,
+                borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+              }}>{t}</button>
+            ))}
           </div>
-          <input type="range" min={40} max={140} step={5} value={lenPct} disabled={manual}
-            onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue, opacity: manual ? 0.4 : 1 }} />
-          <div style={{ fontSize: 12.5, color: "#3F4A55", marginTop: 8, lineHeight: 1.7 }}>
-            {manual
-              ? "手動で決めています。自動に戻すとレートから計算し直します"
-              : R1 > 0 && R2 > 0
-                ? "2人のレートと長さから目標点を計算しました。短いほど下のレートの人が有利になります"
-                : "両方のレートを入れると目標点を自動で計算します。レートを使わないなら手動で決めてください"}
-          </div>
-          <button onClick={() => setManual((v) => !v)} style={{
-            width: "100%", marginTop: 10, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
-            padding: "10px 0", fontSize: 13.5, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT,
-          }}>{manual ? "レートから自動で決める" : "手動で決める"}</button>
+          <button onClick={() => setShowLenAdvanced((v) => !v)} style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            background: "none", border: "none", padding: "8px 2px 2px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
+          }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: C.blue }}>{(showLenAdvanced ? "▼" : "▶") + " 細かく設定"}</span>
+          </button>
+          {showLenAdvanced && (
+            <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>試合の長さ</span>
+                <span style={{ fontSize: 15, fontWeight: 800 }}>{manual ? "手動" : lenPct + "%"}</span>
+              </div>
+              <input type="range" min={40} max={140} step={5} value={lenPct} disabled={manual}
+                onChange={(e) => { setManual(false); setLenPct(+e.target.value); }} style={{ width: "100%", accentColor: C.blue, opacity: manual ? 0.4 : 1 }} />
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+                100%がロングゲーム、50%がショートゲームです。短いほど下のレートの人が有利になります
+              </div>
+              <button onClick={() => setManual((v) => !v)} style={{
+                width: "100%", marginTop: 10, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
+                padding: "9px 0", fontSize: 13, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT,
+              }}>{manual ? "レートから自動で決める" : "目標点を直接指定する"}</button>
+            </div>
+          )}
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {finalNames[i]}
+      {(spec.scoring !== "jcl" || manual) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+          {[0, 1].map((i) => (
+            <div key={i} style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {finalNames[i]}
+              </div>
+              <Stepper label={label} value={raceVal[i]} min={1} max={spec.scoring === "set" ? 30 : 120} onChange={(v) => setRaceAt(i, v)} />
             </div>
-            <Stepper label={label} value={race[i]} min={1} max={spec.scoring === "set" ? 30 : 120}
-              onChange={(v) => { if (spec.scoring === "jcl") setManual(true); setRaceAt(i, v); }} />
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       {spec.scoring === "set" && (
         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
           {[3, 4, 5, 6, 7].map((n) => (
             <button key={n} onClick={() => setRace([n, n])} style={{
-              flex: 1, background: race[0] === n && race[1] === n ? C.blue : "#fff",
-              color: race[0] === n && race[1] === n ? "#fff" : C.ink,
-              border: `1.5px solid ${race[0] === n && race[1] === n ? C.blue : C.line}`,
+              flex: 1, background: raceVal[0] === n && raceVal[1] === n ? C.blue : "#fff",
+              color: raceVal[0] === n && raceVal[1] === n ? "#fff" : C.ink,
+              border: `1.5px solid ${raceVal[0] === n && raceVal[1] === n ? C.blue : C.line}`,
               borderRadius: 10, padding: "9px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
             }}>{n}先</button>
           ))}
         </div>
       )}
-
-      {/* 時間制限 */}
-      <div style={{ fontSize: 13, fontWeight: 800, color: C.sub, margin: "20px 0 6px" }}>時間制限</div>
-      <div style={{ background: timeLimit ? C.lightBlue : C.zone, border: `1.5px solid ${timeLimit ? C.blue : C.line}`, borderRadius: 14, padding: "12px 14px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>⏱ 持ち時間を決める</div>
-            <div style={{ fontSize: 12.5, color: "#3F4A55", marginTop: 2, lineHeight: 1.6 }}>
-              時間切れになったラックが最終ラック。どちらも届かなければ引き分けです
-            </div>
-          </div>
-          <button onClick={() => setTimeLimit((v) => !v)} style={{
-            ...btnBase, background: timeLimit ? C.blue : C.line, color: timeLimit ? "#fff" : C.sub,
-            borderRadius: 20, padding: "8px 16px", fontSize: 13, flexShrink: 0, marginLeft: 10,
-          }}>{timeLimit ? "ON" : "OFF"}</button>
-        </div>
-        {timeLimit && (
-          <div style={{ marginTop: 10 }}>
-            <Stepper label="持ち時間（分）" value={minutes} min={5} max={180} step={5} onChange={setMinutes} />
-          </div>
-        )}
-      </div>
 
       <button onClick={start} disabled={!ready} style={{
         ...btnBase, width: "100%", marginTop: 22, background: ready ? C.blue : C.line, color: ready ? "#fff" : C.sub,
@@ -674,23 +711,20 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
 function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
   const ruleset = getRuleset(setup);
   const names = setup.names;
-  const timeLimitEnabled = !!setup.timeLimit;
 
   const [state, setState] = useState(() => saved || initialMatchState(setup));
-  const [nowTs, setNowTs] = useState(Date.now());
   const [pressed, setPressed] = useState(null);
   const [selectedBall, setSelectedBall] = useState(null); // タップで選んだ球
   const [dragDir, setDragDir] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [pendingWinner8, setPendingWinner8] = useState(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [suppressWin, setSuppressWin] = useState(false);
+  const [editHistIdx, setEditHistIdx] = useState(null); // タップして修正中のラック（histの実インデックス）
 
   const palette = paletteFor(ballDesign);
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
   // 変わるたびに端末へ控える（読み込み直しても続きから開ける）
   useEffect(() => { saveCurrent(setup, state); }, [state, setup]);
 
@@ -729,15 +763,6 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     ? [tot[0], tot[1]]
     : (phase === "play" && !hillHill ? liveTot : [tot[0], tot[1]]);
 
-  /* ===== 持ち時間 ===== */
-  const deadline = state.deadline || null;
-  const paused = !!state.pauseStart;
-  const msLeft = deadline ? deadline - (state.finishedAt || (paused ? state.pauseStart : nowTs)) : null;
-  const isTimeUp = msLeft != null && msLeft <= 0;
-  const timeParts = msLeft == null ? ["--", "--"] : (() => {
-    const s = Math.max(0, Math.floor(msLeft / 1000));
-    return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
-  })();
   const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
 
   /* ===== 勝敗判定 ===== */
@@ -750,15 +775,12 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     if (liveTot[0] >= rt(0) && rt(0) > 0) matchWinner = 0;
     else if (liveTot[1] >= rt(1) && rt(1) > 0) matchWinner = 1;
   }
-  // 時間切れ後は今のラックが最終ラック。終わってもどちらも届かなければ引き分け
-  const bothLose = matchWinner == null && isTimeUp && phase === "done";
-  const isFinalRack = isTimeUp && matchWinner == null && !bothLose;
 
   useEffect(() => {
-    if ((matchWinner != null || bothLose) && !state.finishedAt) {
+    if (matchWinner != null && !state.finishedAt) {
       const fin = Date.now();
       // ゲームボールを落とす前に目標点へ届いた決着。台上の球をここで確定させる
-      const midRackWin = matchWinner != null && phase === "play" && !reached[matchWinner];
+      const midRackWin = phase === "play" && !reached[matchWinner];
       if (midRackWin) pushUndo();
       applyLocal((s) => ({
         ...s,
@@ -766,12 +788,11 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
         finishedAt: fin,
         elapsedMs: s.startedAt ? fin - s.startedAt : null,
         winner: matchWinner,
-        bothLose,
       }));
-    } else if (matchWinner == null && !bothLose && state.finishedAt) {
-      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null, bothLose: false }));
+    } else if (matchWinner == null && state.finishedAt) {
+      applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null }));
     }
-  }, [matchWinner, bothLose, state.finishedAt]);
+  }, [matchWinner, state.finishedAt]);
 
   const confettiFiredRef = useRef(false);
   useEffect(() => {
@@ -842,7 +863,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
   };
   // セットマッチ：球を動かさず、名前をタップして1ラック確定
   const recordSetRack = (w) => {
-    if (ruleset.unit !== "rack" || phase !== "play" || matchWinner != null || bothLose) return;
+    if (ruleset.unit !== "rack" || phase !== "play" || matchWinner != null) return;
     pushUndo();
     const add = [0, 0];
     add[w] = 1;
@@ -850,7 +871,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
   };
   // 8ボールの14点制：勝者（14点固定）と、負けた側の残り球数（0〜7）だけでラックを確定
   const recordEightBallRack = (w, loserCount) => {
-    if (!ruleset.simplified8 || phase !== "play" || matchWinner != null || bothLose) return;
+    if (!ruleset.simplified8 || phase !== "play" || matchWinner != null) return;
     pushUndo();
     const add = [0, 0];
     add[w] = 14;
@@ -864,31 +885,20 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     const now = Date.now();
     applyLocal((s) => ({
       ...s, tot: [0, 0], rack: 1, brk: null, balls: mkBalls(ruleset.ballCount), phase: "banking",
-      lastResult: null, hist: [], startedAt: null, deadline: null, pauseStart: null,
-      finishedAt: null, elapsedMs: null, winner: null, bothLose: false,
+      lastResult: null, hist: [], startedAt: null,
+      finishedAt: null, elapsedMs: null, winner: null,
     }));
   };
   const chooseBreak = (i) => {
     applyLocal((s) => {
       if (s.startedAt) return { ...s, brk: i, phase: "play" };
-      const now = Date.now();
-      return { ...s, brk: i, phase: "play", startedAt: now, deadline: timeLimitEnabled ? now + (setup.minutes || 30) * 60000 : null };
+      return { ...s, brk: i, phase: "play", startedAt: Date.now() };
     });
   };
   const swapBreak = () => {
     if (phase !== "play") return;
     if (window.confirm("ブレイク順を入れ替えますか？")) { pushUndo(); applyLocal((s) => ({ ...s, brk: 1 - s.brk })); }
   };
-  const togglePause = () => {
-    applyLocal((s) => {
-      if (s.pauseStart) {
-        const pausedMs = Date.now() - s.pauseStart;
-        return { ...s, deadline: (s.deadline || Date.now()) + pausedMs, pauseStart: null };
-      }
-      return { ...s, pauseStart: Date.now() };
-    });
-  };
-  const addTime = (min) => { pushUndo(); applyLocal((s) => ({ ...s, deadline: (s.deadline || Date.now()) + min * 60000 })); };
   const quit = () => {
     if (!window.confirm("この試合をやめます。記録は消えます。\nよろしいですか？")) return;
     onExit();
@@ -948,7 +958,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
   };
 
   const hillInfo = (i) => {
-    if (matchWinner != null || bothLose) {
+    if (matchWinner != null) {
       if (matchWinner === i) return { txt: "勝ち", on: true };
       return { txt: "あと" + Math.max(0, rt(i) - disp[i]), on: false };
     }
@@ -967,7 +977,21 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
 
   const col = (loc) => balls.filter((b) => b.loc === loc);
   const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
-  const histRows = hist.map((h) => ({ ...h }));
+  const histRows = hist.map((h, idx) => ({ ...h, idx }));
+  // 今まさに決着した直後（訂正ボタンで扱う分）は、この行からの修正の対象から外す
+  const currentPendingIdx = phase === "done" && lastResult ? hist.length - 1 : -1;
+
+  // 過去のラックを修正する（合計は履歴の合計から作り直す）
+  const commitHistEdit = (idx, newAdd, newW) => {
+    pushUndo();
+    const newHist = hist.map((h, i) => (i === idx ? { ...h, add: newAdd, w: newW } : h));
+    const newTot = newHist.reduce((acc, h) => [acc[0] + h.add[0], acc[1] + h.add[1]], [0, 0]);
+    applyLocal((s) => ({
+      ...s, hist: newHist, tot: newTot,
+      lastResult: idx === newHist.length - 1 ? newHist[idx] : s.lastResult,
+    }));
+    setEditHistIdx(null);
+  };
 
   /* ===== バンキング（先攻決め） ===== */
   if (phase === "banking") {
@@ -988,8 +1012,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
         </div>
         <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center", lineHeight: 2 }}>
           {(ruleset.unit === "rack" ? "先取ラック数：" : "目標点：")}
-          <b style={{ color: C.blue, fontSize: 16 }}>{rt(0)}</b> 対 <b style={{ color: C.red, fontSize: 16 }}>{rt(1)}</b><br />
-          {timeLimitEnabled ? "持ち時間 " + (setup.minutes || 30) + "分（先攻を選んだ時点から計測）" : "時間制限なし"}
+          <b style={{ color: C.blue, fontSize: 16 }}>{rt(0)}</b> 対 <b style={{ color: C.red, fontSize: 16 }}>{rt(1)}</b>
         </div>
       </div>
     );
@@ -998,66 +1021,17 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
   /* ===== スコアリング ===== */
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT }}>
-      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ width: 90 }}>
-          <MenuButton ballDesign={ballDesign} onSetBallDesign={onSetBallDesign} onQuit={quit} />
-        </span>
-        <div onClick={() => { if (timeLimitEnabled && matchWinner == null && !bothLose) togglePause(); }} style={{
-          position: "absolute", left: "50%", transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", cursor: timeLimitEnabled && matchWinner == null && !bothLose ? "pointer" : "default",
-          fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
-          color: matchWinner != null ? C.sub : paused ? C.hill : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
-        }}>
-          {!timeLimitEnabled ? null : matchWinner == null && isTimeUp ? <span>時間切れ</span> : (
-            <>
-              <span style={{ marginRight: 4, fontSize: 14, visibility: paused ? "visible" : "hidden" }}>⏸</span>
-              <span style={{ width: 26, textAlign: "right" }}>{timeParts[0]}</span>
-              <span style={{ width: 8, textAlign: "center" }}>:</span>
-              <span style={{ width: 26, textAlign: "left" }}>{timeParts[1]}</span>
-            </>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {timeLimitEnabled && matchWinner == null && !bothLose && (
-            <button onClick={() => setToolsOpen(true)} style={{
-              background: paused ? C.hillBg : "#fff", border: `1px solid ${paused ? C.hill : C.line}`,
-              borderRadius: 8, padding: "3px 8px", fontSize: 12, fontWeight: 800,
-              color: paused ? C.hill : C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
-            }}>{paused ? "⏸ 停止中" : "⏱ 時間"}</button>
-          )}
-          <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <MenuButton ballDesign={ballDesign} onSetBallDesign={onSetBallDesign} onQuit={quit} />
+        <span style={{ fontSize: 12.5, color: C.sub }}>第 {rack} ラック</span>
       </div>
-
-      {toolsOpen && (
-        <Sheet title="持ち時間" onClose={() => setToolsOpen(false)}>
-          <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 }}>
-            {"時間の表示をタップすると一時停止・再開できます（" + (paused ? "現在：一時停止中" : "現在：動作中") + "）"}
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 }}>持ち時間を延長</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {[1, 3, 5].map((min) => (
-              <button key={min} onClick={() => addTime(min)} style={{
-                flex: 1, background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10,
-                padding: "11px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-              }}>{"+" + min + "分"}</button>
-            ))}
-          </div>
-        </Sheet>
-      )}
-
-      {isFinalRack && (
-        <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 }}>
-          時間切れ：このラックが最終ラック（届かなければ引き分け）
-        </div>
-      )}
 
       {/* スコアカード */}
       <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
         {[0, 1].map((i) => {
           const pc = PC[i];
           const hi = hillInfo(i);
-          const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null && !bothLose;
+          const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null;
           return (
             <div key={i} onClick={tappable ? () => recordSetRack(i) : undefined} style={{
               flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff",
@@ -1081,7 +1055,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
               )}
               {tappable && <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4 }}>タップで+1ラック</div>}
               <div style={{ minHeight: 18, marginTop: 4 }}>
-                {matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (
+                {matchWinner != null ? null : phase === "done" && lastResult ? (
                   ruleset.nextBrk(lastResult, brk) === i && <span style={{ color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 }}>● 次ブレイク</span>
                 ) : brk === i && (
                   <button onClick={swapBreak} style={{ background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 }}>● ブレイク</button>
@@ -1099,19 +1073,12 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
       )}
 
       {/* 決着 or 操作ボタン */}
-      {matchWinner != null || bothLose ? (
+      {matchWinner != null ? (
         <div style={{ marginBottom: 6 }}>
-          {bothLose ? (
-            <div style={{ background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 17.5, fontWeight: 800 }}>時間切れ</div>
-              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0] + " － " + disp[1]}</div>
-            </div>
-          ) : (
-            <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 17.5, fontWeight: 800 }}>{"🏆 " + pl[matchWinner].name + " 勝利"}</div>
-              <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0] + " － " + disp[1]}</div>
-            </div>
-          )}
+          <div style={{ background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 17.5, fontWeight: 800 }}>{"🏆 " + pl[matchWinner].name + " 勝利"}</div>
+            <div style={{ fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 }}>{disp[0] + " － " + disp[1]}</div>
+          </div>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button onClick={correct} style={ctrl}>◀ 訂正</button>
             <button onClick={() => { if (window.confirm("同じ相手・同じ条件でもう1試合始めます。今の記録は消えます。よろしいですか？")) rematch(); }} style={{ ...ctrl, borderColor: C.blue, color: C.blue }}>🔁 リマッチ</button>
@@ -1217,27 +1184,79 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
           <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>
             {(ruleset.unit === "rack" ? "ラックの履歴（" : "ラック毎のスコア（履歴 ") + histRows.length + "）"}
           </div>
-          {(ruleset.unit === "rack" ? histRows : histRows.slice().reverse()).map((h, k) => (
-            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 }}>
-              <span style={{ fontSize: 13.5, color: C.sub }}>
-                {"第" + h.rack + "R　"}<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}
-              </span>
-              {ruleset.unit === "rack" ? (
-                <span style={{ fontSize: 12.5, color: C.sub, fontVariantNumeric: "tabular-nums" }}>{h.at ? fmtClock(h.at) : ""}</span>
-              ) : (
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                  <b style={{ fontSize: 16.5 }}>
-                    <span style={{ color: C.blue }}>{h.add[0]}</span>
-                    <span style={{ color: C.sub, margin: "0 2px" }}>–</span>
-                    <span style={{ color: C.red }}>{h.add[1]}</span>
-                  </b>
+          {(ruleset.unit === "rack" ? histRows : histRows.slice().reverse()).map((h) => {
+            const editable = h.idx !== currentPendingIdx;
+            return (
+              <div key={h.idx} onClick={editable ? () => setEditHistIdx(h.idx) : undefined} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px",
+                background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5,
+                cursor: editable ? "pointer" : "default",
+              }}>
+                <span style={{ fontSize: 13.5, color: C.sub }}>
+                  {"第" + h.rack + "R　"}<b style={{ color: PC[h.w] }}>{pl[h.w].name}</b>{h.hill ? " ⚑" : ""}
                 </span>
-              )}
-            </div>
-          ))}
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {ruleset.unit === "rack" ? (
+                    <span style={{ fontSize: 12.5, color: C.sub, fontVariantNumeric: "tabular-nums" }}>{h.at ? fmtClock(h.at) : ""}</span>
+                  ) : (
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                      <b style={{ fontSize: 16.5 }}>
+                        <span style={{ color: C.blue }}>{h.add[0]}</span>
+                        <span style={{ color: C.sub, margin: "0 2px" }}>–</span>
+                        <span style={{ color: C.red }}>{h.add[1]}</span>
+                      </b>
+                    </span>
+                  )}
+                  {editable && <span style={{ fontSize: 12, opacity: 0.5 }}>✏️</span>}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {editHistIdx != null && (() => {
+        const h = hist[editHistIdx];
+        if (!h) return null;
+        if (ruleset.unit === "rack") {
+          return (
+            <Sheet title={"第" + h.rack + "ラックを修正"} onClose={() => setEditHistIdx(null)}>
+              <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 12 }}>このラックの勝者を選び直してください</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[0, 1].map((i) => (
+                  <button key={i} onClick={() => commitHistEdit(editHistIdx, i === 0 ? [1, 0] : [0, 1], i)} style={{
+                    flex: 1, background: h.w === i ? PC[i] : "#fff", color: h.w === i ? "#fff" : C.ink,
+                    border: `2px solid ${PC[i]}`, borderRadius: 12, padding: "16px 8px", fontSize: 15, fontWeight: 800,
+                    cursor: "pointer", fontFamily: FONT,
+                  }}>{(h.w === i ? "✓ " : "") + pl[i].name + " の勝ち"}</button>
+                ))}
+              </div>
+            </Sheet>
+          );
+        }
+        return (
+          <HistEditSheet h={h} pl={pl} onClose={() => setEditHistIdx(null)}
+            onSave={(v0, v1) => commitHistEdit(editHistIdx, [v0, v1], v0 === v1 ? h.w : (v0 > v1 ? 0 : 1))} />
+        );
+      })()}
     </div>
+  );
+}
+
+/* 点数制（JCL・JPA・8ボール簡易）の過去ラックを直接編集するシート */
+function HistEditSheet({ h, pl, onClose, onSave }) {
+  const [v0, setV0] = useState(h.add[0]);
+  const [v1, setV1] = useState(h.add[1]);
+  return (
+    <Sheet title={"第" + h.rack + "ラックを修正"} onClose={onClose}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <Stepper label={pl[0].name} value={v0} min={0} max={60} onChange={setV0} />
+        <Stepper label={pl[1].name} value={v1} min={0} max={60} onChange={setV1} />
+      </div>
+      <button onClick={() => onSave(v0, v1)} style={{
+        ...btnBase, width: "100%", background: C.blue, color: "#fff", padding: "13px 0", fontSize: 15, borderRadius: 12,
+      }}>保存する</button>
+    </Sheet>
   );
 }
 
