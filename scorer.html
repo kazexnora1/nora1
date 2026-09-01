@@ -54,8 +54,8 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
    ========================================================= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに数字を上げる。新しいファイルを置くと、開いている端末に更新バナーが出る
-const APP_VERSION = "1.001";
-const BUILD_TIME = "2026-09-01 用語調整・時間制限撤廃・ラック修正・目標点UI変更";
+const APP_VERSION = "1.002";
+const BUILD_TIME = "2026-09-01 名前欄に「入力」ボタン追加、レートをタップ式に変更、JPAをスキルレベル選択制に、ロング/ショートの並び順変更";
 const C = {
     bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
     blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -314,8 +314,32 @@ function Stepper({ label, value, min, max, step, onChange }) {
                     commit(e.target.value); }, style: {
                     flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums",
                     border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "4px 0", outline: "none", fontFamily: FONT, background: "#fff",
-                } })) : (React.createElement("div", { onClick: () => setEditing(true), style: { flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", cursor: "pointer" } }, value)),
+                } })) : (React.createElement("div", { onClick: () => setEditing(true), style: {
+                    flex: 1, minWidth: 0, textAlign: "center", fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    cursor: "pointer", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 0",
+                } }, value)),
             React.createElement("button", { style: b, onClick: () => onChange(Math.min(max, value + st)) }, "\uFF0B"))));
+}
+/* +/-ボタンではなく、白地に黒文字のタップで直接入力する数値欄。
+   刻み幅では現実的でないレートのような値に使う */
+function TapNumber({ value, onChange, min, max, width }) {
+    const [editing, setEditing] = useState(false);
+    const commit = (raw) => {
+        const v = parseInt(raw, 10);
+        if (!isNaN(v))
+            onChange(Math.max(min, Math.min(max, v)));
+        setEditing(false);
+    };
+    const box = {
+        width: width || 76, flexShrink: 0, boxSizing: "border-box", textAlign: "center",
+        fontSize: 16, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.ink,
+        border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 4px", fontFamily: FONT, background: "#fff",
+    };
+    if (editing) {
+        return (React.createElement("input", { type: "number", inputMode: "numeric", defaultValue: value, autoFocus: true, onFocus: (e) => e.target.select(), onBlur: (e) => commit(e.target.value), onKeyDown: (e) => { if (e.key === "Enter")
+                commit(e.target.value); }, style: { ...box, border: `1.5px solid ${C.blue}`, outline: "none" } }));
+    }
+    return React.createElement("div", { onClick: () => setEditing(true), style: { ...box, cursor: "pointer" } }, value);
 }
 function Sheet({ title, onClose, children }) {
     return (React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end" } },
@@ -416,11 +440,15 @@ function Picker({ title, items, value, onPick }) {
         }))));
 }
 const DEFAULT_RATE = 500;
+const DEFAULT_SKILL = 5;
+const JPA_SKILL_TARGETS = { 1: 14, 2: 19, 3: 25, 4: 31, 5: 38, 6: 46, 7: 55, 8: 65, 9: 75 };
+const SKILL_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign }) {
     const d0 = loadSetupDefaults() || {};
-    const [names, setNames] = useState(() => (Array.isArray(d0.names) ? d0.names : ["", ""]));
+    const [names, setNames] = useState(() => (Array.isArray(d0.names) && (d0.names[0] || d0.names[1]) ? d0.names : ["プレイヤーA", "プレイヤーB"]));
     const [spec, setSpec] = useState(() => specOf(d0));
     const [rates, setRates] = useState(() => (Array.isArray(d0.rates) && d0.rates[0] > 0 && d0.rates[1] > 0 ? d0.rates : [DEFAULT_RATE, DEFAULT_RATE]));
+    const [skills, setSkills] = useState(() => (Array.isArray(d0.skills) && d0.skills[0] >= 1 && d0.skills[1] >= 1 ? d0.skills : [DEFAULT_SKILL, DEFAULT_SKILL]));
     const [lenPct, setLenPct] = useState(() => d0.lenPct || 100);
     const [manual, setManual] = useState(false);
     // 初期表示から目標点が入った状態にする（何も入力しなくても即座に始められるように）
@@ -430,8 +458,10 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
         const d0spec = specOf(d0);
         if (d0spec.scoring === "set")
             return [5, 5];
-        if (d0spec.scoring === "jpa_fixed")
-            return [25, 25];
+        if (d0spec.scoring === "jpa_fixed") {
+            const sk = Array.isArray(d0.skills) && d0.skills[0] >= 1 ? d0.skills : [DEFAULT_SKILL, DEFAULT_SKILL];
+            return [JPA_SKILL_TARGETS[sk[0]], JPA_SKILL_TARGETS[sk[1]]];
+        }
         const r0 = Array.isArray(d0.rates) && d0.rates[0] > 0 ? d0.rates[0] : DEFAULT_RATE;
         const r1 = Array.isArray(d0.rates) && d0.rates[1] > 0 ? d0.rates[1] : DEFAULT_RATE;
         const rc = computeRace(r0, r1, d0.lenPct || 100);
@@ -439,6 +469,9 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
     });
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [showLenAdvanced, setShowLenAdvanced] = useState(false);
+    const nameRef0 = useRef(null);
+    const nameRef1 = useRef(null);
+    const nameRefs = [nameRef0, nameRef1];
     const ruleset = getRuleset(spec);
     const R1 = rates[0], R2 = rates[1];
     // JCL：2人のレートと試合の長さから目標点を自動で出す（手動に切り替えることもできる）
@@ -447,14 +480,15 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
         if (spec.scoring === "jcl" && !manual && autoRace)
             setRace([autoRace.rt1, autoRace.rt2]);
     }, [autoRace, manual, spec.scoring]);
+    // JPA：各自のスキルレベルから目標点を出す（相手のレベルは関係ない）
+    useEffect(() => {
+        if (spec.scoring === "jpa_fixed")
+            setRace([JPA_SKILL_TARGETS[skills[0]], JPA_SKILL_TARGETS[skills[1]]]);
+    }, [spec.scoring, skills]);
     // 得点方式を変えたら、その方式に合った初期値へ寄せる
     useEffect(() => {
         if (spec.scoring === "set") {
             setRace((r) => (r && r[0] >= 1 && r[0] <= 30 ? r : [5, 5]));
-            setManual(true);
-        }
-        else if (spec.scoring === "jpa_fixed") {
-            setRace((r) => (r && r[0] >= 1 ? r : [25, 25]));
             setManual(true);
         }
         else
@@ -462,7 +496,12 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
     }, [spec.scoring]);
     const setName = (i, v) => setNames((n) => (i === 0 ? [v, n[1]] : [n[0], v]));
     const setRate = (i, v) => setRates((r) => (i === 0 ? [v, r[1]] : [r[0], v]));
+    const setSkill = (i, v) => setSkills((s) => (i === 0 ? [v, s[1]] : [s[0], v]));
     const setRaceAt = (i, v) => setRace((r) => (i === 0 ? [v, (r || [0, 0])[1]] : [(r || [0, 0])[0], v]));
+    const selectName = (i) => { const el = nameRefs[i].current; if (el) {
+        el.focus();
+        el.select();
+    } };
     const finalNames = [names[0].trim() || "プレイヤーA", names[1].trim() || "プレイヤーB"];
     const raceVal = race || [0, 0];
     const ready = raceVal[0] > 0 && raceVal[1] > 0;
@@ -471,7 +510,7 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
             return;
         const setup = {
             names: finalNames, game: spec.game, scoring: spec.scoring, breakMode: spec.breakMode,
-            raceTo: [raceVal[0], raceVal[1]], rates: [R1, R2], lenPct, createdAt: Date.now(),
+            raceTo: [raceVal[0], raceVal[1]], rates: [R1, R2], skills: [skills[0], skills[1]], lenPct, createdAt: Date.now(),
         };
         saveSetupDefaults(setup);
         onStart(setup);
@@ -504,12 +543,21 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
                 "\u30E9\u30C3\u30AF\u3000\uFF08",
                 fmtClock(resume.at),
                 "\uFF09"))),
-        React.createElement("div", { style: { fontSize: 21, fontWeight: 900, marginBottom: 2 } }, "\u5BFE\u6226\u3092\u4F5C\u6210"),
-        React.createElement("div", { style: { fontSize: 13, color: C.sub, marginBottom: 16 } }, "\u4F55\u3082\u5165\u529B\u3057\u306A\u304F\u3066\u3082\u3001\u3059\u3050\u59CB\u3081\u3089\u308C\u307E\u3059"),
+        React.createElement("div", { style: { fontSize: 21, fontWeight: 900, marginBottom: 14 } }, "\u5BFE\u6226\u3092\u4F5C\u6210"),
         React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6 } }, "\u5BFE\u6226\u8005"),
-        [0, 1].map((i) => (React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+        [0, 1].map((i) => (React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8 } },
             React.createElement("span", { style: { width: 10, height: 38, borderRadius: 4, background: PC[i], flexShrink: 0 } }),
-            React.createElement("input", { value: names[i], onChange: (e) => setName(i, e.target.value.slice(0, 14)), placeholder: i === 0 ? "プレイヤーA" : "プレイヤーB", style: { ...inputStyle, flex: 1 } })))),
+            React.createElement("input", { ref: nameRefs[i], value: names[i], onChange: (e) => setName(i, e.target.value.slice(0, 14)), placeholder: i === 0 ? "プレイヤーA" : "プレイヤーB", style: { ...inputStyle, flex: 1, minWidth: 0 } }),
+            React.createElement("button", { onClick: () => selectName(i), style: {
+                    flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
+                    padding: "12px 10px", fontSize: 13, fontWeight: 700, color: C.blue, cursor: "pointer", fontFamily: FONT,
+                } }, "\u5165\u529B"),
+            spec.scoring === "jcl" && (React.createElement(TapNumber, { value: rates[i], min: 0, max: 999, onChange: (v) => setRate(i, v) })),
+            spec.scoring === "jpa_fixed" && (React.createElement("select", { value: skills[i], onChange: (e) => setSkill(i, +e.target.value), style: {
+                    flexShrink: 0, width: 92, boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`,
+                    borderRadius: 10, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "12px 4px",
+                    outline: "none", fontFamily: FONT, textAlign: "center",
+                } }, SKILL_LEVELS.map((n) => React.createElement("option", { key: n, value: n }, "SL" + n + "・" + JPA_SKILL_TARGETS[n] + "点"))))))),
         React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, "\u30EB\u30FC\u30EB"),
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, TEMPLATES.map((t) => {
             const on = curTpl && curTpl.id === t.id;
@@ -530,15 +578,9 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
             React.createElement(Picker, { title: "\u7A2E\u76EE", value: spec.game, onPick: (v) => setSpec({ ...spec, game: v }), items: Object.keys(RULE_GAMES).map((k) => ({ id: k, label: RULE_GAMES[k].label })) }),
             React.createElement(Picker, { title: "\u5F97\u70B9\u306E\u6570\u3048\u65B9", value: spec.scoring, onPick: (v) => setSpec({ ...spec, scoring: v }), items: Object.keys(SCORING_DEFS).map((k) => ({ id: k, label: SCORING_DEFS[k].label, sub: SCORING_DEFS[k].sub })) }),
             React.createElement(Picker, { title: "\u30D6\u30EC\u30A4\u30AF\u9806", value: spec.breakMode, onPick: (v) => setSpec({ ...spec, breakMode: v }), items: BREAK_MODES.map((b) => ({ id: b.id, label: b.label, sub: b.sub })) }))),
-        spec.scoring === "jcl" && (React.createElement(React.Fragment, null,
-            React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, "\u30EC\u30FC\u30C8"),
-            React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
-                React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, finalNames[i]),
-                React.createElement(Stepper, { label: "\u30EC\u30FC\u30C8", value: rates[i], min: 0, max: 999, step: 25, onChange: (v) => setRate(i, v) }))))),
-            React.createElement("div", { style: { fontSize: 11.5, color: C.sub, marginTop: 4, lineHeight: 1.6 } }, "\u305D\u306E\u307E\u307E\u3067\u3082\u59CB\u3081\u3089\u308C\u307E\u3059\uFF08\u521D\u671F\u5024500\u30FB500\uFF09\u3002\u6570\u5B57\u3092\u30BF\u30C3\u30D7\u3059\u308B\u3068\u76F4\u63A5\u5165\u529B\u3067\u304D\u307E\u3059"))),
-        React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, label),
+        spec.scoring !== "jpa_fixed" && (React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, label)),
         spec.scoring === "jcl" && (React.createElement("div", { style: { marginBottom: 10 } },
-            React.createElement("div", { style: { display: "flex", gap: 8 } }, [["ロングゲーム", 100], ["ショートゲーム", 50]].map(([t, v]) => (React.createElement("button", { key: v, onClick: () => { setManual(false); setLenPct(v); }, style: {
+            React.createElement("div", { style: { display: "flex", gap: 8 } }, [["ショートゲーム", 50], ["ロングゲーム", 100]].map(([t, v]) => (React.createElement("button", { key: v, onClick: () => { setManual(false); setLenPct(v); }, style: {
                     flex: 1, background: !manual && lenPct === v ? C.blue : "#fff",
                     color: !manual && lenPct === v ? "#fff" : C.ink,
                     border: `2px solid ${!manual && lenPct === v ? C.blue : C.line}`,
@@ -559,7 +601,7 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
                         width: "100%", marginTop: 10, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
                         padding: "9px 0", fontSize: 13, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT,
                     } }, manual ? "レートから自動で決める" : "目標点を直接指定する"))))),
-        (spec.scoring !== "jcl" || manual) && (React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
+        (spec.scoring === "set" || (spec.scoring === "jcl" && manual)) && (React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
             React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, finalNames[i]),
             React.createElement(Stepper, { label: label, value: raceVal[i], min: 1, max: spec.scoring === "set" ? 30 : 120, onChange: (v) => setRaceAt(i, v) })))))),
         spec.scoring === "set" && (React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, [3, 4, 5, 6, 7].map((n) => (React.createElement("button", { key: n, onClick: () => setRace([n, n]), style: {
