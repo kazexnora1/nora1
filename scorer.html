@@ -54,8 +54,8 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
    ========================================================= */
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに数字を上げる。新しいファイルを置くと、開いている端末に更新バナーが出る
-const APP_VERSION = "1.000";
-const BUILD_TIME = "2026-09-01 単体版の初版";
+const APP_VERSION = "1.001";
+const BUILD_TIME = "2026-09-01 用語調整・時間制限撤廃・ラック修正・目標点UI変更";
 const C = {
     bg: "#FFFFFF", zone: "#F5F6F8", card: "#FFFFFF", ink: "#1C2530", sub: "#6A7480", line: "#E4E7EB",
     blue: "#2E6DB5", red: "#C6392E", lightBlue: "#E9F1FB", lightRed: "#FBEBE9",
@@ -87,7 +87,7 @@ const RULE_GAMES = {
 const ballPts = (balls, loc, money) => balls.filter((x) => x.loc === loc && !x.dead).reduce((sum, b) => sum + (b.n === money ? 2 : 1), 0);
 const SCORING_DEFS = {
     jcl: {
-        label: "14点制（レートハンデ）", unit: "point", hill: 14,
+        label: "JCL", unit: "point", hill: 14,
         sub: "ゲームボールを落とした側が14点、相手は落とした球の数",
         calcAdd: (balls, w) => {
             const ll = w === 0 ? "p2" : "p1";
@@ -100,7 +100,7 @@ const SCORING_DEFS = {
         calcLive: (balls, side) => balls.filter((b) => b.loc === side && !b.dead).length,
     },
     jpa_fixed: {
-        label: "ボール加点（目標点）", unit: "point", hill: null,
+        label: "JPA", unit: "point", hill: null,
         sub: "球1点・ゲームボール2点。先に目標点へ届いた方が勝ち",
         calcAdd: (balls, _w, g) => [ballPts(balls, "p1", g.money), ballPts(balls, "p2", g.money)],
         calcLive: (balls, side, g) => ballPts(balls, side, g.money),
@@ -246,12 +246,9 @@ function initialMatchState(setup) {
         raceTo: [setup.raceTo[0], setup.raceTo[1]],
         names: [setup.names[0], setup.names[1]],
         startedAt: null,
-        deadline: null, // 時間切れの時刻（絶対時刻）
-        pauseStart: null,
         finishedAt: null,
         elapsedMs: null,
         winner: null,
-        bothLose: false,
     };
 }
 const fmtClock = (ms) => {
@@ -301,12 +298,23 @@ const inputStyle = {
 };
 function Stepper({ label, value, min, max, step, onChange }) {
     const st = step || 1;
-    const b = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT };
+    const [editing, setEditing] = useState(false);
+    const b = { width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 19, cursor: "pointer", fontFamily: FONT, flexShrink: 0 };
+    const commit = (raw) => {
+        const v = parseInt(raw, 10);
+        if (!isNaN(v))
+            onChange(Math.max(min, Math.min(max, v)));
+        setEditing(false);
+    };
     return (React.createElement("div", { style: { flex: 1, minWidth: 0, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px" } },
         React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" } }, label),
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
             React.createElement("button", { style: b, onClick: () => onChange(Math.max(min, value - st)) }, "\u2212"),
-            React.createElement("div", { style: { flex: 1, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums" } }, value),
+            editing ? (React.createElement("input", { type: "number", inputMode: "numeric", defaultValue: value, autoFocus: true, onFocus: (e) => e.target.select(), onBlur: (e) => commit(e.target.value), onKeyDown: (e) => { if (e.key === "Enter")
+                    commit(e.target.value); }, style: {
+                    flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    border: `1.5px solid ${C.blue}`, borderRadius: 8, padding: "4px 0", outline: "none", fontFamily: FONT, background: "#fff",
+                } })) : (React.createElement("div", { onClick: () => setEditing(true), style: { flex: 1, minWidth: 0, textAlign: "center", fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", cursor: "pointer" } }, value)),
             React.createElement("button", { style: b, onClick: () => onChange(Math.min(max, value + st)) }, "\uFF0B"))));
 }
 function Sheet({ title, onClose, children }) {
@@ -388,8 +396,8 @@ function MenuButton({ style, ballDesign, onSetBallDesign, onQuit }) {
    試合をつくる画面
    ========================================================= */
 const TEMPLATES = [
-    { id: "t14", name: "14点制", spec: { game: "9", scoring: "jcl", breakMode: "alternate" }, sub: "レートハンデ・交互ブレイク" },
-    { id: "tpt", name: "ボール加点", spec: { game: "9", scoring: "jpa_fixed", breakMode: "winner" }, sub: "目標点・勝者ブレイク" },
+    { id: "t14", name: "JCL", spec: { game: "9", scoring: "jcl", breakMode: "alternate" }, sub: "レートハンデ・交互ブレイク" },
+    { id: "tpt", name: "JPA", spec: { game: "9", scoring: "jpa_fixed", breakMode: "winner" }, sub: "目標点・勝者ブレイク" },
     { id: "tset", name: "セットマッチ", spec: { game: "9", scoring: "set", breakMode: "winner" }, sub: "ラック先取・勝者ブレイク" },
 ];
 const sameSpec = (a, b) => a && b && a.game === b.game && a.scoring === b.scoring && a.breakMode === b.breakMode;
@@ -407,20 +415,33 @@ function Picker({ title, items, value, onPick }) {
                 it.sub && React.createElement("div", { style: { fontSize: 11.5, color: "#3F4A55", marginTop: 2, lineHeight: 1.5, paddingLeft: 17 } }, it.sub)));
         }))));
 }
+const DEFAULT_RATE = 500;
 function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign }) {
     const d0 = loadSetupDefaults() || {};
     const [names, setNames] = useState(() => (Array.isArray(d0.names) ? d0.names : ["", ""]));
     const [spec, setSpec] = useState(() => specOf(d0));
-    const [rates, setRates] = useState(() => (Array.isArray(d0.rates) ? d0.rates.map(String) : ["", ""]));
+    const [rates, setRates] = useState(() => (Array.isArray(d0.rates) && d0.rates[0] > 0 && d0.rates[1] > 0 ? d0.rates : [DEFAULT_RATE, DEFAULT_RATE]));
     const [lenPct, setLenPct] = useState(() => d0.lenPct || 100);
     const [manual, setManual] = useState(false);
-    const [race, setRace] = useState(() => (Array.isArray(d0.raceTo) ? d0.raceTo : [0, 0]));
-    const [timeLimit, setTimeLimit] = useState(() => !!d0.timeLimit);
-    const [minutes, setMinutes] = useState(() => d0.minutes || 30);
+    // 初期表示から目標点が入った状態にする（何も入力しなくても即座に始められるように）
+    const [race, setRace] = useState(() => {
+        if (Array.isArray(d0.raceTo) && d0.raceTo[0] > 0)
+            return d0.raceTo;
+        const d0spec = specOf(d0);
+        if (d0spec.scoring === "set")
+            return [5, 5];
+        if (d0spec.scoring === "jpa_fixed")
+            return [25, 25];
+        const r0 = Array.isArray(d0.rates) && d0.rates[0] > 0 ? d0.rates[0] : DEFAULT_RATE;
+        const r1 = Array.isArray(d0.rates) && d0.rates[1] > 0 ? d0.rates[1] : DEFAULT_RATE;
+        const rc = computeRace(r0, r1, d0.lenPct || 100);
+        return [rc.rt1, rc.rt2];
+    });
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const [showLenAdvanced, setShowLenAdvanced] = useState(false);
     const ruleset = getRuleset(spec);
-    const R1 = parseInt(rates[0], 10) || 0, R2 = parseInt(rates[1], 10) || 0;
-    // 14点制：2人のレートと試合の長さから目標点を自動で出す（手動に切り替えることもできる）
+    const R1 = rates[0], R2 = rates[1];
+    // JCL：2人のレートと試合の長さから目標点を自動で出す（手動に切り替えることもできる）
     const autoRace = useMemo(() => (spec.scoring === "jcl" && R1 > 0 && R2 > 0 ? computeRace(R1, R2, lenPct) : null), [spec.scoring, R1, R2, lenPct]);
     useEffect(() => {
         if (spec.scoring === "jcl" && !manual && autoRace)
@@ -428,23 +449,29 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
     }, [autoRace, manual, spec.scoring]);
     // 得点方式を変えたら、その方式に合った初期値へ寄せる
     useEffect(() => {
-        if (spec.scoring === "set")
-            setRace((r) => (r[0] >= 1 && r[0] <= 30 && r[1] >= 1 && r[1] <= 30 ? r : [5, 5]));
-        else if (spec.scoring === "jpa_fixed")
-            setRace((r) => (r[0] >= 5 ? r : [25, 25]));
+        if (spec.scoring === "set") {
+            setRace((r) => (r && r[0] >= 1 && r[0] <= 30 ? r : [5, 5]));
+            setManual(true);
+        }
+        else if (spec.scoring === "jpa_fixed") {
+            setRace((r) => (r && r[0] >= 1 ? r : [25, 25]));
+            setManual(true);
+        }
+        else
+            setManual(false);
     }, [spec.scoring]);
     const setName = (i, v) => setNames((n) => (i === 0 ? [v, n[1]] : [n[0], v]));
     const setRate = (i, v) => setRates((r) => (i === 0 ? [v, r[1]] : [r[0], v]));
-    const setRaceAt = (i, v) => setRace((r) => (i === 0 ? [v, r[1]] : [r[0], v]));
-    const finalNames = [names[0].trim() || "プレイヤー1", names[1].trim() || "プレイヤー2"];
-    const ready = race[0] > 0 && race[1] > 0;
+    const setRaceAt = (i, v) => setRace((r) => (i === 0 ? [v, (r || [0, 0])[1]] : [(r || [0, 0])[0], v]));
+    const finalNames = [names[0].trim() || "プレイヤーA", names[1].trim() || "プレイヤーB"];
+    const raceVal = race || [0, 0];
+    const ready = raceVal[0] > 0 && raceVal[1] > 0;
     const start = () => {
         if (!ready)
             return;
         const setup = {
             names: finalNames, game: spec.game, scoring: spec.scoring, breakMode: spec.breakMode,
-            raceTo: [race[0], race[1]], rates: [R1, R2], lenPct,
-            timeLimit, minutes: timeLimit ? minutes : 0, createdAt: Date.now(),
+            raceTo: [raceVal[0], raceVal[1]], rates: [R1, R2], lenPct, createdAt: Date.now(),
         };
         saveSetupDefaults(setup);
         onStart(setup);
@@ -477,13 +504,12 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
                 "\u30E9\u30C3\u30AF\u3000\uFF08",
                 fmtClock(resume.at),
                 "\uFF09"))),
-        React.createElement("div", { style: { fontSize: 21, fontWeight: 900, marginBottom: 2 } }, "\u8A66\u5408\u3092\u3064\u304F\u308B"),
-        React.createElement("div", { style: { fontSize: 13, color: C.sub, marginBottom: 16 } }, "\u5BFE\u6226\u8005\u3068\u30EB\u30FC\u30EB\u3092\u6C7A\u3081\u308B\u3068\u3001\u3059\u3050\u30B9\u30B3\u30A2\u3092\u4ED8\u3051\u3089\u308C\u307E\u3059"),
+        React.createElement("div", { style: { fontSize: 21, fontWeight: 900, marginBottom: 2 } }, "\u5BFE\u6226\u3092\u4F5C\u6210"),
+        React.createElement("div", { style: { fontSize: 13, color: C.sub, marginBottom: 16 } }, "\u4F55\u3082\u5165\u529B\u3057\u306A\u304F\u3066\u3082\u3001\u3059\u3050\u59CB\u3081\u3089\u308C\u307E\u3059"),
         React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, marginBottom: 6 } }, "\u5BFE\u6226\u8005"),
         [0, 1].map((i) => (React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
             React.createElement("span", { style: { width: 10, height: 38, borderRadius: 4, background: PC[i], flexShrink: 0 } }),
-            React.createElement("input", { value: names[i], onChange: (e) => setName(i, e.target.value.slice(0, 14)), placeholder: i === 0 ? "プレイヤー1" : "プレイヤー2", style: { ...inputStyle, flex: 1 } }),
-            spec.scoring === "jcl" && (React.createElement("input", { inputMode: "numeric", value: rates[i], onChange: (e) => setRate(i, e.target.value.replace(/[^0-9]/g, "").slice(0, 3)), placeholder: "\u30EC\u30FC\u30C8", style: { ...inputStyle, width: 78, flexShrink: 0, textAlign: "center", padding: "12px 4px", fontSize: 15 } }))))),
+            React.createElement("input", { value: names[i], onChange: (e) => setName(i, e.target.value.slice(0, 14)), placeholder: i === 0 ? "プレイヤーA" : "プレイヤーB", style: { ...inputStyle, flex: 1 } })))),
         React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, "\u30EB\u30FC\u30EB"),
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, TEMPLATES.map((t) => {
             const on = curTpl && curTpl.id === t.id;
@@ -504,47 +530,46 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
             React.createElement(Picker, { title: "\u7A2E\u76EE", value: spec.game, onPick: (v) => setSpec({ ...spec, game: v }), items: Object.keys(RULE_GAMES).map((k) => ({ id: k, label: RULE_GAMES[k].label })) }),
             React.createElement(Picker, { title: "\u5F97\u70B9\u306E\u6570\u3048\u65B9", value: spec.scoring, onPick: (v) => setSpec({ ...spec, scoring: v }), items: Object.keys(SCORING_DEFS).map((k) => ({ id: k, label: SCORING_DEFS[k].label, sub: SCORING_DEFS[k].sub })) }),
             React.createElement(Picker, { title: "\u30D6\u30EC\u30A4\u30AF\u9806", value: spec.breakMode, onPick: (v) => setSpec({ ...spec, breakMode: v }), items: BREAK_MODES.map((b) => ({ id: b.id, label: b.label, sub: b.sub })) }))),
+        spec.scoring === "jcl" && (React.createElement(React.Fragment, null,
+            React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, "\u30EC\u30FC\u30C8"),
+            React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
+                React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, finalNames[i]),
+                React.createElement(Stepper, { label: "\u30EC\u30FC\u30C8", value: rates[i], min: 0, max: 999, step: 25, onChange: (v) => setRate(i, v) }))))),
+            React.createElement("div", { style: { fontSize: 11.5, color: C.sub, marginTop: 4, lineHeight: 1.6 } }, "\u305D\u306E\u307E\u307E\u3067\u3082\u59CB\u3081\u3089\u308C\u307E\u3059\uFF08\u521D\u671F\u5024500\u30FB500\uFF09\u3002\u6570\u5B57\u3092\u30BF\u30C3\u30D7\u3059\u308B\u3068\u76F4\u63A5\u5165\u529B\u3067\u304D\u307E\u3059"))),
         React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "18px 0 6px" } }, label),
-        spec.scoring === "jcl" && (React.createElement("div", { style: { background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 10 } },
-            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 8 } },
-                React.createElement("span", { style: { fontSize: 14, fontWeight: 700 } }, "\u8A66\u5408\u306E\u9577\u3055"),
-                React.createElement("span", { style: { fontSize: 16, fontWeight: 800 } },
-                    lenPct,
-                    "%")),
-            React.createElement("input", { type: "range", min: 40, max: 140, step: 5, value: lenPct, disabled: manual, onChange: (e) => setLenPct(+e.target.value), style: { width: "100%", accentColor: C.blue, opacity: manual ? 0.4 : 1 } }),
-            React.createElement("div", { style: { fontSize: 12.5, color: "#3F4A55", marginTop: 8, lineHeight: 1.7 } }, manual
-                ? "手動で決めています。自動に戻すとレートから計算し直します"
-                : R1 > 0 && R2 > 0
-                    ? "2人のレートと長さから目標点を計算しました。短いほど下のレートの人が有利になります"
-                    : "両方のレートを入れると目標点を自動で計算します。レートを使わないなら手動で決めてください"),
-            React.createElement("button", { onClick: () => setManual((v) => !v), style: {
-                    width: "100%", marginTop: 10, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
-                    padding: "10px 0", fontSize: 13.5, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT,
-                } }, manual ? "レートから自動で決める" : "手動で決める"))),
-        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
+        spec.scoring === "jcl" && (React.createElement("div", { style: { marginBottom: 10 } },
+            React.createElement("div", { style: { display: "flex", gap: 8 } }, [["ロングゲーム", 100], ["ショートゲーム", 50]].map(([t, v]) => (React.createElement("button", { key: v, onClick: () => { setManual(false); setLenPct(v); }, style: {
+                    flex: 1, background: !manual && lenPct === v ? C.blue : "#fff",
+                    color: !manual && lenPct === v ? "#fff" : C.ink,
+                    border: `2px solid ${!manual && lenPct === v ? C.blue : C.line}`,
+                    borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                } }, t)))),
+            React.createElement("button", { onClick: () => setShowLenAdvanced((v) => !v), style: {
+                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                    background: "none", border: "none", padding: "8px 2px 2px", cursor: "pointer", fontFamily: FONT, textAlign: "left",
+                } },
+                React.createElement("span", { style: { fontSize: 12.5, fontWeight: 800, color: C.blue } }, (showLenAdvanced ? "▼" : "▶") + " 細かく設定")),
+            showLenAdvanced && (React.createElement("div", { style: { background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginTop: 4 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 8 } },
+                    React.createElement("span", { style: { fontSize: 13, fontWeight: 700 } }, "\u8A66\u5408\u306E\u9577\u3055"),
+                    React.createElement("span", { style: { fontSize: 15, fontWeight: 800 } }, manual ? "手動" : lenPct + "%")),
+                React.createElement("input", { type: "range", min: 40, max: 140, step: 5, value: lenPct, disabled: manual, onChange: (e) => { setManual(false); setLenPct(+e.target.value); }, style: { width: "100%", accentColor: C.blue, opacity: manual ? 0.4 : 1 } }),
+                React.createElement("div", { style: { fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 } }, "100%\u304C\u30ED\u30F3\u30B0\u30B2\u30FC\u30E0\u300150%\u304C\u30B7\u30E7\u30FC\u30C8\u30B2\u30FC\u30E0\u3067\u3059\u3002\u77ED\u3044\u307B\u3069\u4E0B\u306E\u30EC\u30FC\u30C8\u306E\u4EBA\u304C\u6709\u5229\u306B\u306A\u308A\u307E\u3059"),
+                React.createElement("button", { onClick: () => setManual((v) => !v), style: {
+                        width: "100%", marginTop: 10, background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
+                        padding: "9px 0", fontSize: 13, fontWeight: 800, color: C.blue, cursor: "pointer", fontFamily: FONT,
+                    } }, manual ? "レートから自動で決める" : "目標点を直接指定する"))))),
+        (spec.scoring !== "jcl" || manual) && (React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 4 } }, [0, 1].map((i) => (React.createElement("div", { key: i, style: { flex: 1, minWidth: 0 } },
             React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: PC[i], textAlign: "center", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, finalNames[i]),
-            React.createElement(Stepper, { label: label, value: race[i], min: 1, max: spec.scoring === "set" ? 30 : 120, onChange: (v) => { if (spec.scoring === "jcl")
-                    setManual(true); setRaceAt(i, v); } }))))),
+            React.createElement(Stepper, { label: label, value: raceVal[i], min: 1, max: spec.scoring === "set" ? 30 : 120, onChange: (v) => setRaceAt(i, v) })))))),
         spec.scoring === "set" && (React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, [3, 4, 5, 6, 7].map((n) => (React.createElement("button", { key: n, onClick: () => setRace([n, n]), style: {
-                flex: 1, background: race[0] === n && race[1] === n ? C.blue : "#fff",
-                color: race[0] === n && race[1] === n ? "#fff" : C.ink,
-                border: `1.5px solid ${race[0] === n && race[1] === n ? C.blue : C.line}`,
+                flex: 1, background: raceVal[0] === n && raceVal[1] === n ? C.blue : "#fff",
+                color: raceVal[0] === n && raceVal[1] === n ? "#fff" : C.ink,
+                border: `1.5px solid ${raceVal[0] === n && raceVal[1] === n ? C.blue : C.line}`,
                 borderRadius: 10, padding: "9px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
             } },
             n,
             "\u5148"))))),
-        React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.sub, margin: "20px 0 6px" } }, "\u6642\u9593\u5236\u9650"),
-        React.createElement("div", { style: { background: timeLimit ? C.lightBlue : C.zone, border: `1.5px solid ${timeLimit ? C.blue : C.line}`, borderRadius: 14, padding: "12px 14px" } },
-            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
-                React.createElement("div", { style: { minWidth: 0 } },
-                    React.createElement("div", { style: { fontSize: 15, fontWeight: 800 } }, "\u23F1 \u6301\u3061\u6642\u9593\u3092\u6C7A\u3081\u308B"),
-                    React.createElement("div", { style: { fontSize: 12.5, color: "#3F4A55", marginTop: 2, lineHeight: 1.6 } }, "\u6642\u9593\u5207\u308C\u306B\u306A\u3063\u305F\u30E9\u30C3\u30AF\u304C\u6700\u7D42\u30E9\u30C3\u30AF\u3002\u3069\u3061\u3089\u3082\u5C4A\u304B\u306A\u3051\u308C\u3070\u5F15\u304D\u5206\u3051\u3067\u3059")),
-                React.createElement("button", { onClick: () => setTimeLimit((v) => !v), style: {
-                        ...btnBase, background: timeLimit ? C.blue : C.line, color: timeLimit ? "#fff" : C.sub,
-                        borderRadius: 20, padding: "8px 16px", fontSize: 13, flexShrink: 0, marginLeft: 10,
-                    } }, timeLimit ? "ON" : "OFF")),
-            timeLimit && (React.createElement("div", { style: { marginTop: 10 } },
-                React.createElement(Stepper, { label: "\u6301\u3061\u6642\u9593\uFF08\u5206\uFF09", value: minutes, min: 5, max: 180, step: 5, onChange: setMinutes })))),
         React.createElement("button", { onClick: start, disabled: !ready, style: {
                 ...btnBase, width: "100%", marginTop: 22, background: ready ? C.blue : C.line, color: ready ? "#fff" : C.sub,
                 padding: "17px 0", fontSize: 17, borderRadius: 14, cursor: ready ? "pointer" : "default",
@@ -563,20 +588,17 @@ function SetupScreen({ resume, onResume, onStart, ballDesign, onSetBallDesign })
 function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     const ruleset = getRuleset(setup);
     const names = setup.names;
-    const timeLimitEnabled = !!setup.timeLimit;
     const [state, setState] = useState(() => saved || initialMatchState(setup));
-    const [nowTs, setNowTs] = useState(Date.now());
     const [pressed, setPressed] = useState(null);
     const [selectedBall, setSelectedBall] = useState(null); // タップで選んだ球
     const [dragDir, setDragDir] = useState(null);
     const [undoStack, setUndoStack] = useState([]);
     const [pendingWinner8, setPendingWinner8] = useState(null);
-    const [toolsOpen, setToolsOpen] = useState(false);
     const [suppressWin, setSuppressWin] = useState(false);
+    const [editHistIdx, setEditHistIdx] = useState(null); // タップして修正中のラック（histの実インデックス）
     const palette = paletteFor(ballDesign);
     const stateRef = useRef(state);
     stateRef.current = state;
-    useEffect(() => { const iv = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(iv); }, []);
     // 変わるたびに端末へ控える（読み込み直しても続きから開ける）
     useEffect(() => { saveCurrent(setup, state); }, [state, setup]);
     // 球エリア内では画面スクロールを止め、球の操作だけ効くようにする
@@ -610,15 +632,6 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     const disp = ruleset.hillThreshold != null
         ? [tot[0], tot[1]]
         : (phase === "play" && !hillHill ? liveTot : [tot[0], tot[1]]);
-    /* ===== 持ち時間 ===== */
-    const deadline = state.deadline || null;
-    const paused = !!state.pauseStart;
-    const msLeft = deadline ? deadline - (state.finishedAt || (paused ? state.pauseStart : nowTs)) : null;
-    const isTimeUp = msLeft != null && msLeft <= 0;
-    const timeParts = msLeft == null ? ["--", "--"] : (() => {
-        const s = Math.max(0, Math.floor(msLeft / 1000));
-        return [String(Math.floor(s / 60)).padStart(2, "0"), String(s % 60).padStart(2, "0")];
-    })();
     const rate = (i) => (rt(i) > 0 ? Math.min(1, tot[i] / rt(i)) : 0);
     /* ===== 勝敗判定 ===== */
     const reached = [rt(0) > 0 && tot[0] >= rt(0), rt(1) > 0 && tot[1] >= rt(1)];
@@ -635,14 +648,11 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
         else if (liveTot[1] >= rt(1) && rt(1) > 0)
             matchWinner = 1;
     }
-    // 時間切れ後は今のラックが最終ラック。終わってもどちらも届かなければ引き分け
-    const bothLose = matchWinner == null && isTimeUp && phase === "done";
-    const isFinalRack = isTimeUp && matchWinner == null && !bothLose;
     useEffect(() => {
-        if ((matchWinner != null || bothLose) && !state.finishedAt) {
+        if (matchWinner != null && !state.finishedAt) {
             const fin = Date.now();
             // ゲームボールを落とす前に目標点へ届いた決着。台上の球をここで確定させる
-            const midRackWin = matchWinner != null && phase === "play" && !reached[matchWinner];
+            const midRackWin = phase === "play" && !reached[matchWinner];
             if (midRackWin)
                 pushUndo();
             applyLocal((s) => ({
@@ -651,13 +661,12 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
                 finishedAt: fin,
                 elapsedMs: s.startedAt ? fin - s.startedAt : null,
                 winner: matchWinner,
-                bothLose,
             }));
         }
-        else if (matchWinner == null && !bothLose && state.finishedAt) {
-            applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null, bothLose: false }));
+        else if (matchWinner == null && state.finishedAt) {
+            applyLocal((s) => ({ ...s, finishedAt: null, elapsedMs: null, winner: null }));
         }
-    }, [matchWinner, bothLose, state.finishedAt]);
+    }, [matchWinner, state.finishedAt]);
     const confettiFiredRef = useRef(false);
     useEffect(() => {
         if (matchWinner != null && !confettiFiredRef.current) {
@@ -742,7 +751,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     };
     // セットマッチ：球を動かさず、名前をタップして1ラック確定
     const recordSetRack = (w) => {
-        if (ruleset.unit !== "rack" || phase !== "play" || matchWinner != null || bothLose)
+        if (ruleset.unit !== "rack" || phase !== "play" || matchWinner != null)
             return;
         pushUndo();
         const add = [0, 0];
@@ -751,7 +760,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     };
     // 8ボールの14点制：勝者（14点固定）と、負けた側の残り球数（0〜7）だけでラックを確定
     const recordEightBallRack = (w, loserCount) => {
-        if (!ruleset.simplified8 || phase !== "play" || matchWinner != null || bothLose)
+        if (!ruleset.simplified8 || phase !== "play" || matchWinner != null)
             return;
         pushUndo();
         const add = [0, 0];
@@ -766,16 +775,15 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
         const now = Date.now();
         applyLocal((s) => ({
             ...s, tot: [0, 0], rack: 1, brk: null, balls: mkBalls(ruleset.ballCount), phase: "banking",
-            lastResult: null, hist: [], startedAt: null, deadline: null, pauseStart: null,
-            finishedAt: null, elapsedMs: null, winner: null, bothLose: false,
+            lastResult: null, hist: [], startedAt: null,
+            finishedAt: null, elapsedMs: null, winner: null,
         }));
     };
     const chooseBreak = (i) => {
         applyLocal((s) => {
             if (s.startedAt)
                 return { ...s, brk: i, phase: "play" };
-            const now = Date.now();
-            return { ...s, brk: i, phase: "play", startedAt: now, deadline: timeLimitEnabled ? now + (setup.minutes || 30) * 60000 : null };
+            return { ...s, brk: i, phase: "play", startedAt: Date.now() };
         });
     };
     const swapBreak = () => {
@@ -786,16 +794,6 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
             applyLocal((s) => ({ ...s, brk: 1 - s.brk }));
         }
     };
-    const togglePause = () => {
-        applyLocal((s) => {
-            if (s.pauseStart) {
-                const pausedMs = Date.now() - s.pauseStart;
-                return { ...s, deadline: (s.deadline || Date.now()) + pausedMs, pauseStart: null };
-            }
-            return { ...s, pauseStart: Date.now() };
-        });
-    };
-    const addTime = (min) => { pushUndo(); applyLocal((s) => ({ ...s, deadline: (s.deadline || Date.now()) + min * 60000 })); };
     const quit = () => {
         if (!window.confirm("この試合をやめます。記録は消えます。\nよろしいですか？"))
             return;
@@ -874,7 +872,7 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
             cycleBallDesign(dx < 0 ? 1 : -1);
     };
     const hillInfo = (i) => {
-        if (matchWinner != null || bothLose) {
+        if (matchWinner != null) {
             if (matchWinner === i)
                 return { txt: "勝ち", on: true };
             return { txt: "あと" + Math.max(0, rt(i) - disp[i]), on: false };
@@ -897,7 +895,20 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
     };
     const col = (loc) => balls.filter((b) => b.loc === loc);
     const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
-    const histRows = hist.map((h) => ({ ...h }));
+    const histRows = hist.map((h, idx) => ({ ...h, idx }));
+    // 今まさに決着した直後（訂正ボタンで扱う分）は、この行からの修正の対象から外す
+    const currentPendingIdx = phase === "done" && lastResult ? hist.length - 1 : -1;
+    // 過去のラックを修正する（合計は履歴の合計から作り直す）
+    const commitHistEdit = (idx, newAdd, newW) => {
+        pushUndo();
+        const newHist = hist.map((h, i) => (i === idx ? { ...h, add: newAdd, w: newW } : h));
+        const newTot = newHist.reduce((acc, h) => [acc[0] + h.add[0], acc[1] + h.add[1]], [0, 0]);
+        applyLocal((s) => ({
+            ...s, hist: newHist, tot: newTot,
+            lastResult: idx === newHist.length - 1 ? newHist[idx] : s.lastResult,
+        }));
+        setEditHistIdx(null);
+    };
     /* ===== バンキング（先攻決め） ===== */
     if (phase === "banking") {
         return (React.createElement("div", { style: { maxWidth: 480, margin: "0 auto", padding: "14px 16px 60px", fontFamily: FONT, color: C.ink } },
@@ -916,48 +927,20 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
                 (ruleset.unit === "rack" ? "先取ラック数：" : "目標点："),
                 React.createElement("b", { style: { color: C.blue, fontSize: 16 } }, rt(0)),
                 " \u5BFE ",
-                React.createElement("b", { style: { color: C.red, fontSize: 16 } }, rt(1)),
-                React.createElement("br", null),
-                timeLimitEnabled ? "持ち時間 " + (setup.minutes || 30) + "分（先攻を選んだ時点から計測）" : "時間制限なし")));
+                React.createElement("b", { style: { color: C.red, fontSize: 16 } }, rt(1)))));
     }
     /* ===== スコアリング ===== */
     return (React.createElement("div", { style: { maxWidth: 480, margin: "0 auto", padding: "10px 12px 60px", boxSizing: "border-box", color: C.ink, fontFamily: FONT } },
-        React.createElement("div", { style: { position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
-            React.createElement("span", { style: { width: 90 } },
-                React.createElement(MenuButton, { ballDesign: ballDesign, onSetBallDesign: onSetBallDesign, onQuit: quit })),
-            React.createElement("div", { onClick: () => { if (timeLimitEnabled && matchWinner == null && !bothLose)
-                    togglePause(); }, style: {
-                    position: "absolute", left: "50%", transform: "translateX(-50%)",
-                    display: "flex", alignItems: "center", cursor: timeLimitEnabled && matchWinner == null && !bothLose ? "pointer" : "default",
-                    fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums",
-                    color: matchWinner != null ? C.sub : paused ? C.hill : isTimeUp ? C.minus : msLeft != null && msLeft < 5 * 60 * 1000 ? C.hill : C.ink,
-                } }, !timeLimitEnabled ? null : matchWinner == null && isTimeUp ? React.createElement("span", null, "\u6642\u9593\u5207\u308C") : (React.createElement(React.Fragment, null,
-                React.createElement("span", { style: { marginRight: 4, fontSize: 14, visibility: paused ? "visible" : "hidden" } }, "\u23F8"),
-                React.createElement("span", { style: { width: 26, textAlign: "right" } }, timeParts[0]),
-                React.createElement("span", { style: { width: 8, textAlign: "center" } }, ":"),
-                React.createElement("span", { style: { width: 26, textAlign: "left" } }, timeParts[1])))),
-            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
-                timeLimitEnabled && matchWinner == null && !bothLose && (React.createElement("button", { onClick: () => setToolsOpen(true), style: {
-                        background: paused ? C.hillBg : "#fff", border: `1px solid ${paused ? C.hill : C.line}`,
-                        borderRadius: 8, padding: "3px 8px", fontSize: 12, fontWeight: 800,
-                        color: paused ? C.hill : C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
-                    } }, paused ? "⏸ 停止中" : "⏱ 時間")),
-                React.createElement("span", { style: { fontSize: 12.5, color: C.sub } },
-                    "\u7B2C ",
-                    rack,
-                    " \u30E9\u30C3\u30AF"))),
-        toolsOpen && (React.createElement(Sheet, { title: "\u6301\u3061\u6642\u9593", onClose: () => setToolsOpen(false) },
-            React.createElement("div", { style: { fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 14 } }, "時間の表示をタップすると一時停止・再開できます（" + (paused ? "現在：一時停止中" : "現在：動作中") + "）"),
-            React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.sub, textAlign: "center", marginBottom: 8 } }, "\u6301\u3061\u6642\u9593\u3092\u5EF6\u9577"),
-            React.createElement("div", { style: { display: "flex", gap: 8 } }, [1, 3, 5].map((min) => (React.createElement("button", { key: min, onClick: () => addTime(min), style: {
-                    flex: 1, background: "#fff", border: `1.5px solid ${C.blue}`, color: C.blue, borderRadius: 10,
-                    padding: "11px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-                } }, "+" + min + "分")))))),
-        isFinalRack && (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 } }, "\u6642\u9593\u5207\u308C\uFF1A\u3053\u306E\u30E9\u30C3\u30AF\u304C\u6700\u7D42\u30E9\u30C3\u30AF\uFF08\u5C4A\u304B\u306A\u3051\u308C\u3070\u5F15\u304D\u5206\u3051\uFF09")),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
+            React.createElement(MenuButton, { ballDesign: ballDesign, onSetBallDesign: onSetBallDesign, onQuit: quit }),
+            React.createElement("span", { style: { fontSize: 12.5, color: C.sub } },
+                "\u7B2C ",
+                rack,
+                " \u30E9\u30C3\u30AF")),
         React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } }, [0, 1].map((i) => {
             const pc = PC[i];
             const hi = hillInfo(i);
-            const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null && !bothLose;
+            const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null;
             return (React.createElement("div", { key: i, onClick: tappable ? () => recordSetRack(i) : undefined, style: {
                     flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff",
                     boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none",
@@ -974,15 +957,13 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
                 ruleset.unit === "rack" && (React.createElement("div", { style: { fontSize: 13, fontWeight: 700, opacity: 0.85, marginTop: -2, marginBottom: 2 } }, pl[i].raceTo + "先取")),
                 ruleset.unit !== "rack" && hi.txt && (React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" } }, hi.txt)),
                 tappable && React.createElement("div", { style: { fontSize: 11, opacity: 0.85, marginTop: 4 } }, "\u30BF\u30C3\u30D7\u3067+1\u30E9\u30C3\u30AF"),
-                React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF")) : brk === i && (React.createElement("button", { onClick: swapBreak, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF")))));
+                React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF")) : brk === i && (React.createElement("button", { onClick: swapBreak, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF")))));
         })),
         hillHill && matchWinner == null && phase === "play" && ruleset.hillThreshold != null && (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 } }, "ヒルヒル：このラックで" + ruleset.money + "番を落とした方が勝ち")),
-        matchWinner != null || bothLose ? (React.createElement("div", { style: { marginBottom: 6 } },
-            bothLose ? (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 12, padding: "8px 10px", textAlign: "center" } },
-                React.createElement("div", { style: { fontSize: 17.5, fontWeight: 800 } }, "\u6642\u9593\u5207\u308C"),
-                React.createElement("div", { style: { fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 } }, disp[0] + " － " + disp[1]))) : (React.createElement("div", { style: { background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" } },
+        matchWinner != null ? (React.createElement("div", { style: { marginBottom: 6 } },
+            React.createElement("div", { style: { background: matchWinner === 0 ? C.lightBlue : C.lightRed, border: `1.5px solid ${PC[matchWinner]}`, color: PC[matchWinner], borderRadius: 12, padding: "8px 10px", textAlign: "center" } },
                 React.createElement("div", { style: { fontSize: 17.5, fontWeight: 800 } }, "🏆 " + pl[matchWinner].name + " 勝利"),
-                React.createElement("div", { style: { fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 } }, disp[0] + " － " + disp[1]))),
+                React.createElement("div", { style: { fontSize: 13.5, marginTop: 2, color: C.ink, fontWeight: 700 } }, disp[0] + " － " + disp[1])),
             React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
                 React.createElement("button", { onClick: correct, style: ctrl }, "\u25C0 \u8A02\u6B63"),
                 React.createElement("button", { onClick: () => { if (window.confirm("同じ相手・同じ条件でもう1試合始めます。今の記録は消えます。よろしいですか？"))
@@ -1052,16 +1033,52 @@ function MatchScreen({ setup, saved, onExit, ballDesign, onSetBallDesign }) {
             React.createElement(Zone, { label: pl[1].name, side: "down", color: C.red, balls: col("p2"), money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === "p2", pressed: pressed, selectedBall: selectedBall, highlight: phase === "play" && highlightDown, onPress: onPress, onGesture: onGesture, onDrag: onDrag, onZoneTap: () => commitSelectedTo("down") }))),
         histRows.length > 0 && (React.createElement("div", { style: { marginTop: 10 } },
             React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, marginBottom: 5 } }, (ruleset.unit === "rack" ? "ラックの履歴（" : "ラック毎のスコア（履歴 ") + histRows.length + "）"),
-            (ruleset.unit === "rack" ? histRows : histRows.slice().reverse()).map((h, k) => (React.createElement("div", { key: k, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5 } },
-                React.createElement("span", { style: { fontSize: 13.5, color: C.sub } },
-                    "第" + h.rack + "R　",
-                    React.createElement("b", { style: { color: PC[h.w] } }, pl[h.w].name),
-                    h.hill ? " ⚑" : ""),
-                ruleset.unit === "rack" ? (React.createElement("span", { style: { fontSize: 12.5, color: C.sub, fontVariantNumeric: "tabular-nums" } }, h.at ? fmtClock(h.at) : "")) : (React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } },
-                    React.createElement("b", { style: { fontSize: 16.5 } },
-                        React.createElement("span", { style: { color: C.blue } }, h.add[0]),
-                        React.createElement("span", { style: { color: C.sub, margin: "0 2px" } }, "\u2013"),
-                        React.createElement("span", { style: { color: C.red } }, h.add[1])))))))))));
+            (ruleset.unit === "rack" ? histRows : histRows.slice().reverse()).map((h) => {
+                const editable = h.idx !== currentPendingIdx;
+                return (React.createElement("div", { key: h.idx, onClick: editable ? () => setEditHistIdx(h.idx) : undefined, style: {
+                        display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px",
+                        background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 5,
+                        cursor: editable ? "pointer" : "default",
+                    } },
+                    React.createElement("span", { style: { fontSize: 13.5, color: C.sub } },
+                        "第" + h.rack + "R　",
+                        React.createElement("b", { style: { color: PC[h.w] } }, pl[h.w].name),
+                        h.hill ? " ⚑" : ""),
+                    React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                        ruleset.unit === "rack" ? (React.createElement("span", { style: { fontSize: 12.5, color: C.sub, fontVariantNumeric: "tabular-nums" } }, h.at ? fmtClock(h.at) : "")) : (React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } },
+                            React.createElement("b", { style: { fontSize: 16.5 } },
+                                React.createElement("span", { style: { color: C.blue } }, h.add[0]),
+                                React.createElement("span", { style: { color: C.sub, margin: "0 2px" } }, "\u2013"),
+                                React.createElement("span", { style: { color: C.red } }, h.add[1])))),
+                        editable && React.createElement("span", { style: { fontSize: 12, opacity: 0.5 } }, "\u270F\uFE0F"))));
+            }))),
+        editHistIdx != null && (() => {
+            const h = hist[editHistIdx];
+            if (!h)
+                return null;
+            if (ruleset.unit === "rack") {
+                return (React.createElement(Sheet, { title: "第" + h.rack + "ラックを修正", onClose: () => setEditHistIdx(null) },
+                    React.createElement("div", { style: { fontSize: 12.5, color: C.sub, textAlign: "center", marginBottom: 12 } }, "\u3053\u306E\u30E9\u30C3\u30AF\u306E\u52DD\u8005\u3092\u9078\u3073\u76F4\u3057\u3066\u304F\u3060\u3055\u3044"),
+                    React.createElement("div", { style: { display: "flex", gap: 8 } }, [0, 1].map((i) => (React.createElement("button", { key: i, onClick: () => commitHistEdit(editHistIdx, i === 0 ? [1, 0] : [0, 1], i), style: {
+                            flex: 1, background: h.w === i ? PC[i] : "#fff", color: h.w === i ? "#fff" : C.ink,
+                            border: `2px solid ${PC[i]}`, borderRadius: 12, padding: "16px 8px", fontSize: 15, fontWeight: 800,
+                            cursor: "pointer", fontFamily: FONT,
+                        } }, (h.w === i ? "✓ " : "") + pl[i].name + " の勝ち"))))));
+            }
+            return (React.createElement(HistEditSheet, { h: h, pl: pl, onClose: () => setEditHistIdx(null), onSave: (v0, v1) => commitHistEdit(editHistIdx, [v0, v1], v0 === v1 ? h.w : (v0 > v1 ? 0 : 1)) }));
+        })()));
+}
+/* 点数制（JCL・JPA・8ボール簡易）の過去ラックを直接編集するシート */
+function HistEditSheet({ h, pl, onClose, onSave }) {
+    const [v0, setV0] = useState(h.add[0]);
+    const [v1, setV1] = useState(h.add[1]);
+    return (React.createElement(Sheet, { title: "第" + h.rack + "ラックを修正", onClose: onClose },
+        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } },
+            React.createElement(Stepper, { label: pl[0].name, value: v0, min: 0, max: 60, onChange: setV0 }),
+            React.createElement(Stepper, { label: pl[1].name, value: v1, min: 0, max: 60, onChange: setV1 })),
+        React.createElement("button", { onClick: () => onSave(v0, v1), style: {
+                ...btnBase, width: "100%", background: C.blue, color: "#fff", padding: "13px 0", fontSize: 15, borderRadius: 12,
+            } }, "\u4FDD\u5B58\u3059\u308B")));
 }
 /* ========= 選手エリア ========= */
 function Zone({ label, side, color, balls, money, palette, sub, pressed, selectedBall, highlight, onPress, onGesture, onDrag, onZoneTap }) {
