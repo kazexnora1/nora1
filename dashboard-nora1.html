@@ -85,8 +85,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.230";
-const BUILD_TIME = "2026-08-23 セットマッチの試合時間設定を「5先◯分」（初期値45分）に変更。％のバーは廃止し、先取数に応じて比例配分する";
+const APP_VERSION = "1.231";
+const BUILD_TIME = "2026-09-02 設定タブ「その他」に過去大会アーカイブ機能（📦保存／📚一覧・成績・対戦カード・決勝トーナメントの読み取り専用ビュー）を追加";
 
 
 const C = {
@@ -3559,6 +3559,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
         <div style={{ maxWidth: 480, margin: "0 auto", padding: "4px 16px 0", color: C.ink }}>
           <BackupPanel />
+          <ArchivePanel roster={roster} />
           <ConnectionTest />
           <QRPanel />
         </div>
@@ -3864,6 +3865,197 @@ function BackupPanel() {
         </>
       )}
       {msg && <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
+    </div>
+  );
+}
+
+/* ========= 過去大会アーカイブ =========
+   大会が終わった時に、今のroster（参加者）とmatches（対戦カード全部・スコア・勝敗・得点方式含む）を
+   まるごとtournaments/{id}へスナップショット保存する。保存しても今の対戦データは消えない（別枝への複製）。
+   一覧から選ぶと、既存の成績集計（buildStandings）・決勝トーナメント表示（BracketReadOnlyView）を
+   そのまま流用した読み取り専用ビューで、参加者・対戦カード・スコア・勝敗・タイムテーブルを見返せる。
+   ※Firebaseのセキュリティルールに tournaments 枝の許可（roster/matches等と同じ考え方の型チェック）を
+     追加する必要がある。ルート直下の.writeはfalseにしてある想定なので、これをしないと保存が失敗する */
+function ArchiveViewer({ archive, onClose }) {
+  const matches = archive.matches || {};
+  const roster = archive.roster || [];
+  const [tab, setTab] = useState("matches"); // "matches" | "standings" | "bracket"
+  const hasBracket = useMemo(() => Object.values(matches).some((m) => m && m.bracket), [matches]);
+  const standings = useMemo(() => buildStandings(matches, roster, "prelim"), [matches, roster]);
+  const tableLists = useMemo(() => [1, 2, 3].map((t) => getAllForTable(matches, t).filter((m) => !m.bracket)), [matches]);
+
+  const matchRow = (m) => {
+    const done = isMatchFinished(m);
+    const w = done ? matchWinnerIndex(m) : null;
+    const tot = m.tot || [0, 0], rt = m.raceTo || [0, 0];
+    return (
+      <div key={m.id} style={{
+        display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${C.line}`,
+        borderRadius: 10, padding: "9px 12px", marginBottom: 6,
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 6px", flexShrink: 0 }}>T{m.table}</span>
+        {[0, 1].map((i) => (
+          <div key={i} style={{
+            flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600,
+            color: done ? (w === i ? C.win : C.sub) : C.ink,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>{(m.names || [])[i]}{done ? ` (${tot[i]}/${rt[i]})` : ""}</div>
+        ))}
+      </div>
+    );
+  };
+
+  const tabs = [["matches", "対戦カード"], ["standings", "成績"], ...(hasBracket ? [["bracket", "🏆決勝"]] : [])];
+
+  return (
+    <Portal>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto" }}>
+        <div onClick={(e) => e.stopPropagation()} style={{
+          background: "#fff", width: "100%", maxWidth: 480, minHeight: "100%", boxSizing: "border-box",
+          padding: "18px 16px 40px", fontFamily: FONT,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>{archive.name || "（無題）"}</div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>{fmtDateTime(archive.at)}　{roster.length}人　{archive.specSummary || ""}</div>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: C.sub, fontSize: 22, cursor: "pointer", padding: 4, flexShrink: 0 }}>✕</button>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, margin: "12px 0 14px" }}>
+            {tabs.map(([k, label]) => (
+              <button key={k} onClick={() => setTab(k)} style={{
+                flex: 1, background: tab === k ? C.blue : "#fff", color: tab === k ? "#fff" : C.ink,
+                border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 0", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {tab === "matches" && [1, 2, 3].map((t, i) => (
+            <div key={t} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
+              {tableLists[i].length === 0
+                ? <div style={{ fontSize: 13, color: C.sub, padding: "6px 0" }}>対戦なし</div>
+                : tableLists[i].map(matchRow)}
+            </div>
+          ))}
+
+          {tab === "standings" && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 4px 8px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+                <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+              </div>
+              {standings.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "20px 0" }}>結果がありません</div>}
+              {standings.map((r) => (
+                <div key={r.name} style={{
+                  display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
+                  background: r.rank <= 8 ? C.lightBlue : "#fff", border: `1.5px solid ${r.rank <= 8 ? C.blue : C.line}`,
+                  borderRadius: 10, padding: "10px 10px", marginBottom: 6,
+                }}>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.sub }}>{r.rank}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                  <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.win }}>{r.win}</div>
+                  <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+                  <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.ink }}>{fmtRate(r.avgRate)}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {tab === "bracket" && <BracketReadOnlyView matches={matches} wide />}
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+function ArchivePanel({ roster }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [name, setName] = useState("");
+  const [showList, setShowList] = useState(false);
+  const [list, setList] = useState(null);
+  const [viewing, setViewing] = useState(null);
+
+  const doArchive = async () => {
+    if (busy) return;
+    setMsg(null);
+    const matches = (await dbGet("matches")) || {};
+    const cnt = Object.keys(matches).length;
+    if (!cnt) { setMsg({ ok: false, text: "対戦データがありません" }); return; }
+    const finalName = name.trim() || loadSettings().tournamentName || "";
+    if (!window.confirm(`今の大会（対戦${cnt}件・参加${roster.length}人）をアーカイブに保存します。\n現在の対戦データはそのまま残ります（消えません）。\n\nよろしいですか？`)) return;
+    setBusy(true);
+    try {
+      const spec = loadSpec();
+      const id = "t" + Date.now();
+      await dbSet("tournaments/" + id, {
+        at: Date.now(), name: finalName,
+        format: legacyFormat(spec), specSummary: specSummary(spec),
+        roster, matches,
+      });
+      setMsg({ ok: true, text: `「${finalName || "無題"}」として保存しました` });
+      setName("");
+      if (showList) openList();
+    } catch (e) {
+      setMsg({ ok: false, text: "保存に失敗しました（Firebaseのルールにtournaments枝の許可が必要です）: " + (e && e.message ? e.message : e) });
+    }
+    setBusy(false);
+  };
+
+  const openList = async () => {
+    setShowList(true);
+    setList(null);
+    try {
+      const all = (await dbGet("tournaments")) || {};
+      setList(Object.entries(all).map(([id, v]) => ({ id, ...v })).sort((a, b) => (b.at || 0) - (a.at || 0)));
+    } catch (e) {
+      setList([]);
+      setMsg({ ok: false, text: "読み込みに失敗しました: " + (e && e.message ? e.message : e) });
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
+      <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 7 }}>📦 過去大会アーカイブ</div>
+      <div style={{ ...HELP, marginBottom: 12 }}>
+        大会が終わったら保存しておくと、あとから参加者・対戦カード・スコア・勝敗・得点方式・タイムテーブルを見返せます。
+        保存しても今の対戦データは消えません（複製されるだけです）
+      </div>
+      <input value={name} onChange={(e) => setName(e.target.value.slice(0, 40))}
+        placeholder={loadSettings().tournamentName ? `例：${loadSettings().tournamentName}` : "大会名（空でも保存できます）"}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 15, fontFamily: FONT, marginBottom: 8, outline: "none", color: C.ink }} />
+      <button onClick={doArchive} disabled={busy} style={{
+        width: "100%", background: busy ? C.line : C.win, color: "#fff", border: "none", borderRadius: 10,
+        padding: "13px 0", fontSize: 15, fontWeight: 800, cursor: busy ? "wait" : "pointer", fontFamily: FONT, marginBottom: 10,
+      }}>{busy ? "保存中…" : "📦 この大会をアーカイブする"}</button>
+
+      {!showList ? (
+        <button onClick={openList} style={{
+          width: "100%", background: "#fff", border: `1.5px solid ${C.blue}`, borderRadius: 10,
+          color: C.blue, fontSize: 15, fontWeight: 800, padding: "13px 0", cursor: "pointer", fontFamily: FONT,
+        }}>📚 過去大会を見る</button>
+      ) : (
+        <>
+          {list === null && <div style={{ fontSize: 12.5, color: C.sub }}>読み込み中…</div>}
+          {list && list.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>まだアーカイブがありません</div>}
+          {list && list.map((a) => (
+            <button key={a.id} onClick={() => setViewing(a)} style={{
+              width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
+              padding: "10px 12px", marginBottom: 6, cursor: "pointer", fontFamily: FONT,
+            }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{a.name || "（無題）"}</div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{fmtDateTime(a.at)}　{(a.roster || []).length}人　{Object.keys(a.matches || {}).length}試合　{a.specSummary || ""}</div>
+            </button>
+          ))}
+          <button onClick={() => setShowList(false)} style={{
+            width: "100%", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
+            color: C.ink, fontSize: 13, fontWeight: 700, padding: "9px 0", cursor: "pointer", fontFamily: FONT, marginTop: 2,
+          }}>閉じる</button>
+        </>
+      )}
+      {msg && <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
+      {viewing && <ArchiveViewer archive={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
