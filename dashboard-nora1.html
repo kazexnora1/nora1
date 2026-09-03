@@ -95,8 +95,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.232";
-const BUILD_TIME = "2026-09-03 ホーム画面追加時のアイコンをオリジナルの猫アイコンに変更（icon-b1-*.pngをhtmlと同じフォルダに設置）";
+const APP_VERSION = "1.233";
+const BUILD_TIME = "2026-09-03 「⚙️イベントの設定」に📁大会フォーマットプリセットを追加。予選の組み方・グループの分け方・決勝の進出方式と目標点をまとめて名前で保存・呼び出しできる";
 
 
 const C = {
@@ -962,6 +962,172 @@ async function storeTemplates(list) {
 }
 /* 組み込み2つ＋自作。通信を待たずに出したいので、端末の控えから同期的に組み立てる版も用意する */
 const allTemplatesSync = () => [...BUILTIN_TEMPLATES, ...loadLocalTemplates()];
+
+/* ========= 大会フォーマットプリセット =========
+   「試合のルール」テンプレート（種目・得点方式・ブレイク順）とは別に、
+   予選の組み方（prelimMode）・グループの分け方（groupCount/group1/group2/rivalA等）・
+   決勝への進出方式（finalMode）・決勝の目標点（azukiQuarter/Semi/Final）と
+   決勝人数（bracketSize）をまとめて1つの名前で保存し、次回同じ形式の大会で呼び出せるようにする。
+   これらはBulkScheduleTab（予選タブ）・BracketTab（決勝タブ）がそれぞれ端末に保存している値なので、
+   保存時はloadSettings()から直接まとめて読み、適用時はsaveSettings()でまとめて書き戻す。
+   書き戻した後は、両タブを（keyを変えて）再マウントし、確実に新しい値で初期化させる。 */
+const FORMAT_PRESETS_KEY = "jcl9_b1_format_presets_v1";
+function parseFormatPresets(raw) {
+  try {
+    const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((p) => p && p.id && p.name).map((p) => ({
+      id: String(p.id),
+      name: String(p.name).slice(0, 20),
+      createdAt: Number(p.createdAt) || 0,
+      prelimMode: PRELIM_MODES.some((m) => m.id === p.prelimMode) ? p.prelimMode : "rand_all",
+      finalMode: p.finalMode === "group" ? "group" : "overall",
+      groupCount: parseInt(p.groupCount, 10) || 3,
+      fixedGroupTable: !!p.fixedGroupTable,
+      group1: parseInt(p.group1, 10) || 5,
+      group2: parseInt(p.group2, 10) || 5,
+      rivalA: p.rivalA != null && p.rivalA !== "" ? parseInt(p.rivalA, 10) : null,
+      rivalNameA: String(p.rivalNameA || "").slice(0, 20),
+      rivalNameB: String(p.rivalNameB || "").slice(0, 20),
+      bracketSize: p.bracketSize === 4 ? 4 : 8,
+      azukiQuarter: parseInt(p.azukiQuarter, 10) || 25,
+      azukiSemi: parseInt(p.azukiSemi, 10) || 30,
+      azukiFinal: parseInt(p.azukiFinal, 10) || 40,
+    }));
+  } catch { return []; }
+}
+function loadLocalFormatPresets() {
+  try { return parseFormatPresets(localStorage.getItem(FORMAT_PRESETS_KEY)); } catch { return []; }
+}
+async function fetchFormatPresets() {
+  try {
+    const raw = await dbGet("config/formatPresets");
+    if (raw) {
+      const list = parseFormatPresets(raw);
+      try { localStorage.setItem(FORMAT_PRESETS_KEY, JSON.stringify(list)); } catch {}
+      return list;
+    }
+  } catch {}
+  return loadLocalFormatPresets();
+}
+async function storeFormatPresets(list) {
+  try { localStorage.setItem(FORMAT_PRESETS_KEY, JSON.stringify(list)); } catch {}
+  await dbUpdate("config", { formatPresets: JSON.stringify(list) });
+}
+/* 今の端末設定から、プリセットに入れる値をまとめて拾う */
+function captureFormatPreset() {
+  const s = loadSettings();
+  return {
+    prelimMode: loadPrelimMode(s),
+    finalMode: loadFinalMode(s),
+    groupCount: s.groupCount || 3,
+    fixedGroupTable: !!s.fixedGroupTable,
+    group1: s.group1 || 5,
+    group2: s.group2 || 5,
+    rivalA: s.rivalA != null && s.rivalA !== "" ? parseInt(s.rivalA, 10) : null,
+    rivalNameA: s.rivalNameA || "",
+    rivalNameB: s.rivalNameB || "",
+    bracketSize: s.bracketSize === 4 ? 4 : 8,
+    azukiQuarter: parseInt(s.azukiQuarter, 10) || 25,
+    azukiSemi: parseInt(s.azukiSemi, 10) || 30,
+    azukiFinal: parseInt(s.azukiFinal, 10) || 40,
+  };
+}
+/* プリセットの中身を1行で要約表示する */
+function formatPresetSummary(p) {
+  const parts = [prelimModeInfo(p.prelimMode).label];
+  if (p.prelimMode === "rr_group") parts.push(`${p.groupCount}グループ${p.fixedGroupTable ? "・卓固定" : ""}`);
+  if (p.prelimMode === "rand_group") parts.push(`A${p.group1}人/B${p.group2}人`);
+  if (p.prelimMode === "rand_rival") parts.push(`${p.rivalNameA || "Aチーム"} 対 ${p.rivalNameB || "Bチーム"}`);
+  parts.push(p.finalMode === "group" ? "決勝:グループ上位" : `決勝:全体上位${p.bracketSize}人`);
+  parts.push(`目標 準々${p.azukiQuarter}/準決${p.azukiSemi}/決勝${p.azukiFinal}`);
+  return parts.join("｜");
+}
+
+function FormatPresetPanel({ onApply }) {
+  const [list, setList] = useState(() => loadLocalFormatPresets());
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => { fetchFormatPresets().then(setList).catch(() => {}); }, []);
+
+  const doSave = async () => {
+    const nm = name.trim().slice(0, 20);
+    if (!nm || busy) return;
+    setBusy(true);
+    const captured = captureFormatPreset();
+    const dup = list.find((p) => p.name === nm);
+    if (dup && !window.confirm(`「${nm}」はすでにあります。今の設定で上書きしますか？`)) { setBusy(false); return; }
+    const entry = { id: dup ? dup.id : "fp" + Date.now(), name: nm, createdAt: dup ? dup.createdAt : Date.now(), ...captured };
+    const next = dup ? list.map((p) => (p.id === dup.id ? entry : p)) : [...list, entry];
+    setList(next);
+    try {
+      await storeFormatPresets(next);
+      setName("");
+      setMsg({ ok: true, text: `「${nm}」を保存しました` });
+    } catch (e) {
+      setMsg({ ok: false, text: "保存に失敗しました（この端末には控えてあります）: " + (e && e.message ? e.message : e) });
+    }
+    setBusy(false);
+  };
+
+  const doDelete = async (p) => {
+    if (!window.confirm(`プリセット「${p.name}」を消します。よろしいですか？`)) return;
+    const next = list.filter((x) => x.id !== p.id);
+    setList(next);
+    try { await storeFormatPresets(next); setMsg({ ok: true, text: `「${p.name}」を消しました` }); }
+    catch { setMsg({ ok: false, text: "共有側の更新に失敗しました" }); }
+  };
+
+  const doApply = (p) => {
+    if (!window.confirm(`「${p.name}」を適用します。\n予選の組み方・グループの分け方・決勝の進出方式と目標点が、今の内容に置き換わります。\n（人数や参加者、時間割は変わりません）\n\nよろしいですか？`)) return;
+    onApply(p);
+    setMsg({ ok: true, text: `「${p.name}」を適用しました` });
+  };
+
+  return (
+    <div style={{ background: "#fff", border: `1.5px solid ${C.win}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>📁 大会フォーマットプリセット</div>
+      <div style={{ ...HELP, marginBottom: 10 }}>
+        予選の組み方・グループの分け方・決勝の進出方式と目標点をまとめて名前で保存し、次回の同じ形式の大会で呼び出せます。
+        （試合のルール＝種目/得点方式/ブレイク順は、上の「テンプレート」で別に保存してください）
+      </div>
+      {list.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 10 }}>
+          {list.map((p) => (
+            <div key={p.id} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                <button onClick={() => doApply(p)} style={{
+                  background: C.win, color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px",
+                  fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, flexShrink: 0,
+                }}>この形式にする</button>
+                <button onClick={() => doDelete(p)} title="消す" style={{
+                  width: 26, height: 26, flexShrink: 0, background: "#fff", border: `1px solid ${C.line}`,
+                  borderRadius: 7, color: C.sub, fontSize: 13, cursor: "pointer", padding: 0,
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.6 }}>{formatPresetSummary(p)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 7 }}>
+        <input value={name} onChange={(e) => { setName(e.target.value.slice(0, 20)); setMsg(null); }}
+          placeholder="例：あずき杯シーズン形式"
+          style={{ flex: 1, minWidth: 0, border: `1.5px solid ${C.line}`, borderRadius: 10, padding: "9px 10px", fontSize: 14, fontFamily: FONT, color: C.ink, boxSizing: "border-box" }} />
+        <button onClick={doSave} disabled={!name.trim() || busy} style={{
+          background: name.trim() && !busy ? C.win : C.line, color: name.trim() && !busy ? "#fff" : C.sub,
+          border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 800,
+          cursor: name.trim() && !busy ? "pointer" : "default", fontFamily: FONT, whiteSpace: "nowrap",
+        }}>{busy ? "保存中…" : "今の形式を保存"}</button>
+      </div>
+      <div style={{ ...HELP, marginTop: 6 }}>保存する内容：{formatPresetSummary(captureFormatPreset())}</div>
+      {msg && <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 700, color: msg.ok ? C.win : C.minus }}>{msg.text}</div>}
+    </div>
+  );
+}
 
 /* 試合レコードに埋め込むルール情報。押した瞬間の設定を読むので、どの画面から作っても食い違わない */
 function ruleFields(spec) {
@@ -3280,6 +3446,9 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
   const [finalMode, setFinalMode] = useState(() => loadFinalMode());
+  // 大会フォーマットプリセットを適用した回数。BulkScheduleTab・BracketTabのkeyに使い、
+  // 適用のたびに強制的に再マウントして、両タブがlocalStorageの新しい値から初期化し直すようにする
+  const [presetTick, setPresetTick] = useState(0);
 
   // 決勝の「各グループ1位＋…」方式は、予選をグループ分け総当たりで組んだ時だけ成立する
   const groupFinalAvailable = prelimMode === "rr_group";
@@ -3291,11 +3460,30 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
     onSetRoundRobin(flags.roundRobinMode); // プレイヤータブの対戦表表示（App側のstate）も合わせる
     if (id !== "rr_group" && finalMode === "group") updateFinalMode("overall");
   };
+  // 大会フォーマットプリセットの適用：予選の組み方・グループの分け方・決勝の進出方式と目標点を
+  // まとめてlocalStorageへ書き戻し、このタブの表示とBulkScheduleTab・BracketTabの両方に反映する
+  const applyFormatPreset = (p) => {
+    setPrelimMode(p.prelimMode);
+    setFinalMode(p.finalMode);
+    const flags = prelimModeFlags(p.prelimMode);
+    saveSettings({
+      prelimMode: p.prelimMode, ...flags,
+      finalMode: p.finalMode,
+      groupCount: p.groupCount, fixedGroupTable: p.fixedGroupTable,
+      group1: p.group1, group2: p.group2,
+      rivalA: p.rivalA, rivalNameA: p.rivalNameA, rivalNameB: p.rivalNameB,
+      bracketSize: p.bracketSize,
+      azukiQuarter: p.azukiQuarter, azukiSemi: p.azukiSemi, azukiFinal: p.azukiFinal,
+    });
+    onSetRoundRobin(flags.roundRobinMode);
+    setPresetTick((t) => t + 1);
+  };
   // 起動直後、旧設定から復元したprelimModeとApp側のroundRobinがずれていたら合わせておく
   useEffect(() => {
     const want = prelimModeFlags(prelimMode).roundRobinMode;
     if (want !== roundRobin) onSetRoundRobin(want);
   }, []);
+
 
   const updateTournamentName = (v) => {
     setTournamentName(v);
@@ -3343,6 +3531,8 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
           <div style={{ background: C.lightBlue, border: `1px solid ${C.blue}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, ...HELP, color: "#2A3B4C" }}>
             ここで骨組みだけを決めます。人数・グループ数・時間割など具体的な数字は、下の「🎱 予選を組む」で選んだ骨組みに必要な項目だけが出ます。
           </div>
+
+          <FormatPresetPanel onApply={applyFormatPreset} />
 
           <StepHead n="1" title="試合のルール" sub="テンプレートを選ぶ。細かく決めたい時は詳細設定から" />
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
@@ -3559,11 +3749,11 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🎱" title="予選を組む" sub={`${prelimModeInfo(prelimMode).label}｜人数・参加者・時間割を入れて対戦表をつくる`}>
-        <BulkScheduleTab roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} prelimMode={prelimMode} format={format} />
+        <BulkScheduleTab key={presetTick} roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} prelimMode={prelimMode} format={format} />
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub={finalMode === "group" ? "各グループ1位＋勝ち数トップで自動選出" : "全体の上位4人／8人と抽選番号を入れて登録"}>
-        <BracketTab roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
+        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
