@@ -95,8 +95,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.233";
-const BUILD_TIME = "2026-09-03 「⚙️イベントの設定」に📁大会フォーマットプリセットを追加。予選の組み方・グループの分け方・決勝の進出方式と目標点をまとめて名前で保存・呼び出しできる";
+const APP_VERSION = "1.234";
+const BUILD_TIME = "2026-09-03 「試合のルール」テンプレートと「大会フォーマットプリセット」を統合。種目・得点方式・ブレイク順も含めて1つの名前でまとめて保存・呼び出せるようにした（旧テンプレート選択UIは廃止）";
 
 
 const C = {
@@ -920,48 +920,7 @@ function saveSpec(spec) {
   saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode });
   return sp;
 }
-const sameSpec = (a, b) => !!a && !!b && a.game === b.game && a.scoring === b.scoring && a.breakMode === b.breakMode;
 const specSummary = (sp) => `${gameInfo(sp.game).label}・${scoringInfo(sp.scoring).label}・${breakInfo(sp.breakMode).label}`;
-/* いま選ばれている3軸が、どのテンプレートと同じか（同じものが無ければ null＝カスタム） */
-const matchedTemplate = (sp, list) => (list || BUILTIN_TEMPLATES).find((t) => sameSpec(t.spec, sp)) || null;
-/* ========= テンプレート（詳細設定に名前をつけて保存したもの） =========
-   Firebaseの config は文字列・数値・真偽値しか許していない（8/18のセキュリティルール）ので、
-   一覧まるごとを JSON 文字列にして config/templates という1つの枝に入れる。
-   端末のlocalStorageにも同じものを控えておき、通信できない時はそちらを使う。 */
-const TEMPLATES_KEY = "jcl9_b1_templates_v1";
-function parseTemplates(raw) {
-  try {
-    const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((t) => t && t.id && t.name).map((t) => ({
-      id: String(t.id),
-      name: String(t.name).slice(0, 20),
-      spec: normalizeSpec(t.spec),
-      createdAt: Number(t.createdAt) || 0,
-    }));
-  } catch { return []; }
-}
-function loadLocalTemplates() {
-  try { return parseTemplates(localStorage.getItem(TEMPLATES_KEY)); } catch { return []; }
-}
-/* 共有側（Firebase）を正とし、読めなければ端末の控えを使う */
-async function fetchTemplates() {
-  try {
-    const raw = await dbGet("config/templates");
-    if (raw) {
-      const list = parseTemplates(raw);
-      try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list)); } catch {}
-      return list;
-    }
-  } catch {}
-  return loadLocalTemplates();
-}
-async function storeTemplates(list) {
-  try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list)); } catch {}
-  await dbUpdate("config", { templates: JSON.stringify(list) });
-}
-/* 組み込み2つ＋自作。通信を待たずに出したいので、端末の控えから同期的に組み立てる版も用意する */
-const allTemplatesSync = () => [...BUILTIN_TEMPLATES, ...loadLocalTemplates()];
 
 /* ========= 大会フォーマットプリセット =========
    「試合のルール」テンプレート（種目・得点方式・ブレイク順）とは別に、
@@ -980,6 +939,7 @@ function parseFormatPresets(raw) {
       id: String(p.id),
       name: String(p.name).slice(0, 20),
       createdAt: Number(p.createdAt) || 0,
+      spec: normalizeSpec(p.spec),
       prelimMode: PRELIM_MODES.some((m) => m.id === p.prelimMode) ? p.prelimMode : "rand_all",
       finalMode: p.finalMode === "group" ? "group" : "overall",
       groupCount: parseInt(p.groupCount, 10) || 3,
@@ -1014,10 +974,11 @@ async function storeFormatPresets(list) {
   try { localStorage.setItem(FORMAT_PRESETS_KEY, JSON.stringify(list)); } catch {}
   await dbUpdate("config", { formatPresets: JSON.stringify(list) });
 }
-/* 今の端末設定から、プリセットに入れる値をまとめて拾う */
+/* 今の端末設定から、プリセットに入れる値をまとめて拾う（試合のルール＝種目/得点方式/ブレイク順も含む） */
 function captureFormatPreset() {
   const s = loadSettings();
   return {
+    spec: loadSpec(s),
     prelimMode: loadPrelimMode(s),
     finalMode: loadFinalMode(s),
     groupCount: s.groupCount || 3,
@@ -1035,7 +996,7 @@ function captureFormatPreset() {
 }
 /* プリセットの中身を1行で要約表示する */
 function formatPresetSummary(p) {
-  const parts = [prelimModeInfo(p.prelimMode).label];
+  const parts = [specSummary(p.spec), prelimModeInfo(p.prelimMode).label];
   if (p.prelimMode === "rr_group") parts.push(`${p.groupCount}グループ${p.fixedGroupTable ? "・卓固定" : ""}`);
   if (p.prelimMode === "rand_group") parts.push(`A${p.group1}人/B${p.group2}人`);
   if (p.prelimMode === "rand_rival") parts.push(`${p.rivalNameA || "Aチーム"} 対 ${p.rivalNameB || "Bチーム"}`);
@@ -1081,7 +1042,7 @@ function FormatPresetPanel({ onApply }) {
   };
 
   const doApply = (p) => {
-    if (!window.confirm(`「${p.name}」を適用します。\n予選の組み方・グループの分け方・決勝の進出方式と目標点が、今の内容に置き換わります。\n（人数や参加者、時間割は変わりません）\n\nよろしいですか？`)) return;
+    if (!window.confirm(`「${p.name}」を適用します。\n試合のルール・予選の組み方・グループの分け方・決勝の進出方式と目標点が、今の内容に置き換わります。\n（人数や参加者、時間割は変わりません）\n\nよろしいですか？`)) return;
     onApply(p);
     setMsg({ ok: true, text: `「${p.name}」を適用しました` });
   };
@@ -1090,8 +1051,7 @@ function FormatPresetPanel({ onApply }) {
     <div style={{ background: "#fff", border: `1.5px solid ${C.win}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
       <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 2 }}>📁 大会フォーマットプリセット</div>
       <div style={{ ...HELP, marginBottom: 10 }}>
-        予選の組み方・グループの分け方・決勝の進出方式と目標点をまとめて名前で保存し、次回の同じ形式の大会で呼び出せます。
-        （試合のルール＝種目/得点方式/ブレイク順は、上の「テンプレート」で別に保存してください）
+        試合のルール（種目・得点方式・ブレイク順）・予選の組み方・グループの分け方・決勝の進出方式と目標点をまとめて名前で保存し、次回の同じ形式の大会で呼び出せます。
       </div>
       {list.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 10 }}>
@@ -3392,56 +3352,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   // 試合のルールは3軸（種目・得点方式・ブレイク順）で持つ。従来の format はここから導く
   const [spec, setSpec] = useState(() => loadSpec());
   const format = legacyFormat(spec);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const updateSpec = (patch) => setSpec(saveSpec({ ...spec, ...patch }));
-  // 自作テンプレート。まず端末の控えを出しておき、共有側が読めたら差し替える
-  const [customTpls, setCustomTpls] = useState(() => loadLocalTemplates());
-  useEffect(() => { fetchTemplates().then((list) => setCustomTpls(list)).catch(() => {}); }, []);
-  const templates = [...BUILTIN_TEMPLATES, ...customTpls];
-  const curTemplate = matchedTemplate(spec, templates);
-  const [tplName, setTplName] = useState("");
-  const [tplMsg, setTplMsg] = useState(null);
-  const [tplBusy, setTplBusy] = useState(false);
-  const saveTemplate = async () => {
-    const name = tplName.trim().slice(0, 20);
-    if (!name || tplBusy) return;
-    const allTpls = [...BUILTIN_TEMPLATES, ...customTpls];
-    // 中身（種目・得点方式・ブレイク順）がまったく同じテンプレートが、別の名前ですでにある
-    const sameSpecTpl = allTpls.find((t) => sameSpec(t.spec, spec) && t.name !== name);
-    if (sameSpecTpl) {
-      window.alert(`この内容のテンプレートはすでに「${sameSpecTpl.name}」という名前で登録されています。`);
-      return;
-    }
-    // 組み込みのテンプレート名とはかぶせられない（上書きできないので）
-    if (BUILTIN_TEMPLATES.some((t) => t.name === name)) {
-      window.alert(`「${name}」は組み込みのテンプレート名です。別の名前をつけてください。`);
-      return;
-    }
-    const dup = customTpls.find((t) => t.name === name);
-    if (dup) {
-      if (sameSpec(dup.spec, spec)) { window.alert(`「${name}」はすでにあります。`); return; }
-      if (!window.confirm(`「${name}」はすでにあります。今の設定で上書きしますか？`)) return;
-    }
-    setTplBusy(true);
-    const entry = { id: dup ? dup.id : "u" + Date.now(), name, spec, createdAt: dup ? dup.createdAt : Date.now() };
-    const next = dup ? customTpls.map((t) => (t.id === dup.id ? entry : t)) : [...customTpls, entry];
-    setCustomTpls(next);
-    try {
-      await storeTemplates(next);
-      setTplName("");
-      setTplMsg({ ok: true, text: `「${name}」を保存しました` });
-    } catch (e) {
-      setTplMsg({ ok: false, text: "保存に失敗しました（この端末には控えてあります）" });
-    }
-    setTplBusy(false);
-  };
-  const deleteTemplate = async (t) => {
-    if (!window.confirm(`テンプレート「${t.name}」を消します。よろしいですか？`)) return;
-    const next = customTpls.filter((x) => x.id !== t.id);
-    setCustomTpls(next);
-    try { await storeTemplates(next); setTplMsg({ ok: true, text: `「${t.name}」を消しました` }); }
-    catch { setTplMsg({ ok: false, text: "共有側の更新に失敗しました" }); }
-  };
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
@@ -3465,6 +3376,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const applyFormatPreset = (p) => {
     setPrelimMode(p.prelimMode);
     setFinalMode(p.finalMode);
+    setSpec(saveSpec(p.spec));
     const flags = prelimModeFlags(p.prelimMode);
     saveSettings({
       prelimMode: p.prelimMode, ...flags,
@@ -3534,100 +3446,18 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
 
           <FormatPresetPanel onApply={applyFormatPreset} />
 
-          <StepHead n="1" title="試合のルール" sub="テンプレートを選ぶ。細かく決めたい時は詳細設定から" />
+          <StepHead n="1" title="試合のルール" sub="種目・得点方式・ブレイク順を選ぶ" />
           <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginBottom: 7 }}>テンプレート</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {BUILTIN_TEMPLATES.map((t) => {
-                const on = !!curTemplate && curTemplate.id === t.id;
-                return (
-                  <button key={t.id} onClick={() => updateSpec(t.spec)} style={{
-                    flex: 1, background: on ? C.blue : "#fff",
-                    border: `2px solid ${on ? C.blue : C.line}`,
-                    borderRadius: 12, padding: "10px 6px", cursor: "pointer", fontFamily: FONT, textAlign: "center",
-                  }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: on ? "#fff" : C.ink }}>{t.name}</div>
-                    <div style={{ fontSize: 11, color: on ? "rgba(255,255,255,0.8)" : C.sub, marginTop: 3, lineHeight: 1.5 }}>{specSummary(t.spec)}</div>
-                  </button>
-                );
-              })}
+            <AxisPicker title="種目" items={GAMES} value={spec.game} onPick={(v) => updateSpec({ game: v })} />
+            <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
+            <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
+            {spec.scoring === "set" && <ClassTargetsEditor />}
+            <div style={{ ...HELP, marginTop: 2 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
+            <div style={{ ...HELP, marginTop: 8 }}>
+              今の設定：{specSummary(spec)}<br />
+              「組む→登録」のタイミングでこの内容が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。
+              よく使う組み合わせは、この下の「📁 大会フォーマットプリセット」で予選・決勝の設定と一緒に名前をつけて保存できます。
             </div>
-
-            {/* 自分で保存したテンプレート。組み込みの2つと同じように選べる（こちらは消せる） */}
-            {customTpls.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 8 }}>
-                {customTpls.map((t) => {
-                  const on = !!curTemplate && curTemplate.id === t.id;
-                  return (
-                    <div key={t.id} style={{
-                      display: "flex", alignItems: "stretch", gap: 6,
-                      background: on ? C.blue : "#fff", border: `2px solid ${on ? C.blue : C.line}`,
-                      borderRadius: 12, overflow: "hidden",
-                    }}>
-                      <button onClick={() => updateSpec(t.spec)} style={{
-                        flex: 1, background: "none", border: "none", padding: "10px 12px",
-                        cursor: "pointer", fontFamily: FONT, textAlign: "left",
-                      }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 800, color: on ? "#fff" : C.ink }}>{t.name}</div>
-                        <div style={{ fontSize: 11, color: on ? "rgba(255,255,255,0.8)" : C.sub, marginTop: 3, lineHeight: 1.5 }}>{specSummary(t.spec)}</div>
-                      </button>
-                      <button onClick={() => deleteTemplate(t)} title="このテンプレートを消す" style={{
-                        width: 40, background: "none", border: "none", borderLeft: `1px solid ${on ? "rgba(255,255,255,0.35)" : C.line}`,
-                        color: on ? "rgba(255,255,255,0.9)" : C.sub, fontSize: 15, cursor: "pointer", fontFamily: FONT,
-                      }}>✕</button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ marginTop: 12, borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
-              <button onClick={() => setShowAdvanced(!showAdvanced)} style={{
-                width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                background: "none", border: "none", padding: "2px 0", cursor: "pointer", fontFamily: FONT, textAlign: "left",
-              }}>
-                <span style={{ fontSize: 13.5, fontWeight: 800, color: C.blue }}>{showAdvanced ? "▼" : "▶"} 詳細設定</span>
-                <span style={{ fontSize: 11.5, color: C.sub, textAlign: "right", lineHeight: 1.5 }}>{specSummary(spec)}</span>
-              </button>
-              {showAdvanced && (
-                <div style={{ marginTop: 10 }}>
-                  <AxisPicker title="種目" items={GAMES} value={spec.game} onPick={(v) => updateSpec({ game: v })} />
-                  <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
-                  <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
-                  {spec.scoring === "set" && <ClassTargetsEditor />}
-                  <div style={{ ...HELP, marginTop: 2, marginBottom: 12 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
-
-                  {/* いまの詳細設定に名前をつけて、上のテンプレート一覧に並べる */}
-                  <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 12px" }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginBottom: 6 }}>この設定に名前をつけて保存</div>
-                    <div style={{ display: "flex", gap: 7 }}>
-                      <input value={tplName} onChange={(e) => { setTplName(e.target.value.slice(0, 20)); setTplMsg(null); }}
-                        placeholder="例：ハウストーナメント" style={{
-                          flex: 1, minWidth: 0, border: `1.5px solid ${C.line}`, borderRadius: 10,
-                          padding: "9px 10px", fontSize: 15, fontFamily: FONT, color: C.ink, boxSizing: "border-box",
-                        }} />
-                      <button onClick={saveTemplate} disabled={!tplName.trim() || tplBusy} style={{
-                        background: tplName.trim() && !tplBusy ? C.blue : C.line,
-                        color: tplName.trim() && !tplBusy ? "#fff" : C.sub,
-                        border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 14, fontWeight: 800,
-                        cursor: tplName.trim() && !tplBusy ? "pointer" : "default", fontFamily: FONT, whiteSpace: "nowrap",
-                      }}>{tplBusy ? "保存中…" : "保存"}</button>
-                    </div>
-                    <div style={{ ...HELP, marginTop: 6 }}>保存する内容：{specSummary(spec)}</div>
-                    {tplMsg && (
-                      <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 700, color: tplMsg.ok ? C.win : C.minus }}>{tplMsg.text}</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {!curTemplate && (
-                <div style={{ marginTop: 10, background: C.hillBg, border: `1px solid ${C.hill}`, borderRadius: 10, padding: "8px 11px", fontSize: 12, color: "#5A4318", lineHeight: 1.7 }}>
-                  テンプレートから変えた<b>カスタム設定</b>です（{specSummary(spec)}）。<br />
-                  よく使う組み合わせなら、詳細設定の一番下で名前をつけて保存すると、次からテンプレートとして選べます。
-                </div>
-              )}
-            </div>
-            <div style={{ ...HELP, marginTop: 8 }}>「組む→登録」のタイミングでこの内容が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。</div>
           </div>
 
           <StepHead n="2" title="予選の組み方" sub="リーグ戦にするか、ランダムに組むか" />
@@ -5183,7 +5013,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "11px 14px", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 5 }}>いま選んでいる骨組み</div>
         <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.6 }}>
-          {(matchedTemplate(curSpec, allTemplatesSync()) || {}).name || "カスタム設定"}　・　{modeInfo.label}
+          {modeInfo.label}
         </div>
         <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6 }}>{specSummary(curSpec)}</div>
         <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 3, lineHeight: 1.6 }}>{modeInfo.sub}</div>
