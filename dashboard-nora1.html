@@ -95,8 +95,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.234";
-const BUILD_TIME = "2026-09-03 「試合のルール」テンプレートと「大会フォーマットプリセット」を統合。種目・得点方式・ブレイク順も含めて1つの名前でまとめて保存・呼び出せるようにした（旧テンプレート選択UIは廃止）";
+const APP_VERSION = "1.235";
+const BUILD_TIME = "2026-09-03 タイムライン画面に「🏁全試合終了・未アーカイブ」バナーを追加。ワンタップでその場からアーカイブ保存できる";
 
 
 const C = {
@@ -205,6 +205,20 @@ function backupRoster(roster) {
 }
 function loadRosterBackup() {
   try { const v = JSON.parse(localStorage.getItem(ROSTER_BACKUP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+/* ========= 「このデータ、アーカイブ保存した？」フラグ =========
+   端末ローカルの目印だけ。対戦表を新しく組み直す（register）たびに一旦消え、
+   アーカイブに保存する（ArchivePanel／ホームのクイック保存）たびに立つ。
+   タイムライン（HomeTab）はこれを見て「全試合終了かつ未保存」ならアーカイブを促すバナーを出す。 */
+const ARCHIVE_FLAG_KEY = "jcl9_b1_archived_flag_v1";
+function hasArchivedThisRun() {
+  try { return localStorage.getItem(ARCHIVE_FLAG_KEY) === "1"; } catch { return false; }
+}
+function markArchivedThisRun() {
+  try { localStorage.setItem(ARCHIVE_FLAG_KEY, "1"); } catch {}
+}
+function clearArchivedThisRunFlag() {
+  try { localStorage.removeItem(ARCHIVE_FLAG_KEY); } catch {}
 }
 async function saveRoster(roster, allowEmpty) {
   // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
@@ -4024,6 +4038,7 @@ function ArchivePanel({ roster }) {
         format: legacyFormat(spec), specSummary: specSummary(spec),
         roster, matches,
       });
+      markArchivedThisRun();
       setMsg({ ok: true, text: `「${finalName || "無題"}」として保存しました` });
       setName("");
       if (showList) openList();
@@ -4984,6 +4999,8 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       if (saved !== rows.length) {
         throw new Error(`保存を確認できませんでした（${saved}/${rows.length}件）。もう一度お試しください`);
       }
+      // 新しい大会データに組み直したので、前回大会ぶんの「アーカイブ済み」の目印は一旦クリアする
+      clearArchivedThisRunFlag();
       setMsg({ ok: true, text: `${rows.length}件をタイムラインに登録しました` });
     } catch (e) {
       setMsg({ ok: false, text: "登録に失敗しました: " + (e && e.message ? e.message : e) });
@@ -6360,6 +6377,11 @@ function HomeTab() {
   const [tLenPct, setTLenPct] = useState(100);
   const [tPer100, setTPer100] = useState(60);
   const [swapSource, setSwapSource] = useState(null);
+  // 全試合終了時に、アーカイブ保存をまだしていなければ促すバナー用
+  const [archivedFlag, setArchivedFlag] = useState(() => hasArchivedThisRun());
+  const [archiveDismissed, setArchiveDismissed] = useState(false);
+  const [archBusy, setArchBusy] = useState(false);
+  const [archMsg, setArchMsg] = useState(null);
 
   const performSwap = async (source, target) => {
     if (!source || !target || source.id === target.id) { setSwapSource(null); return; }
@@ -6739,6 +6761,32 @@ function HomeTab() {
   const slots = Math.max(0, ...cols.map((c) => c.length));
   const totalMatches = cols.reduce((s, c) => s + c.length, 0);
   const doneCount = cols.reduce((s, c) => s + c.filter((e) => e.st === "done").length, 0);
+  const allDone = totalMatches > 0 && doneCount === totalMatches;
+
+  // 「📦今すぐアーカイブ」バナーのボタンから呼ぶ簡易保存。ArchivePanel（設定タブ）の保存処理と同じ内容を、
+  // タブを移動せずタイムライン画面から直接できるようにしたもの
+  const doQuickArchive = async () => {
+    if (archBusy) return;
+    setArchBusy(true);
+    setArchMsg(null);
+    try {
+      const currentMatches = (await dbGet("matches")) || {};
+      const spec = loadSpec();
+      const id = "t" + Date.now();
+      const nm = loadSettings().tournamentName || "";
+      await dbSet("tournaments/" + id, {
+        at: Date.now(), name: nm,
+        format: legacyFormat(spec), specSummary: specSummary(spec),
+        roster, matches: currentMatches,
+      });
+      markArchivedThisRun();
+      setArchivedFlag(true);
+      setArchMsg({ ok: true, text: "アーカイブに保存しました" });
+    } catch (e) {
+      setArchMsg({ ok: false, text: "保存に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setArchBusy(false);
+  };
 
   // ========= 実績ペース：ここまで終わった試合の「実際にかかった時間」の平均から、残り試合数ぶんを見積もる =========
   // 各試合に設定した持ち時間（matchMinutes）はあくまで事前の目安。得点方式によっては実際の所要時間が大きくぶれるので、
@@ -6846,6 +6894,30 @@ function HomeTab() {
           <button onClick={toggleGlobalAdjust} style={{ justifySelf: "end", background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>⚙ 全卓調整</button>
           {showEventInfo && <EventInfoSheet cols={cols} roster={roster} onClose={() => setShowEventInfo(false)} />}
         </div>
+
+        {/* 全試合終了（予選・決勝トーナメントの登録済み分すべて）で、まだアーカイブ保存していない時に出す */}
+        {allDone && !archivedFlag && !archiveDismissed && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+            background: "#FFF7E0", border: `1.5px solid ${C.hill}`, borderRadius: 10,
+            padding: "9px 12px", marginBottom: 10,
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#5A4318", flex: 1, minWidth: 160 }}>
+              🏁 全試合が終了しました。このデータをアーカイブに保存しますか？
+            </span>
+            <button onClick={doQuickArchive} disabled={archBusy} style={{
+              background: archBusy ? C.line : C.win, color: "#fff", border: "none", borderRadius: 8,
+              padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: archBusy ? "wait" : "pointer", fontFamily: FONT,
+            }}>{archBusy ? "保存中…" : "📦 保存する"}</button>
+            <button onClick={() => setArchiveDismissed(true)} style={{
+              background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 12px",
+              fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT,
+            }}>後で</button>
+            {archMsg && (
+              <div style={{ width: "100%", fontSize: 12, fontWeight: 700, color: archMsg.ok ? C.win : C.minus }}>{archMsg.text}</div>
+            )}
+          </div>
+        )}
 
         {/* 実績ペース：これまでの平均所要時間×残り試合数で、終了予定時刻に対して順調かを見る */}
         {paceInfo && (
