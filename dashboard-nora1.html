@@ -104,8 +104,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.237";
-const BUILD_TIME = "2026-09-15 アーカイブ印刷の不具合を修正：背後の画面（設定タブ等）が一緒に印刷されてしまう問題と、表がページの途中で割れる問題";
+const APP_VERSION = "1.238";
+const BUILD_TIME = "2026-09-15 アーカイブに削除機能を追加。決勝トーナメント表を線でつないだ一般的な見た目のトーナメント表に刷新（プレイヤータブ・PC成績画面・アーカイブすべてに反映）";
 
 
 const C = {
@@ -2008,6 +2008,13 @@ function TimelineSlotCard({
 }
 
 /* ========= 決勝トーナメントの結果だけを見る（プレイヤータブ用、操作ボタンなし） ========= */
+/* ========= 決勝トーナメント：一般的な見た目のトーナメント表（回戦を線でつなぐ） =========
+   bracketRound（回戦番号）・bracketPos（その回戦内での位置、0始まり）から、
+   各対戦の縦位置を「1回戦は均等割り、以降は2つの子の中間」という標準的な計算式で求める。
+   registerAll／advanceRoundが bracketPos 2p・2p+1 の勝者を次回戦の bracketPos p に入れる作りなので、
+   この前提はデータの作られ方そのものと一致する。
+   BracketReadOnlyViewという名前・{matches, wide}という受け取り方は変えていないので、
+   これを呼んでいる箇所（プレイヤータブ／PC成績画面／アーカイブ）はすべて自動でこの表示に切り替わる */
 function BracketReadOnlyView({ matches, wide }) {
   const bracketMatches = getBracketMatches(matches);
   const hasBracket = bracketMatches.length > 0;
@@ -2017,44 +2024,92 @@ function BracketReadOnlyView({ matches, wide }) {
   const bracketSize = bracketMatches[0].bracketSize || 8;
   const totalRounds = bracketTotalRounds(bracketSize);
   const roundLabel = (r) => (r === totalRounds ? "決勝" : totalRounds - r === 1 ? "準決勝" : `${r}回戦`);
+
+  const boxW = wide ? 170 : 132;
+  const boxH = 54;
+  const rowH = 25;
+  const colGap = wide ? 54 : 36;
+  const vGap = 12;
+  const unit = boxH + vGap;
+  const labelH = 28;
+
+  const roundsData = Array.from({ length: totalRounds }, (_, i) => bracketMatchesForRound(matches, i + 1));
+
+  // 縦位置（中心）の計算：1回戦は均等割り、2回戦以降は子2つ（bracketPos 2p, 2p+1）の中間
+  const centers = [];
+  centers[0] = roundsData[0].map((_, p) => p * unit + unit / 2);
+  for (let r = 1; r < totalRounds; r++) {
+    const prevC = centers[r - 1];
+    centers[r] = roundsData[r].map((_, p) => ((prevC[p * 2] || 0) + (prevC[p * 2 + 1] || 0)) / 2);
+  }
+  const round1Count = roundsData[0].length || 1;
+  const totalHeight = round1Count * unit;
+  const totalWidth = totalRounds * boxW + (totalRounds - 1) * colGap;
+
+  const finalMatches = roundsData[totalRounds - 1] || [];
+  const allFinalDone = finalMatches.length > 0 && finalMatches.every((m) => isMatchFinished(m));
+  const champion = allFinalDone ? finalMatches[0].names[matchWinnerIndex(finalMatches[0])] : null;
+
   return (
-    <div style={{ maxWidth: wide ? 640 : 480, margin: "0 auto" }}>
-      {Array.from({ length: totalRounds }, (_, ri) => ri + 1).map((r) => {
-        const ms = bracketMatchesForRound(matches, r);
-        if (ms.length === 0) return null;
-        const allDone = ms.every((m) => isMatchFinished(m));
-        return (
-          <div key={r} className="print-avoid-break" style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
-            {ms.map((m) => {
-              const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
+    <div className="print-avoid-break">
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ position: "relative", width: totalWidth, height: totalHeight + labelH, margin: "0 auto" }}>
+          {roundsData.map((_, r) => (
+            <div key={"lbl" + r} style={{
+              position: "absolute", left: r * (boxW + colGap), top: 0, width: boxW,
+              textAlign: "center", fontSize: wide ? 14 : 12.5, fontWeight: 800, color: C.blue,
+            }}>{roundLabel(r + 1)}</div>
+          ))}
+
+          <svg width={totalWidth} height={totalHeight + labelH} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
+            {roundsData.slice(0, -1).map((ms, r) =>
+              ms.map((m, p) => {
+                const x1 = r * (boxW + colGap) + boxW;
+                const y1 = centers[r][p] + labelH;
+                const midX = x1 + colGap / 2;
+                const parentP = Math.floor(p / 2);
+                const y2 = (centers[r + 1][parentP] || 0) + labelH;
+                const x2 = (r + 1) * (boxW + colGap);
+                return <path key={m.id} d={`M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`} fill="none" stroke={C.line} strokeWidth="2" />;
+              })
+            )}
+          </svg>
+
+          {roundsData.map((ms, r) =>
+            ms.map((m, p) => {
+              const done = isMatchFinished(m);
+              const w = done ? matchWinnerIndex(m) : null;
+              const y = centers[r][p] - boxH / 2 + labelH;
+              const x = r * (boxW + colGap);
               return (
-                <div key={m.id} style={{
-                  display: "flex", gap: 8, alignItems: "center", background: m.pending ? C.zone : "#fff",
-                  border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 12px", marginBottom: 6,
+                <div key={m.id} data-mid={m.id} style={{
+                  position: "absolute", left: x, top: y, width: boxW, height: boxH,
+                  background: m.pending ? C.zone : "#fff", border: `1.5px solid ${C.line}`, borderRadius: 8, boxSizing: "border-box",
                 }}>
-                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: m.pending ? C.sub : C.ink, borderRadius: 5, padding: "1px 6px", flexShrink: 0 }}>T{m.table}</span>
                   {[0, 1].map((i) => (
                     <div key={i} style={{
-                      flex: 1, textAlign: "center", fontSize: 15,
-                      fontWeight: w === i ? 900 : 600,
+                      height: rowH, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4,
+                      fontSize: wide ? 13.5 : 12, fontWeight: w === i ? 900 : 600,
                       color: m.pending ? C.sub : w === i ? C.win : w == null ? C.ink : C.sub,
-                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      background: w === i ? C.lightBlue : "transparent",
+                      borderBottom: i === 0 ? `1px solid ${C.line}` : "none",
+                      padding: "0 7px", boxSizing: "border-box",
                     }}>
-                      {m.names[i]}{isMatchFinished(m) && ` (${(m.tot || [0, 0])[i]})`}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(m.names || [])[i]}</span>
+                      {done && <span style={{ flexShrink: 0, fontSize: wide ? 12 : 10.5, opacity: 0.85 }}>{(m.tot || [0, 0])[i]}</span>}
                     </div>
                   ))}
                 </div>
               );
-            })}
-            {allDone && r === totalRounds && (
-              <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: C.win, marginTop: 6 }}>
-                🏆 優勝：{ms[0].names[matchWinnerIndex(ms[0])]}
-              </div>
-            )}
-          </div>
-        );
-      })}
+            })
+          )}
+        </div>
+      </div>
+      {champion && (
+        <div style={{ textAlign: "center", fontSize: wide ? 18 : 16, fontWeight: 800, color: C.win, marginTop: 16 }}>
+          🏆 優勝：{champion}
+        </div>
+      )}
     </div>
   );
 }
@@ -4111,6 +4166,7 @@ function ArchivePanel({ roster }) {
   const [showList, setShowList] = useState(false);
   const [list, setList] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   const doArchive = async () => {
     if (busy) return;
@@ -4151,6 +4207,21 @@ function ArchivePanel({ roster }) {
     }
   };
 
+  const doDelete = async (a) => {
+    if (deletingId) return;
+    if (!window.confirm(`「${a.name || "無題"}」を削除します。この操作は取り消せません。\n\nよろしいですか？`)) return;
+    setDeletingId(a.id);
+    setMsg(null);
+    try {
+      await dbSet("tournaments/" + a.id, null);
+      setList((cur) => (cur || []).filter((x) => x.id !== a.id));
+      if (viewing && viewing.id === a.id) setViewing(null);
+    } catch (e) {
+      setMsg({ ok: false, text: "削除に失敗しました: " + (e && e.message ? e.message : e) });
+    }
+    setDeletingId(null);
+  };
+
   return (
     <div style={{ marginTop: 18, border: `1.5px solid ${C.line}`, borderRadius: 12, padding: "12px 12px 14px" }}>
       <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 7 }}>📦 過去大会アーカイブ</div>
@@ -4176,13 +4247,19 @@ function ArchivePanel({ roster }) {
           {list === null && <div style={{ fontSize: 12.5, color: C.sub }}>読み込み中…</div>}
           {list && list.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>まだアーカイブがありません</div>}
           {list && list.map((a) => (
-            <button key={a.id} onClick={() => setViewing(a)} style={{
-              width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
-              padding: "10px 12px", marginBottom: 6, cursor: "pointer", fontFamily: FONT,
-            }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{a.name || "（無題）"}</div>
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{fmtDateTime(a.at)}　{(a.roster || []).length}人　{Object.keys(a.matches || {}).length}試合　{a.specSummary || ""}</div>
-            </button>
+            <div key={a.id} style={{ display: "flex", alignItems: "stretch", gap: 6, marginBottom: 6 }}>
+              <button onClick={() => setViewing(a)} style={{
+                flex: 1, minWidth: 0, textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
+                padding: "10px 12px", cursor: "pointer", fontFamily: FONT,
+              }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{a.name || "（無題）"}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{fmtDateTime(a.at)}　{(a.roster || []).length}人　{Object.keys(a.matches || {}).length}試合　{a.specSummary || ""}</div>
+              </button>
+              <button onClick={() => doDelete(a)} disabled={!!deletingId} style={{
+                flexShrink: 0, width: 44, background: "#fff", border: `1px solid ${C.minus}`, borderRadius: 10,
+                color: C.minus, fontSize: 17, cursor: deletingId ? "wait" : "pointer", fontFamily: FONT,
+              }}>{deletingId === a.id ? "…" : "🗑"}</button>
+            </div>
           ))}
           <button onClick={() => setShowList(false)} style={{
             width: "100%", background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10,
