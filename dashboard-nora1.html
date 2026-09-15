@@ -25,6 +25,11 @@
     .archive-print-backdrop { position: static !important; background: none !important; display: block !important; overflow: visible !important; z-index: auto !important; }
     .archive-print-card { max-width: none !important; width: 100% !important; min-height: 0 !important; }
     .print-only-heading { display: block !important; }
+    /* アーカイブを開いて印刷している間は、背後の画面（#root、設定タブなど）を丸ごと隠す。
+       Portalはdocument.bodyへ直接（#rootの外に）差し込まれるので、この指定でアーカイブの中身だけが残る */
+    body.archive-printing #root { display: none !important; }
+    /* 表や決勝トーナメントの各ブロックが、印刷でページの途中で割れないようにする */
+    .print-avoid-break { break-inside: avoid; page-break-inside: avoid; }
   }
   /* 進行中ラックに点数が入った時の点滅 */
   @keyframes rackFlash {
@@ -99,8 +104,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.236";
-const BUILD_TIME = "2026-09-15 アーカイブ表示を「タイムライン／総合成績／リーグ表・トーナメント表」の3タブに再編し印刷対応。成績・対戦表集計の「6時間以上前は除外」判定をアーカイブでは無視するよう修正（古いアーカイブが空に見える不具合の修正）";
+const APP_VERSION = "1.237";
+const BUILD_TIME = "2026-09-15 アーカイブ印刷の不具合を修正：背後の画面（設定タブ等）が一緒に印刷されてしまう問題と、表がページの途中で割れる問題";
 
 
 const C = {
@@ -2019,7 +2024,7 @@ function BracketReadOnlyView({ matches, wide }) {
         if (ms.length === 0) return null;
         const allDone = ms.every((m) => isMatchFinished(m));
         return (
-          <div key={r} style={{ marginBottom: 18 }}>
+          <div key={r} className="print-avoid-break" style={{ marginBottom: 18 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 8 }}>{roundLabel(r)}</div>
             {ms.map((m) => {
               const w = isMatchFinished(m) ? matchWinnerIndex(m) : null;
@@ -2096,7 +2101,7 @@ function GroupStandingsBlocks({ matches, roster, groupCount, dense, ignoreStale 
       {tables.map((t) => {
         const rows = (pick.groups[t] || []).filter((r) => r.played > 0);
         return (
-          <div key={t} style={{ marginBottom: 18 }}>
+          <div key={t} className="print-avoid-break" style={{ marginBottom: 18 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
             <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
               <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
@@ -3944,6 +3949,12 @@ function ArchiveViewer({ archive, onClose }) {
   }, [matches]);
   const hasGroups = groupCount > 0;
 
+  // アーカイブを開いている間だけ<body>に印刷用の目印クラスを付ける（背後の画面を隠すため）
+  useEffect(() => {
+    document.body.classList.add("archive-printing");
+    return () => document.body.classList.remove("archive-printing");
+  }, []);
+
   const standings = useMemo(() => buildStandings(matches, roster, "prelim", true), [matches, roster]);
   const teamRows = useMemo(() => buildTeamStandings(matches, true), [matches]);
   const tableLists = useMemo(() => [1, 2, 3].map((t) => getAllForTable(matches, t, true).filter((m) => !m.bracket)), [matches]);
@@ -4015,7 +4026,7 @@ function ArchiveViewer({ archive, onClose }) {
           </div>
 
           {tab === "timeline" && [1, 2, 3].map((t, i) => (
-            <div key={t} style={{ marginBottom: 16 }}>
+            <div key={t} className="print-avoid-break" style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
               {tableLists[i].length === 0
                 ? <div style={{ fontSize: 13, color: C.sub, padding: "6px 0" }}>対戦なし</div>
@@ -4066,13 +4077,13 @@ function ArchiveViewer({ archive, onClose }) {
             <>
               {hasGroups ? (
                 groupTables.map((t, i) => (
-                  <div key={t} style={{ marginBottom: 18 }}>
+                  <div key={t} className="print-avoid-break" style={{ marginBottom: 18 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
                     <MatrixGrid matrix={groupMatrices[i]} emptyLabel={`G${t}：対戦がまだ登録されていません`} />
                   </div>
                 ))
               ) : plainMatrix && plainMatrix.names.length > 0 ? (
-                <div style={{ marginBottom: 18 }}>
+                <div className="print-avoid-break" style={{ marginBottom: 18 }}>
                   <MatrixGrid matrix={plainMatrix} />
                 </div>
               ) : null}
