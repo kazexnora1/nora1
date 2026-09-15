@@ -21,6 +21,10 @@
     .no-print { display: none !important; }
     .print-fit { height: auto !important; overflow: visible !important; }
     body, html, #root { height: auto !important; overflow: visible !important; }
+    /* アーカイブ表示：印刷時は暗い背景・中央固定・幅制限をやめ、ふつうのページとして流す */
+    .archive-print-backdrop { position: static !important; background: none !important; display: block !important; overflow: visible !important; z-index: auto !important; }
+    .archive-print-card { max-width: none !important; width: 100% !important; min-height: 0 !important; }
+    .print-only-heading { display: block !important; }
   }
   /* 進行中ラックに点数が入った時の点滅 */
   @keyframes rackFlash {
@@ -95,8 +99,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.235";
-const BUILD_TIME = "2026-09-03 タイムライン画面に「🏁全試合終了・未アーカイブ」バナーを追加。ワンタップでその場からアーカイブ保存できる";
+const APP_VERSION = "1.236";
+const BUILD_TIME = "2026-09-15 アーカイブ表示を「タイムライン／総合成績／リーグ表・トーナメント表」の3タブに再編し印刷対応。成績・対戦表集計の「6時間以上前は除外」判定をアーカイブでは無視するよう修正（古いアーカイブが空に見える不具合の修正）";
 
 
 const C = {
@@ -377,12 +381,13 @@ function computeTableAdjustment(queueForTable, eH, eM, per100) {
 }
 
 // 卓ごとの全対戦（終了分も含む）を作成順に並べる。タイムラインの「コマ」順の復元に使う
-function getAllForTable(matches, tableNum) {
+// ignoreStale=true の時は「6時間以上前は除外」の判定をしない（過去大会アーカイブは何日も経ってから見返すため）
+function getAllForTable(matches, tableNum, ignoreStale) {
   const list = [];
   for (const id in matches) {
     const m = matches[id];
     if (!m || Number(m.table) !== tableNum) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (!ignoreStale && (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS)) continue;
     list.push({ ...normalizeMatch(m), id });
   }
   list.sort((a, b) => (a.createdAt || a.updatedAt) - (b.createdAt || b.updatedAt));
@@ -571,7 +576,8 @@ function recomputeWinner(raceTo, tot, hist) {
 // ・勝ちがつかなかった試合は、目標点に対する取得点の割合（達成率、上限100%）を記録
 // ・時間切れでどちらも目標に届かなかった試合は両者負け扱いで、双方に達成率を記録
 // ・並び順は 勝ち数 → 達成率の平均 → 得失点差
-function buildStandings(matches, roster, scope) {
+// ignoreStale=true の時は「6時間以上前は除外」の判定をしない（過去大会アーカイブ用）
+function buildStandings(matches, roster, scope, ignoreStale) {
   // scope: undefined（全部）| "prelim"（予選のみ）| "bracket"（決勝トーナメントのみ）
   const stats = {};
   const ensure = (name) => {
@@ -582,7 +588,7 @@ function buildStandings(matches, roster, scope) {
   // 参加予定リストにいるだけ（まだ対戦が組まれていない）選手はここに含まれないので、成績表にも出ない
   const inScope = Object.values(matches || {}).filter((m) => {
     if (!m) return false;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) return false;
+    if (!ignoreStale && (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS)) return false;
     if (scope === "prelim" && m.bracket) return false;
     if (scope === "bracket" && !m.bracket) return false;
     return true;
@@ -637,7 +643,7 @@ const fmtRate = (v) => (v == null ? "–" : v.toFixed(3));
 
 // グループ分けして総当たり（リーグ戦）用：予選の対戦をgrp（1..G）ごとに分け、
 // 各グループ内だけでbuildStandingsと同じ基準（勝ち数→達成率→得失点差）で順位付けする
-function buildGroupStandings(matches, roster, groupCount) {
+function buildGroupStandings(matches, roster, groupCount, ignoreStale) {
   const G = groupCount || 3;
   const groups = {};
   for (let t = 1; t <= G; t++) {
@@ -651,7 +657,7 @@ function buildGroupStandings(matches, roster, groupCount) {
     const names = new Set();
     Object.values(ms).forEach((m) => (m.names || []).forEach((n) => n && names.add(n)));
     const groupRoster = roster.filter((p) => names.has(p.name));
-    groups[t] = buildStandings(ms, groupRoster, "prelim");
+    groups[t] = buildStandings(ms, groupRoster, "prelim", ignoreStale);
   }
   return groups; // { 1: rows, 2: rows, ... G: rows }（各グループの成績、rows[0]がそのグループの1位）
 }
@@ -681,9 +687,9 @@ function buildGroupRateRanking(groups, groupCount) {
 
 // グループ分けして総当たりの決勝進出者選出：各グループの1位（G人）＋
 // グループ1位を除いた全員の中で勝ち数の多い順→達成率（avgRate、全勝は最上位扱い）が高い順に、決勝の枠が埋まるまで採用
-function pickGroupFinalists(matches, roster, groupCount) {
+function pickGroupFinalists(matches, roster, groupCount, ignoreStale) {
   const G = groupCount || 3;
-  const groups = buildGroupStandings(matches, roster, G);
+  const groups = buildGroupStandings(matches, roster, G, ignoreStale);
   const tables = Array.from({ length: G }, (_, i) => i + 1);
   const winners = tables.map((t) => (groups[t] && groups[t][0]) || null);
   if (winners.some((w) => !w || !w.played)) return { winners, wildcard: null, groups, ready: false, rateRanking: [], groupCount: G };
@@ -693,7 +699,8 @@ function pickGroupFinalists(matches, roster, groupCount) {
 
 // 対抗戦（団体戦）成績集計：m.rival && m.teamNames が付いた試合だけを対象に、チーム名ごとに勝敗・得失点を集計する。
 // names[0]側が常にteamNames[0]（Aチーム）、names[1]側が常にteamNames[1]（Bチーム）
-function buildTeamStandings(matches) {
+// ignoreStale=true の時は「6時間以上前は除外」の判定をしない（過去大会アーカイブ用）
+function buildTeamStandings(matches, ignoreStale) {
   const stats = {};
   const ensure = (name) => {
     if (!stats[name]) stats[name] = { name, win: 0, loss: 0, pf: 0, pa: 0 };
@@ -703,7 +710,7 @@ function buildTeamStandings(matches) {
     const m = matches[id];
     if (!m || !m.rival || !Array.isArray(m.teamNames) || !m.teamNames[0] || !m.teamNames[1]) continue;
     if (!isMatchFinished(m)) continue;
-    if (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS) continue;
+    if (!ignoreStale && (!m.updatedAt || Date.now() - m.updatedAt > STALE_MS)) continue;
     const tot = m.tot || [0, 0];
     const w = matchWinnerIndex(m); // null なら両者負け（時間切れ）
     const sa = ensure(m.teamNames[0]);
@@ -720,8 +727,8 @@ function buildTeamStandings(matches) {
 
 // 各選手が対戦した順（回転がある場合はその順、無ければ作成順）に、相手と結果（勝ちならW、負けなら達成率）を並べる。
 // 「戦績（対戦相手つき）」PC表示用
-function buildDetailedStandings(matches, roster, scope) {
-  const base = buildStandings(matches, roster, scope);
+function buildDetailedStandings(matches, roster, scope, ignoreStale) {
+  const base = buildStandings(matches, roster, scope, ignoreStale);
   const list = Object.values(matches || {})
     .filter((m) => m && Array.isArray(m.names))
     .filter((m) => !(scope === "prelim" && m.bracket) && !(scope === "bracket" && !m.bracket))
@@ -2065,10 +2072,10 @@ function ScopeToggle({ view, onChange, hasBracket }) {
 
 /* ========= グループ分けして総当たり用：各グループの成績表＋達成率ランキング（各グループ1位を除く）
    StandingsTab（スマホ）・PcStandingsTab（PC）の両方から呼ばれる、行の見た目だけを返す部品 ========= */
-function GroupStandingsBlocks({ matches, roster, groupCount, dense }) {
+function GroupStandingsBlocks({ matches, roster, groupCount, dense, ignoreStale }) {
   const G = groupCount || 3;
   const tables = useMemo(() => Array.from({ length: G }, (_, i) => i + 1), [G]);
-  const pick = useMemo(() => pickGroupFinalists(matches, roster, G), [matches, roster, G]);
+  const pick = useMemo(() => pickGroupFinalists(matches, roster, G, ignoreStale), [matches, roster, G, ignoreStale]);
   const rowH = dense ? "9px 10px" : "15px 12px";
   const cols = "38px 1fr 48px 48px 76px";
   const Row = ({ label, r, highlight }) => (
@@ -3916,19 +3923,38 @@ function BackupPanel() {
 /* ========= 過去大会アーカイブ =========
    大会が終わった時に、今のroster（参加者）とmatches（対戦カード全部・スコア・勝敗・得点方式含む）を
    まるごとtournaments/{id}へスナップショット保存する。保存しても今の対戦データは消えない（別枝への複製）。
-   一覧から選ぶと、既存の成績集計（buildStandings）・決勝トーナメント表示（BracketReadOnlyView）を
-   そのまま流用した読み取り専用ビューで、参加者・対戦カード・スコア・勝敗・タイムテーブルを見返せる。
+   一覧から選ぶと、既存の成績集計（buildStandings等）・対戦表（buildMatrixData）・決勝トーナメント表示
+   （BracketReadOnlyView）をそのまま流用した読み取り専用ビューで見返せる。
    ※Firebaseのセキュリティルールに tournaments 枝の許可（roster/matches等と同じ考え方の型チェック）を
-     追加する必要がある。ルート直下の.writeはfalseにしてある想定なので、これをしないと保存が失敗する */
+     追加する必要がある。ルート直下の.writeはfalseにしてある想定なので、これをしないと保存が失敗する
+   ※アーカイブは何日も経ってから見返すものなので、成績・対戦表の集計関数はすべて ignoreStale=true で呼ぶ
+     （「6時間以上前の試合は除外」というライブ表示用の判定を無視させる。これをしないと、保存直後は
+     見えていた中身が翌日には空に見えるという不具合になる） */
 function ArchiveViewer({ archive, onClose }) {
   const matches = archive.matches || {};
   const roster = archive.roster || [];
-  const [tab, setTab] = useState("matches"); // "matches" | "standings" | "bracket"
-  const hasBracket = useMemo(() => Object.values(matches).some((m) => m && m.bracket), [matches]);
-  const standings = useMemo(() => buildStandings(matches, roster, "prelim"), [matches, roster]);
-  const tableLists = useMemo(() => [1, 2, 3].map((t) => getAllForTable(matches, t).filter((m) => !m.bracket)), [matches]);
+  const [tab, setTab] = useState("timeline"); // "timeline" | "standings" | "matrix"
 
-  const matchRow = (m) => {
+  const hasBracket = useMemo(() => Object.values(matches).some((m) => m && m.bracket), [matches]);
+  const hasRival = useMemo(() => Object.values(matches).some((m) => m && m.rival), [matches]);
+  const groupCount = useMemo(() => {
+    let max = 0;
+    Object.values(matches).forEach((m) => { if (m && !m.bracket && m.grp) max = Math.max(max, Number(m.grp) || 0); });
+    return max;
+  }, [matches]);
+  const hasGroups = groupCount > 0;
+
+  const standings = useMemo(() => buildStandings(matches, roster, "prelim", true), [matches, roster]);
+  const teamRows = useMemo(() => buildTeamStandings(matches, true), [matches]);
+  const tableLists = useMemo(() => [1, 2, 3].map((t) => getAllForTable(matches, t, true).filter((m) => !m.bracket)), [matches]);
+  const plainMatrix = useMemo(() => (hasGroups ? null : buildMatrixData(matches, roster, (m) => !m.bracket)), [matches, roster, hasGroups]);
+  const groupTables = useMemo(() => Array.from({ length: groupCount }, (_, i) => i + 1), [groupCount]);
+  const groupMatrices = useMemo(
+    () => (hasGroups ? groupTables.map((t) => buildMatrixData(matches, roster, (m) => Number(m.grp) === t)) : []),
+    [matches, roster, hasGroups, groupTables]
+  );
+
+  const matchRow = (m, idx) => {
     const done = isMatchFinished(m);
     const w = done ? matchWinnerIndex(m) : null;
     const tot = m.tot || [0, 0], rt = m.raceTo || [0, 0];
@@ -3937,7 +3963,7 @@ function ArchiveViewer({ archive, onClose }) {
         display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${C.line}`,
         borderRadius: 10, padding: "9px 12px", marginBottom: 6,
       }}>
-        <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: C.ink, borderRadius: 5, padding: "1px 6px", flexShrink: 0 }}>T{m.table}</span>
+        <span style={{ fontSize: 11, fontWeight: 900, color: C.sub, flexShrink: 0, width: 20, textAlign: "center" }}>{idx + 1}</span>
         {[0, 1].map((i) => (
           <div key={i} style={{
             flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600,
@@ -3949,12 +3975,18 @@ function ArchiveViewer({ archive, onClose }) {
     );
   };
 
-  const tabs = [["matches", "対戦カード"], ["standings", "成績"], ...(hasBracket ? [["bracket", "🏆決勝"]] : [])];
+  const matrixLabelParts = [];
+  if (hasGroups) matrixLabelParts.push("リーグ表");
+  else if (plainMatrix && plainMatrix.names.length > 0) matrixLabelParts.push("対戦表");
+  if (hasBracket) matrixLabelParts.push("トーナメント表");
+  const matrixTabLabel = "📋 " + (matrixLabelParts.length ? matrixLabelParts.join("・") : "対戦表");
+
+  const tabs = [["timeline", "🗓 タイムライン"], ["standings", "🏅 総合成績"], ["matrix", matrixTabLabel]];
 
   return (
     <Portal>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto" }}>
-        <div onClick={(e) => e.stopPropagation()} style={{
+      <div className="archive-print-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto" }}>
+        <div className="archive-print-card" onClick={(e) => e.stopPropagation()} style={{
           background: "#fff", width: "100%", maxWidth: 480, minHeight: "100%", boxSizing: "border-box",
           padding: "18px 16px 40px", fontFamily: FONT,
         }}>
@@ -3963,50 +3995,98 @@ function ArchiveViewer({ archive, onClose }) {
               <div style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>{archive.name || "（無題）"}</div>
               <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>{fmtDateTime(archive.at)}　{roster.length}人　{archive.specSummary || ""}</div>
             </div>
-            <button onClick={onClose} style={{ background: "none", border: "none", color: C.sub, fontSize: 22, cursor: "pointer", padding: 4, flexShrink: 0 }}>✕</button>
+            <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+              <button onClick={() => window.print()} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "7px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>🖨 印刷</button>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: C.sub, fontSize: 22, cursor: "pointer", padding: 4 }}>✕</button>
+            </div>
           </div>
 
-          <div style={{ display: "flex", gap: 6, margin: "12px 0 14px" }}>
+          <div className="no-print" style={{ display: "flex", gap: 6, margin: "12px 0 14px" }}>
             {tabs.map(([k, label]) => (
               <button key={k} onClick={() => setTab(k)} style={{
                 flex: 1, background: tab === k ? C.blue : "#fff", color: tab === k ? "#fff" : C.ink,
-                border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 0", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${C.blue}`, borderRadius: 10, padding: "9px 2px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
               }}>{label}</button>
             ))}
           </div>
+          {/* 印刷時はタブ切替が使えないので、今どれを見ているかだけ見出しとして出す */}
+          <div className="print-only-heading" style={{ display: "none", fontSize: 16, fontWeight: 900, margin: "4px 0 10px" }}>
+            {tabs.find(([k]) => k === tab)?.[1] || ""}
+          </div>
 
-          {tab === "matches" && [1, 2, 3].map((t, i) => (
+          {tab === "timeline" && [1, 2, 3].map((t, i) => (
             <div key={t} style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
               {tableLists[i].length === 0
                 ? <div style={{ fontSize: 13, color: C.sub, padding: "6px 0" }}>対戦なし</div>
-                : tableLists[i].map(matchRow)}
+                : tableLists[i].map((m, idx) => matchRow(m, idx))}
             </div>
           ))}
 
           {tab === "standings" && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 4px 8px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
-                <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
-              </div>
-              {standings.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "20px 0" }}>結果がありません</div>}
-              {standings.map((r) => (
-                <div key={r.name} style={{
-                  display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
-                  background: r.rank <= 8 ? C.lightBlue : "#fff", border: `1.5px solid ${r.rank <= 8 ? C.blue : C.line}`,
-                  borderRadius: 10, padding: "10px 10px", marginBottom: 6,
-                }}>
-                  <div style={{ fontSize: 16, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.sub }}>{r.rank}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                  <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.win }}>{r.win}</div>
-                  <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{r.loss}</div>
-                  <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.ink }}>{fmtRate(r.avgRate)}</div>
+              {hasRival && teamRows.length > 0 && (
+                <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 8 }}>🤝 対抗戦成績</div>
+                  {teamRows.map((r) => (
+                    <div key={r.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: `1px solid ${C.line}` }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 800 }}>{r.name}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>{r.win}勝{r.loss}敗　({r.pf}-{r.pa})</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {hasGroups ? (
+                <GroupStandingsBlocks matches={matches} roster={roster} groupCount={groupCount} ignoreStale />
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, padding: "0 4px 8px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+                    <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+                  </div>
+                  {standings.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "20px 0" }}>結果がありません</div>}
+                  {standings.map((r) => (
+                    <div key={r.name} style={{
+                      display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
+                      background: r.rank <= 8 ? C.lightBlue : "#fff", border: `1.5px solid ${r.rank <= 8 ? C.blue : C.line}`,
+                      borderRadius: 10, padding: "10px 10px", marginBottom: 6,
+                    }}>
+                      <div style={{ fontSize: 16, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.sub }}>{r.rank}</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                      <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.win }}>{r.win}</div>
+                      <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+                      <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.ink }}>{fmtRate(r.avgRate)}</div>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           )}
 
-          {tab === "bracket" && <BracketReadOnlyView matches={matches} wide />}
+          {tab === "matrix" && (
+            <>
+              {hasGroups ? (
+                groupTables.map((t, i) => (
+                  <div key={t} style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
+                    <MatrixGrid matrix={groupMatrices[i]} emptyLabel={`G${t}：対戦がまだ登録されていません`} />
+                  </div>
+                ))
+              ) : plainMatrix && plainMatrix.names.length > 0 ? (
+                <div style={{ marginBottom: 18 }}>
+                  <MatrixGrid matrix={plainMatrix} />
+                </div>
+              ) : null}
+              {hasBracket && (
+                <div style={{ marginTop: hasGroups || (plainMatrix && plainMatrix.names.length > 0) ? 8 : 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 8 }}>🏆 決勝トーナメント</div>
+                  <BracketReadOnlyView matches={matches} wide />
+                </div>
+              )}
+              {!hasGroups && !hasBracket && (!plainMatrix || plainMatrix.names.length === 0) && (
+                <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "24px 0" }}>対戦表・トーナメント表はありません</div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </Portal>
