@@ -30,6 +30,29 @@
     body.archive-printing #root { display: none !important; }
     /* 表や決勝トーナメントの各ブロックが、印刷でページの途中で割れないようにする */
     .print-avoid-break { break-inside: avoid; page-break-inside: avoid; }
+    /* アーカイブ全般：印刷時は先頭の余白を削り、ページの頭からすぐ内容が始まるようにする */
+    .archive-print-card { padding-top: 6px !important; }
+    .archive-print-header { margin-bottom: 2px !important; }
+    .archive-print-title { font-size: 14px !important; }
+    .archive-print-meta { font-size: 10px !important; margin-top: 0 !important; }
+    .print-only-heading { margin: 2px 0 6px !important; font-size: 13px !important; }
+    /* アーカイブのタイムライン：印刷時はT1〜T3を横並びにし、行もぎゅっと詰めて枚数を減らす */
+    .archive-timeline-wrap { display: flex !important; flex-direction: row !important; align-items: flex-start !important; gap: 10px !important; }
+    .archive-timeline-wrap > .archive-table-block { flex: 1 1 0 !important; min-width: 0 !important; margin-bottom: 0 !important; }
+    .archive-table-heading { font-size: 11px !important; margin-bottom: 3px !important; }
+    .archive-match-row { padding: 1.5px 5px !important; margin-bottom: 1px !important; border-radius: 4px !important; gap: 4px !important; border-width: 0.5px !important; }
+    .archive-match-idx { font-size: 8px !important; width: 11px !important; }
+    .archive-match-name { font-size: 9px !important; }
+    /* アーカイブの総合成績：印刷時は個人成績を2段組にして枚数を減らす */
+    .archive-team-panel { padding: 6px 8px !important; margin-bottom: 8px !important; }
+    .archive-standings-cols { column-count: 2 !important; column-gap: 16px !important; }
+    .archive-standing-row { break-inside: avoid; page-break-inside: avoid; padding: 3px 6px !important; margin-bottom: 2px !important; border-radius: 5px !important; font-size: 10px !important; }
+    .archive-standing-row > div { font-size: 10px !important; }
+    /* アーカイブのグループ別成績・リーグ表：印刷時はG1〜G◯を横並びにする */
+    .archive-group-row-wrap, .archive-group-matrix-wrap { display: flex !important; flex-direction: row !important; align-items: flex-start !important; gap: 10px !important; }
+    .archive-group-block, .archive-matrix-block { flex: 1 1 0 !important; min-width: 0 !important; margin-bottom: 0 !important; }
+    .archive-group-head { font-size: 9px !important; padding: 0 6px 3px !important; }
+    .archive-group-row { padding: 2px 6px !important; margin-bottom: 1px !important; border-radius: 5px !important; }
   }
   /* 進行中ラックに点数が入った時の点滅 */
   @keyframes rackFlash {
@@ -104,8 +127,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.238";
-const BUILD_TIME = "2026-09-15 アーカイブに削除機能を追加。決勝トーナメント表を線でつないだ一般的な見た目のトーナメント表に刷新（プレイヤータブ・PC成績画面・アーカイブすべてに反映）";
+const APP_VERSION = "1.240";
+const BUILD_TIME = "2026-09-15 アーカイブ表示中に背後の画面が透けて見える不具合に対処（iOS Safariのposition:fixed描画不具合への対策としてGPUレイヤー合成を強制）";
 
 
 const C = {
@@ -2139,7 +2162,7 @@ function GroupStandingsBlocks({ matches, roster, groupCount, dense, ignoreStale 
   const rowH = dense ? "9px 10px" : "15px 12px";
   const cols = "38px 1fr 48px 48px 76px";
   const Row = ({ label, r, highlight }) => (
-    <div style={{
+    <div className="archive-group-row" style={{
       display: "grid", gridTemplateColumns: cols, gap: 6, alignItems: "center",
       background: highlight ? C.lightBlue : "#fff", border: `1.5px solid ${highlight ? C.blue : C.line}`,
       borderRadius: 12, padding: rowH, marginBottom: 6,
@@ -2153,19 +2176,21 @@ function GroupStandingsBlocks({ matches, roster, groupCount, dense, ignoreStale 
   );
   return (
     <>
-      {tables.map((t) => {
-        const rows = (pick.groups[t] || []).filter((r) => r.played > 0);
-        return (
-          <div key={t} className="print-avoid-break" style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
-            <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
-              <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+      <div className="archive-group-row-wrap">
+        {tables.map((t) => {
+          const rows = (pick.groups[t] || []).filter((r) => r.played > 0);
+          return (
+            <div key={t} className="print-avoid-break archive-group-block" style={{ marginBottom: 18 }}>
+              <div className="archive-table-heading" style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
+              <div className="archive-group-head" style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "0 12px 6px", fontSize: 13, color: C.sub, fontWeight: 800 }}>
+                <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
+              </div>
+              {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "14px 0" }}>まだ結果がありません</div>}
+              {rows.map((r) => <Row key={r.name} label={`${r.rank}位`} r={r} highlight={r.rank === 1} />)}
             </div>
-            {rows.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "14px 0" }}>まだ結果がありません</div>}
-            {rows.map((r) => <Row key={r.name} label={`${r.rank}位`} r={r} highlight={r.rank === 1} />)}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, marginBottom: 2 }}>🎯 ワイルドカードランキング</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>各グループの1位を除いた全員が対象。勝ち数が多い順、同数なら達成率が高い順で、上位が決勝のワイルドカード候補</div>
@@ -4025,13 +4050,13 @@ function ArchiveViewer({ archive, onClose }) {
     const w = done ? matchWinnerIndex(m) : null;
     const tot = m.tot || [0, 0], rt = m.raceTo || [0, 0];
     return (
-      <div key={m.id} style={{
+      <div key={m.id} className="archive-match-row" style={{
         display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${C.line}`,
         borderRadius: 10, padding: "9px 12px", marginBottom: 6,
       }}>
-        <span style={{ fontSize: 11, fontWeight: 900, color: C.sub, flexShrink: 0, width: 20, textAlign: "center" }}>{idx + 1}</span>
+        <span className="archive-match-idx" style={{ fontSize: 11, fontWeight: 900, color: C.sub, flexShrink: 0, width: 20, textAlign: "center" }}>{idx + 1}</span>
         {[0, 1].map((i) => (
-          <div key={i} style={{
+          <div key={i} className="archive-match-name" style={{
             flex: 1, textAlign: "center", fontSize: 14, fontWeight: w === i ? 900 : 600,
             color: done ? (w === i ? C.win : C.sub) : C.ink,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -4051,15 +4076,18 @@ function ArchiveViewer({ archive, onClose }) {
 
   return (
     <Portal>
-      <div className="archive-print-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto" }}>
+      <div className="archive-print-backdrop" onClick={onClose} style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto",
+        WebkitTransform: "translateZ(0)", transform: "translateZ(0)", willChange: "transform",
+      }}>
         <div className="archive-print-card" onClick={(e) => e.stopPropagation()} style={{
           background: "#fff", width: "100%", maxWidth: 480, minHeight: "100%", boxSizing: "border-box",
           padding: "18px 16px 40px", fontFamily: FONT,
         }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div className="archive-print-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>{archive.name || "（無題）"}</div>
-              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>{fmtDateTime(archive.at)}　{roster.length}人　{archive.specSummary || ""}</div>
+              <div className="archive-print-title" style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>{archive.name || "（無題）"}</div>
+              <div className="archive-print-meta" style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>{fmtDateTime(archive.at)}　{roster.length}人　{archive.specSummary || ""}</div>
             </div>
             <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
               <button onClick={() => window.print()} style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "7px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>🖨 印刷</button>
@@ -4080,19 +4108,23 @@ function ArchiveViewer({ archive, onClose }) {
             {tabs.find(([k]) => k === tab)?.[1] || ""}
           </div>
 
-          {tab === "timeline" && [1, 2, 3].map((t, i) => (
-            <div key={t} className="print-avoid-break" style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
-              {tableLists[i].length === 0
-                ? <div style={{ fontSize: 13, color: C.sub, padding: "6px 0" }}>対戦なし</div>
-                : tableLists[i].map((m, idx) => matchRow(m, idx))}
+          {tab === "timeline" && (
+            <div className="archive-timeline-wrap">
+              {[1, 2, 3].map((t, i) => (
+                <div key={t} className="archive-table-block" style={{ marginBottom: 16 }}>
+                  <div className="archive-table-heading" style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 6 }}>T{t}</div>
+                  {tableLists[i].length === 0
+                    ? <div style={{ fontSize: 13, color: C.sub, padding: "6px 0" }}>対戦なし</div>
+                    : tableLists[i].map((m, idx) => matchRow(m, idx))}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
 
           {tab === "standings" && (
             <>
               {hasRival && teamRows.length > 0 && (
-                <div style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+                <div className="archive-team-panel" style={{ background: C.lightBlue, border: `1.5px solid ${C.blue}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.blue, marginBottom: 8 }}>🤝 対抗戦成績</div>
                   {teamRows.map((r) => (
                     <div key={r.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: `1px solid ${C.line}` }}>
@@ -4110,19 +4142,21 @@ function ArchiveViewer({ archive, onClose }) {
                     <div>順</div><div>選手</div><div style={{ textAlign: "center" }}>勝</div><div style={{ textAlign: "center" }}>敗</div><div style={{ textAlign: "right" }}>達成率</div>
                   </div>
                   {standings.length === 0 && <div style={{ textAlign: "center", fontSize: 14, color: C.sub, padding: "20px 0" }}>結果がありません</div>}
-                  {standings.map((r) => (
-                    <div key={r.name} style={{
-                      display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
-                      background: r.rank <= 8 ? C.lightBlue : "#fff", border: `1.5px solid ${r.rank <= 8 ? C.blue : C.line}`,
-                      borderRadius: 10, padding: "10px 10px", marginBottom: 6,
-                    }}>
-                      <div style={{ fontSize: 16, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.sub }}>{r.rank}</div>
-                      <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                      <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.win }}>{r.win}</div>
-                      <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{r.loss}</div>
-                      <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.ink }}>{fmtRate(r.avgRate)}</div>
-                    </div>
-                  ))}
+                  <div className="archive-standings-cols">
+                    {standings.map((r) => (
+                      <div key={r.name} className="archive-standing-row" style={{
+                        display: "grid", gridTemplateColumns: "38px 1fr 48px 48px 76px", gap: 6, alignItems: "center",
+                        background: r.rank <= 8 ? C.lightBlue : "#fff", border: `1.5px solid ${r.rank <= 8 ? C.blue : C.line}`,
+                        borderRadius: 10, padding: "10px 10px", marginBottom: 6,
+                      }}>
+                        <div style={{ fontSize: 16, fontWeight: 900, color: r.rank <= 8 ? C.blue : C.sub }}>{r.rank}</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 900, color: C.win }}>{r.win}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: C.sub }}>{r.loss}</div>
+                        <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.ink }}>{fmtRate(r.avgRate)}</div>
+                      </div>
+                    ))}
+                  </div>
                 </>
               )}
             </>
@@ -4131,15 +4165,17 @@ function ArchiveViewer({ archive, onClose }) {
           {tab === "matrix" && (
             <>
               {hasGroups ? (
-                groupTables.map((t, i) => (
-                  <div key={t} className="print-avoid-break" style={{ marginBottom: 18 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
-                    <MatrixGrid matrix={groupMatrices[i]} emptyLabel={`G${t}：対戦がまだ登録されていません`} />
-                  </div>
-                ))
+                <div className="archive-group-matrix-wrap">
+                  {groupTables.map((t, i) => (
+                    <div key={t} className="print-avoid-break archive-matrix-block" style={{ marginBottom: 18 }}>
+                      <div className="archive-table-heading" style={{ fontSize: 15, fontWeight: 800, color: C.blue, marginBottom: 6 }}>G{t}</div>
+                      <MatrixGrid matrix={groupMatrices[i]} compact emptyLabel={`G${t}：対戦がまだ登録されていません`} />
+                    </div>
+                  ))}
+                </div>
               ) : plainMatrix && plainMatrix.names.length > 0 ? (
                 <div className="print-avoid-break" style={{ marginBottom: 18 }}>
-                  <MatrixGrid matrix={plainMatrix} />
+                  <MatrixGrid matrix={plainMatrix} compact />
                 </div>
               ) : null}
               {hasBracket && (
