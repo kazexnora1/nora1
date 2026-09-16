@@ -17,6 +17,11 @@
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
   body { -webkit-tap-highlight-color: transparent; }
+  /* アーカイブを開いている間は、背後の画面（#root＝設定タブの一覧など）を丸ごと描画しない。
+     Portalはdocument.bodyへ直接（#rootの外）差し込まれるので、これでアーカイブの中身だけが残る。
+     以前は印刷時だけ隠していたが、iOSのSafariでは画面表示中もposition:fixedのモーダルの
+     裏側がスクロール中に透けて見えることがあるため、画面表示でも常に適用するようにした */
+  body.archive-open #root { display: none !important; }
   @media print {
     .no-print { display: none !important; }
     .print-fit { height: auto !important; overflow: visible !important; }
@@ -25,9 +30,6 @@
     .archive-print-backdrop { position: static !important; background: none !important; display: block !important; overflow: visible !important; z-index: auto !important; }
     .archive-print-card { max-width: none !important; width: 100% !important; min-height: 0 !important; }
     .print-only-heading { display: block !important; }
-    /* アーカイブを開いて印刷している間は、背後の画面（#root、設定タブなど）を丸ごと隠す。
-       Portalはdocument.bodyへ直接（#rootの外に）差し込まれるので、この指定でアーカイブの中身だけが残る */
-    body.archive-printing #root { display: none !important; }
     /* 表や決勝トーナメントの各ブロックが、印刷でページの途中で割れないようにする */
     .print-avoid-break { break-inside: avoid; page-break-inside: avoid; }
     /* アーカイブ全般：印刷時は先頭の余白を削り、ページの頭からすぐ内容が始まるようにする */
@@ -127,8 +129,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.240";
-const BUILD_TIME = "2026-09-15 アーカイブ表示中に背後の画面が透けて見える不具合に対処（iOS Safariのposition:fixed描画不具合への対策としてGPUレイヤー合成を強制）";
+const APP_VERSION = "1.241";
+const BUILD_TIME = "2026-09-15 アーカイブ表示中に裏の一覧（削除ボタン含む）が透けて見える不具合を修正。アーカイブを開いている間は背後の画面を描画自体しないよう変更（印刷時限定だった対処を画面表示にも適用）";
 
 
 const C = {
@@ -4031,8 +4033,8 @@ function ArchiveViewer({ archive, onClose }) {
 
   // アーカイブを開いている間だけ<body>に印刷用の目印クラスを付ける（背後の画面を隠すため）
   useEffect(() => {
-    document.body.classList.add("archive-printing");
-    return () => document.body.classList.remove("archive-printing");
+    document.body.classList.add("archive-open");
+    return () => document.body.classList.remove("archive-open");
   }, []);
 
   const standings = useMemo(() => buildStandings(matches, roster, "prelim", true), [matches, roster]);
