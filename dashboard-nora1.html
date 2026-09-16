@@ -16,16 +16,21 @@
 <meta name="apple-mobile-web-app-title" content="カゼログ 本部">
 <style>
   html, body, #root { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  html, body { background: #fff; }
   body { -webkit-tap-highlight-color: transparent; }
   /* アーカイブを開いている間は、背後の画面（#root＝設定タブの一覧など）を丸ごと描画しない。
      Portalはdocument.bodyへ直接（#rootの外）差し込まれるので、これでアーカイブの中身だけが残る。
      以前は印刷時だけ隠していたが、iOSのSafariでは画面表示中もposition:fixedのモーダルの
      裏側がスクロール中に透けて見えることがあるため、画面表示でも常に適用するようにした */
   body.archive-open #root { display: none !important; }
+  /* #rootを隠すとbody自体の高さが不定になり、iOSでスクロール時に画面の端（本来のページの余白）が
+     一瞬見えることがあるため、アーカイブを開いている間はbody自体のスクロールを止める
+     （スクロールはアーカイブのモーダル自身が内部で持っている） */
+  body.archive-open { position: fixed; inset: 0; overflow: hidden; }
   @media print {
     .no-print { display: none !important; }
     .print-fit { height: auto !important; overflow: visible !important; }
-    body, html, #root { height: auto !important; overflow: visible !important; }
+    body, html, #root { height: auto !important; overflow: visible !important; position: static !important; }
     /* アーカイブ表示：印刷時は暗い背景・中央固定・幅制限をやめ、ふつうのページとして流す */
     .archive-print-backdrop { position: static !important; background: none !important; display: block !important; overflow: visible !important; z-index: auto !important; }
     .archive-print-card { max-width: none !important; width: 100% !important; min-height: 0 !important; }
@@ -129,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.241";
-const BUILD_TIME = "2026-09-15 アーカイブ表示中に裏の一覧（削除ボタン含む）が透けて見える不具合を修正。アーカイブを開いている間は背後の画面を描画自体しないよう変更（印刷時限定だった対処を画面表示にも適用）";
+const APP_VERSION = "1.242";
+const BUILD_TIME = "2026-09-15 アーカイブ表示中、背景がグレーに見える／端の余白が透ける問題に対処（bodyの背景を白に固定し、アーカイブを開いている間はbody自体のスクロールを止めた）";
 
 
 const C = {
