@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.243";
-const BUILD_TIME = "2026-09-15 アーカイブ画面の下端に灰色の帯が出る問題に対処（iOSのスクロール端バウンス表示を抑制）";
+const APP_VERSION = "1.244";
+const BUILD_TIME = "2026-09-15 アーカイブ画面の白い箱が画面1つぶんの高さで頭打ちになり、それ以降が背景色のまま見えていた不具合を修正（flexの高さ指定をやめ、中身の分だけ自然に伸びる作りに変更）";
 
 
 const C = {
@@ -4084,12 +4084,12 @@ function ArchiveViewer({ archive, onClose }) {
   return (
     <Portal>
       <div className="archive-print-backdrop" onClick={onClose} style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, display: "flex", justifyContent: "center", overflowY: "auto",
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 6000, overflowY: "auto",
         WebkitTransform: "translateZ(0)", transform: "translateZ(0)", willChange: "transform",
         overscrollBehaviorY: "none", WebkitOverflowScrolling: "touch",
       }}>
         <div className="archive-print-card" onClick={(e) => e.stopPropagation()} style={{
-          background: "#fff", width: "100%", maxWidth: 480, minHeight: "100%", boxSizing: "border-box",
+          background: "#fff", width: "100%", maxWidth: 480, margin: "0 auto", boxSizing: "border-box",
           padding: "18px 16px 40px", fontFamily: FONT,
         }}>
           <div className="archive-print-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
