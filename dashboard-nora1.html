@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.245";
-const BUILD_TIME = "2026-09-21 「📱 QR」タブを新設。設定タブ内に埋もれていたB2のQRコード表示をここに一本化";
+const APP_VERSION = "1.246";
+const BUILD_TIME = "2026-09-21 QRタブ追加時に紛れ込んだ余分な閉じ括弧を削除（構文エラーで真っ白になっていた不具合を修正）";
 
 
 const C = {
@@ -3300,7 +3300,6 @@ function QrTab() {
       <div style={{ fontSize: 11.5, color: C.sub, marginTop: 14, wordBreak: "break-all" }}>{url}</div>
     </div>
   );
-}
 }
 
 function ConnectionTest() {
