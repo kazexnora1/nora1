@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.244";
-const BUILD_TIME = "2026-09-15 アーカイブ画面の白い箱が画面1つぶんの高さで頭打ちになり、それ以降が背景色のまま見えていた不具合を修正（flexの高さ指定をやめ、中身の分だけ自然に伸びる作りに変更）";
+const APP_VERSION = "1.245";
+const BUILD_TIME = "2026-09-21 「📱 QR」タブを新設。設定タブ内に埋もれていたB2のQRコード表示をここに一本化";
 
 
 const C = {
@@ -1258,6 +1258,7 @@ function App() {
     ["home", "🗓 タイムライン"],
     ["tables", "🐾 テーブル"],
     ["player", "🧑‍🤝‍🧑 プレイヤー"],
+    ["qr", "📱 QR"],
     ["settings", "⚙️ 設定"],
   ];
 
@@ -1323,6 +1324,7 @@ function App() {
           {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
           {tab === "tables" && <LiveTablesTab />}
           {tab === "player" && playerContent}
+          {tab === "qr" && <QrTab />}
           {tab === "settings" && (
             <SettingsTab roster={roster} setRoster={setRoster} onRefresh={refreshRoster} loaded={rosterLoaded} loadError={rosterError}
               deviceMode={deviceMode} onSetDeviceMode={(m) => { setDeviceMode(m); saveSettings({ deviceMode: m }); }}
@@ -3273,31 +3275,32 @@ function b2Url() {
   return window.location.origin + path;
 }
 /* B2のURLをQRコードで見せる。選手が自分のスマホでスキャンして開けるようにするためのもの。
-   QRの生成はライブラリ（qrcodejs）にDOM要素を直接渡す作りなので、useRefで掴んだ空divに描かせる */
-function QRPanel() {
+   QRの生成はライブラリ（qrcodejs）にDOM要素を直接渡す作りなので、useRefで掴んだ空divに描かせる。
+   以前は設定タブの奥（その他セクション）に折りたたみボタンとして埋もれていたが、
+   専用タブ（📱 QR）に格上げして、開けばすぐ見えるようにした */
+function QrTab() {
   const boxRef = useRef(null);
-  const [open, setOpen] = useState(false);
   const url = b2Url();
   useEffect(() => {
-    if (!open || !boxRef.current) return;
+    if (!boxRef.current) return;
     boxRef.current.innerHTML = "";
     try {
-      new QRCode(boxRef.current, { text: url, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+      new QRCode(boxRef.current, { text: url, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
     } catch {}
-  }, [open, url]);
+  }, [url]);
   return (
-    <div style={{ marginTop: 14 }}>
-      <button onClick={() => setOpen((v) => !v)} style={{ width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 13.5, fontWeight: 700, padding: "11px 0", cursor: "pointer", fontFamily: FONT }}>
-        📱 B2（選手用スコアラー）のQRコードを表示
-      </button>
-      {open && (
-        <div style={{ marginTop: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, textAlign: "center" }}>
-          <div ref={boxRef} style={{ display: "inline-block", background: "#fff", padding: 8, borderRadius: 8 }} />
-          <div style={{ fontSize: 11, color: C.sub, marginTop: 8, wordBreak: "break-all" }}>{url}</div>
-        </div>
-      )}
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "28px 16px 40px", textAlign: "center", color: C.ink, fontFamily: FONT }}>
+      <div style={{ fontSize: 19, fontWeight: 900, marginBottom: 6 }}>📱 選手用スコアラー（B2）</div>
+      <div style={{ fontSize: 13, color: C.sub, marginBottom: 20, lineHeight: 1.7 }}>
+        選手にこのQRコードを見せると、自分のスマホでスコアラーを開けます
+      </div>
+      <div style={{ display: "inline-block", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 18 }}>
+        <div ref={boxRef} />
+      </div>
+      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 14, wordBreak: "break-all" }}>{url}</div>
     </div>
   );
+}
 }
 
 function ConnectionTest() {
@@ -3704,7 +3707,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
           <BackupPanel />
           <ArchivePanel roster={roster} />
           <ConnectionTest />
-          <QRPanel />
         </div>
         <div style={{ marginTop: 18 }}>
           <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
