@@ -113,8 +113,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.034";
-const BUILD_TIME = "2026-09-03 ホーム画面追加時のアイコンをオリジナルの猫アイコンに変更（icon-b2-*.pngをhtmlと同じフォルダに設置）";
+const APP_VERSION = "1.035";
+const BUILD_TIME = "2026-09-21 「📱 QR」タブを新設。☰メニューの奥に埋もれていたQRコード表示をここに一本化";
 
 
 
@@ -779,27 +779,39 @@ function useRules(format) {
 function b2SelfUrl() {
     return window.location.origin + window.location.pathname;
 }
+/* B2自身のURLをQRコードで見せる、専用タブ。以前は☰メニューの奥（一覧→QRコード→表示）に
+   埋もれていたが、タブに格上げして、開けばすぐ見えるようにした */
+function QrTab() {
+    const boxRef = useRef(null);
+    const url = b2SelfUrl();
+    useEffect(() => {
+        if (!boxRef.current)
+            return;
+        boxRef.current.innerHTML = "";
+        try {
+            new QRCode(boxRef.current, { text: url, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+        }
+        catch { }
+    }, [url]);
+    return React.createElement("div", { style: { maxWidth: 480, margin: "0 auto", padding: "28px 16px 40px", textAlign: "center", color: C.ink, fontFamily: FONT } },
+        React.createElement("div", { style: { fontSize: 19, fontWeight: 900, marginBottom: 6 } }, "📱 このスコアラーのQRコード"),
+        React.createElement("div", { style: { fontSize: 13, color: C.sub, marginBottom: 20, lineHeight: 1.7 } }, "他の人にこのQRコードを見せると、同じスコアラーを開けます"),
+        React.createElement("div", { style: { display: "inline-block", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 18 } },
+            React.createElement("div", { ref: boxRef })),
+        React.createElement("div", { style: { fontSize: 11.5, color: C.sub, marginTop: 14, wordBreak: "break-all" } }, url));
+}
 /* ========= 左上の「☰ メニュー」ボタン =========
    ルール・QRコード表示・（試合中なら）スコアラーを降りる、をひとつのメニューにまとめたもの。
    onStepDown を渡さない画面（対戦表など、まだ試合が始まっていない場面）では「降りる」は出さない */
 function ScorerMenuButton({ style, format, onStepDown, ballDesign: ballDesignProp, onSetBallDesign }) {
     const text = useRules(format);
     const [open, setOpen] = useState(false);
-    const [view, setView] = useState(null); // null=一覧 | "rules" | "qr" | "ball"
-    const qrRef = useRef(null);
-    const url = b2SelfUrl();
+    const [view, setView] = useState(null); // null=一覧 | "rules" | "ball"
     // 球のデザインは、試合中ならMatchScreenが持つ実際の表示用stateをそのまま使う（即座に球の色に反映させるため）。
     // 対戦表など、試合画面の外で開く時は自分でlocalStorageを直接読み書きする
     const [localBallDesign, setLocalBallDesign] = useState(() => loadBallDesign());
     const ballDesign = ballDesignProp !== undefined ? ballDesignProp : localBallDesign;
     const setBallDesign = onSetBallDesign || ((id) => { setLocalBallDesign(id); saveBallDesign(id); });
-    useEffect(() => {
-        if (view !== "qr" || !qrRef.current) return;
-        qrRef.current.innerHTML = "";
-        try {
-            new QRCode(qrRef.current, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
-        } catch { }
-    }, [view, url]);
     const closeAll = () => { setOpen(false); setView(null); };
     const menuBtnStyle = {
         width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10,
@@ -822,7 +834,6 @@ function ScorerMenuButton({ style, format, onStepDown, ballDesign: ballDesignPro
                 view === null && React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { fontSize: 17, fontWeight: 900, marginBottom: 12 } }, "\u2630 \u30E1\u30CB\u30E5\u30FC"),
                     React.createElement("button", { onClick: () => setView("rules"), style: menuBtnStyle }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB"),
-                    React.createElement("button", { onClick: () => setView("qr"), style: menuBtnStyle }, "\uD83D\uDCF1 QR\u30B3\u30FC\u30C9\u3092\u8868\u793A"),
                     React.createElement("button", { onClick: () => setView("ball"), style: menuBtnStyle }, "\uD83C\uDFB1 \u7403\u306E\u30C7\u30B6\u30A4\u30F3"),
                     onStepDown && React.createElement("button", { onClick: () => { closeAll(); onStepDown(); }, style: { ...menuBtnStyle, borderColor: C.minus, color: C.minus, marginBottom: 0 } }, "\uD83D\uDEAB \u30B9\u30B3\u30A2\u30E9\u30FC\u3092\u964D\u308A\u308B")),
                 view === "rules" && React.createElement(React.Fragment, null,
@@ -830,13 +841,6 @@ function ScorerMenuButton({ style, format, onStepDown, ballDesign: ballDesignPro
                         React.createElement("button", { onClick: () => setView(null), style: { background: "none", border: "none", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT, padding: 0, marginRight: 8 } }, "\u2039 \u623B\u308B"),
                         React.createElement("span", { style: { fontSize: 17, fontWeight: 900, flex: 1 } }, "\uD83D\uDCD6 \u30EB\u30FC\u30EB")),
                     React.createElement("div", { style: { fontSize: 15.5, lineHeight: 1.85, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left" } }, text.trim() ? text : "\u307E\u3060\u30EB\u30FC\u30EB\u306F\u767B\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093")),
-                view === "qr" && React.createElement(React.Fragment, null,
-                    React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: 10 } },
-                        React.createElement("button", { onClick: () => setView(null), style: { background: "none", border: "none", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT, padding: 0, marginRight: 8 } }, "\u2039 \u623B\u308B"),
-                        React.createElement("span", { style: { fontSize: 17, fontWeight: 900, flex: 1 } }, "\uD83D\uDCF1 QR\u30B3\u30FC\u30C9")),
-                    React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { ref: qrRef, style: { display: "inline-block", background: "#fff", padding: 8, borderRadius: 8, border: `1px solid ${C.line}` } }),
-                        React.createElement("div", { style: { fontSize: 11, color: C.sub, marginTop: 8, wordBreak: "break-all" } }, url))),
                 view === "ball" && React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: 10 } },
                         React.createElement("button", { onClick: () => setView(null), style: { background: "none", border: "none", fontSize: 14, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT, padding: 0, marginRight: 8 } }, "\u2039 \u623B\u308B"),
@@ -1741,7 +1745,7 @@ function ScorerEmpty({ onGoTimeline }) {
 }
 /* ========= 外枠：上部タブで「対戦表」「テーブルの様子」「スコアラー」を切り替える =========
    スコアラーの中身（未選択なら案内画面、選択済みなら試合画面）は、タブを切り替えても裏で動かし続ける */
-const TABS = [["timeline", "🗓 対戦表"], ["tables", "🐾 テーブル"], ["schedule", "📋 予定表"], ["scorer", "🎯 スコアラー"]];
+const TABS = [["timeline", "🗓 対戦表"], ["tables", "🐾 テーブル"], ["schedule", "📋 予定表"], ["qr", "📱 QR"], ["scorer", "🎯 スコアラー"]];
 function Shell() {
     const params = new URLSearchParams(window.location.search);
     const hasSetup = params.get("m") && params.get("p1") && params.get("p2") && params.get("r1") && params.get("r2") && params.get("len");
@@ -1851,6 +1855,8 @@ function Shell() {
                 React.createElement(TablesTab, null)),
             React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" } },
                 React.createElement(ScheduleTab, { onPick: handlePick })),
+            React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "qr" ? "block" : "none" } },
+                React.createElement(QrTab, null)),
             React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "scorer" ? "block" : "none" } }, setupInfo
                 ? React.createElement(MatchScreen, { key: setupInfo.matchId, setupInfo: setupInfo, onExit: handleExit })
                 : React.createElement(ScorerEmpty, { onGoTimeline: () => setTab("timeline") }))),
