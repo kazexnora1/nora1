@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.246";
-const BUILD_TIME = "2026-09-21 QRタブ追加時に紛れ込んだ余分な閉じ括弧を削除（構文エラーで真っ白になっていた不具合を修正）";
+const APP_VERSION = "1.247";
+const BUILD_TIME = "2026-09-21 「時間制限を設ける」をOFFにした時、進行中の試合からもその場で時間制限（deadline・一時停止）を外すように変更（スコアラー画面が開きっぱなしでも確実に反映されるようversionも進める）";
 
 
 const C = {
@@ -3526,12 +3526,30 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
     setRefereeEnabled(next);
     saveSettings({ refereeEnabled: next });
   };
-  // 時間制限：デフォルトはOFF（ファーゴレートのボールハンデで進行調整するため）。
-  // 大会中いつでも切り替えでき、B2側にはFirebase共有設定として即時反映される
-  const toggleTimeLimitEnabled = () => {
+  // 時間制限：デフォルトはOFF（ファーゴレート・JPAスキルのハンデで進行調整するため）。
+  // 大会中いつでも切り替えでき、B2側にはFirebase共有設定として即時反映される。
+  // OFFにする時だけは、今まさに進行中の試合からも時間制限（deadline・一時停止状態）をその場で外す
+  // （ONにする時は逆に、進行中の試合には手を付けず、以後新しく先攻を選ぶ試合からだけ適用される）。
+  // B2は「自分より新しいversionでない限り、外からの変更を取り込まない」という仕組みでスコアラーの
+  // 入力を保護しているため、ここでも version を大きく進めて、今まさに開いている画面にも確実に効かせる
+  const toggleTimeLimitEnabled = async () => {
     const next = !timeLimitEnabled;
     setTimeLimitEnabled(next);
     saveSettings({ timeLimitEnabled: next });
+    if (!next) {
+      try {
+        const matches = (await dbGet("matches")) || {};
+        const updates = {};
+        Object.entries(matches).forEach(([id, m]) => {
+          if (m && m.startedAt && !m.finishedAt && (m.deadline != null || m.pauseStart != null)) {
+            updates[id + "/deadline"] = null;
+            updates[id + "/pauseStart"] = null;
+            updates[id + "/version"] = (m.version || 1) + 1000000;
+          }
+        });
+        if (Object.keys(updates).length > 0) await dbUpdate("matches", updates);
+      } catch {}
+    }
   };
 
   return (
@@ -3658,6 +3676,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             </div>
             <div style={{ ...HELP, marginTop: 8 }}>
               ONにした時点で進行中の試合は変わりません。以後、新しく先攻を選んだ試合から時間制限が始まります（持ち時間は「予選を組む」の時間設定に従います）。
+              OFFにした時は逆に、今まさに進行中の試合も含めてその場で時間制限が外れます。
             </div>
           </div>
 
