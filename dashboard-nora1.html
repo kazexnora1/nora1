@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.247";
-const BUILD_TIME = "2026-09-21 「時間制限を設ける」をOFFにした時、進行中の試合からもその場で時間制限（deadline・一時停止）を外すように変更（スコアラー画面が開きっぱなしでも確実に反映されるようversionも進める）";
+const APP_VERSION = "1.248";
+const BUILD_TIME = "2026-09-22 匿名ログインの応答が返らない時、参加者リスト・メンバーDB・接続確認が全部固まって見えていた不具合を修正（ログイン処理に8秒のタイムアウトを追加）";
 
 
 const C = {
@@ -179,12 +179,19 @@ const membersDb = membersApp.database();
    これでデータベース側のルールを「ログインした人だけ読み書きできる」に絞れるようになり、
    公開状態のFirebaseを自動で探し回るスクリプトからデータを守れる。
    ※まだ匿名ログインを有効にしていない段階でも、失敗を握りつぶして今までどおり動くようにしてある。
-     全アプリを差し替えてから、最後にルールを厳しくする手順にすること。 */
+     全アプリを差し替えてから、最後にルールを厳しくする手順にすること。
+   ※ signInAnonymously() は、通信状況やFirebase側の一時的な不調で「失敗もしないが、いつまでも
+     応答が返ってこない」状態になることがある。その場合に備え、一定時間で諦めて先へ進めるようにする
+     （でないと、これを待っている参加者リストの読み込み・接続確認などが全部いっしょに固まって見える） */
+const AUTH_SIGNIN_TIMEOUT_MS = 8000;
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ms))]);
+}
 const authReady = (async () => {
   const signIn = async (app, label) => {
     try {
       if (app.auth().currentUser) return;
-      await app.auth().signInAnonymously();
+      await withTimeout(app.auth().signInAnonymously(), AUTH_SIGNIN_TIMEOUT_MS);
     } catch (e) {
       console.warn("[auth] " + label + "：匿名ログインに失敗", (e && e.code) || e);
     }
