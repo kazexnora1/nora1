@@ -113,8 +113,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.036";
-const BUILD_TIME = "2026-09-21 スコアゾーンを左右の大きな色付きボックスに統合（ビリログ参考）。斜めスワイプで左右どちらの選手か判定、球が実際に飛んでいくアニメーションを追加";
+const APP_VERSION = "1.037";
+const BUILD_TIME = "2026-09-22 スコアゾーンを固定サイズ・大きめの受け皿表示に変更。台上選択中に選手エリアの球へ触れても点数入力を優先。選手エリアの球のダブルタップで「戻す＋無効球」に。JCLの片方だけヒルの時に実況コール（Xモア／ゲームボール）を追加、ブレイク表示を名前の下へ移動、選手エリアのスクロール抑制を追加";
 
 
 
@@ -1902,6 +1902,17 @@ function MatchScreen({ setupInfo, onExit }) {
         el.addEventListener("touchmove", block, { passive: false });
         return () => el.removeEventListener("touchmove", block, { passive: false });
     });
+    // スコアゾーン（選手エリアと統合した色付きボックス）側。ここに入っている球をスワイプ／ダブルタップで
+    // 戻す操作もできるようになったため、rackと同様にスクロール抑制が必要
+    const scoreAreaRef = useRef(null);
+    useEffect(() => {
+        const el = scoreAreaRef.current;
+        if (!el)
+            return;
+        const block = (e) => e.preventDefault();
+        el.addEventListener("touchmove", block, { passive: false });
+        return () => el.removeEventListener("touchmove", block, { passive: false });
+    });
     const [pressed, setPressed] = useState(null);
     const [selectedBall, setSelectedBall] = useState(null); // タップで選んだ球（スワイプが苦手な人向けの代替操作）
     const [dragDir, setDragDir] = useState(null); // ドラッグ中の向き（ライブ表示用）
@@ -2154,6 +2165,14 @@ function MatchScreen({ setupInfo, onExit }) {
         pushUndo();
         applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, dead: !b.dead } : b)) }));
     };
+    // 選手エリアにある球をダブルタップした時用：入れたつもりが実はスクラッチだった、という訂正を1操作で。
+    // 台へ戻すのと同時に無効球にする（戻すだけ／無効にするだけ、を別々にやらなくて済む）
+    const returnAndMarkDead = (n) => {
+        if (phase !== "play")
+            return;
+        pushUndo();
+        applyLocal((s) => ({ ...s, balls: s.balls.map((b) => (b.n === n ? { ...b, loc: "c", dead: true } : b)) }));
+    };
     const correct = () => {
         // 9番以外で決まった時はラックの結果が無いので、決着する直前の状態へ戻す。
         // 戻したあとは台上の球を直せる（直すまで自動の決着はしない）
@@ -2311,8 +2330,10 @@ function MatchScreen({ setupInfo, onExit }) {
         setTimeout(() => { returnToCenterBall(n); setFlight(null); }, 220);
     };
     // タップで球を選び、選手エリアをタップして移動できる（スワイプが苦手な人向けの代替操作）。
-    // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝無効球の切り替え（球エリアの球のみ。選手エリアの球には効かない）。
-    // 選手エリアに入っている球を選択中は、球エリア内のどこ（他の球の上でも）をタップしても「台に戻す」を優先する。
+    // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝無効球の切り替え（球エリアの球）または
+    // 台へ戻して無効球にする（選手エリアの球＝入れたつもりがスクラッチだった時の訂正）。
+    // 台上の球を選択中に選手エリア内の球（既に入っている球）をタップした時は、その球を選び直すのではなく、
+    // 選択中の球をそのエリアへ移動することを優先する（点数を入れる操作を優先）。
     // スワイプは斜め方向も見る：上方向に一定以上動いたら、左右どちらに寄ったかでどちらの選手エリアかを決める。
     // 下方向に一定以上動いた時は、その球が選手エリアにある場合だけ台へ戻す
     const gestureImpl = (n, dy, dx, area, rect) => {
@@ -2329,18 +2350,29 @@ function MatchScreen({ setupInfo, onExit }) {
             flyToRack(n, rect);
             return;
         }
-        if (area === "rack") {
+        {
             const now = Date.now();
             const isDoubleTap = lastTapRef.current[n] && now - lastTapRef.current[n] < 340;
             lastTapRef.current[n] = isDoubleTap ? 0 : now;
             if (isDoubleTap) {
-                toggleDead(n);
+                if (area === "rack")
+                    toggleDead(n);
+                else
+                    returnAndMarkDead(n);
                 setSelectedBall(null);
                 return;
             }
         }
         if (selectedBall != null) {
             const sb = balls.find((x) => x.n === selectedBall);
+            if (sb && sb.loc === "c" && b && b.loc !== "c") {
+                // 選択中（台上）の球を、タップした球が入っているエリアへそのまま移動する（その球を選び直さない）
+                lastTapRef.current[n] = 0;
+                const side = b.loc === "p1" ? 0 : 1;
+                setSelectedBall(null);
+                move(selectedBall, side);
+                return;
+            }
             if (sb && sb.loc !== "c") {
                 returnSelectedToCenter();
                 return;
@@ -2390,6 +2422,15 @@ function MatchScreen({ setupInfo, onExit }) {
         return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
     };
     const col = (loc) => balls.filter((b) => b.loc === loc);
+    // JCLモード限定：片方だけがヒル圏内（ヒルヒルではない）の時、実況風の大きなコールを出す
+    const callText = (i) => {
+        if (matchWinner != null || bothLose || phase !== "play" || ruleset.hillThreshold == null || hillHill)
+            return null;
+        const rem = rt(i) - tot[i];
+        if (rem <= 0 || rem > ruleset.hillThreshold)
+            return null;
+        return rem === 1 ? `${pl[i].name}\u3055\u3093\u30B2\u30FC\u30E0\u30DC\u30FC\u30EB\uFF01\uFF01` : `${pl[i].name}\u3055\u3093${rem}\u30E2\u30A2\uFF01`;
+    };
     const winnerLoc = lastResult ? (lastResult.w === 0 ? "p1" : "p2") : null;
     let cum = [0, 0];
     const histRows = hist.map((h) => { cum = [cum[0] + h.add[0], cum[1] + h.add[1]]; return { ...h, cum: [...cum] }; });
@@ -2486,20 +2527,21 @@ function MatchScreen({ setupInfo, onExit }) {
                         padding: "12px 0", fontSize: 14, fontWeight: 700, color: C.ink, cursor: "pointer", fontFamily: FONT,
                     } }, "\u9589\u3058\u308B")))),
         isFinalRack && (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 } }, "\u6642\u9593\u5207\u308C\uFF1A\u3053\u306E\u30E9\u30C3\u30AF\u304C\u6700\u7D42\u30E9\u30C3\u30AF\uFF08\u5C4A\u304B\u306A\u3051\u308C\u3070\u4E21\u8005\u8CA0\u3051\uFF09")),
-        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } }, [0, 1].map((i) => {
+        React.createElement("div", { ref: scoreAreaRef, style: { display: "flex", gap: 8, marginBottom: 6, touchAction: "none" } }, [0, 1].map((i) => {
             const pc = PC[i];
             const hi = hillInfoLocal(i);
             const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null && !bothLose;
             const isDropZone = ruleset.unit !== "rack" && !ruleset.simplified8 && phase === "play" && matchWinner == null && !bothLose;
             const zoneBalls = isDropZone ? col(i === 0 ? "p1" : "p2") : [];
             const onBoxClick = tappable ? () => recordSetRack(i) : isDropZone ? () => commitSelectedTo(i) : undefined;
-            return (React.createElement("div", { key: i, onClick: onBoxClick, style: { flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: (highlight[i] || brk === i) ? "inset 0 0 0 3px rgba(255,255,255,0.75)" : "none", cursor: (tappable || isDropZone) ? "pointer" : "default", userSelect: "none", WebkitTapHighlightColor: "transparent", transition: "box-shadow 120ms ease" } },
+            return (React.createElement("div", { key: i, onClick: onBoxClick, style: { flex: 1, minWidth: 0, minHeight: isDropZone ? 210 : undefined, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: (highlight[i] || brk === i) ? "inset 0 0 0 3px rgba(255,255,255,0.75)" : "none", cursor: (tappable || isDropZone) ? "pointer" : "default", userSelect: "none", WebkitTapHighlightColor: "transparent", transition: "box-shadow 120ms ease", display: "flex", flexDirection: "column" } },
                 rival && teamNames && React.createElement("div", { style: { fontSize: 10, fontWeight: 800, opacity: 0.85, letterSpacing: 0.3, marginBottom: 1 } }, teamNames[i]),
                 React.createElement("div", { style: {
                         fontSize: 15, fontWeight: 800, borderRadius: 7, padding: "2px 0", marginBottom: 2,
                         background: `linear-gradient(to right, rgba(255,255,255,0.42) ${Math.min(100, Math.round(rate(i) * 100))}%, rgba(0,0,0,0.14) ${Math.min(100, Math.round(rate(i) * 100))}%)`,
                         textShadow: "0 1px 2px rgba(0,0,0,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     } }, pl[i].name),
+                React.createElement("div", { style: { minHeight: 16, marginBottom: 2 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && (React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF"))) : brk === i && (React.createElement("button", { onClick: (e) => { e.stopPropagation(); swapBreak(); }, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF"))),
                 React.createElement("div", { style: { fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" } },
                     ruleset.hillThreshold != null ? tot[i] : disp[i],
                     ruleset.unit !== "rack" && React.createElement("span", { style: { fontSize: 20, fontWeight: 700, opacity: 0.75 } },
@@ -2508,16 +2550,16 @@ function MatchScreen({ setupInfo, onExit }) {
                 ruleset.unit === "rack" && React.createElement("div", { style: { fontSize: 13, fontWeight: 700, opacity: 0.85, marginTop: -2, marginBottom: 2 } },
                     "Race to ",
                     pl[i].raceTo),
-                ruleset.unit !== "rack" && hi.txt && React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" } }, hi.txt),
+                ruleset.unit !== "rack" && hi.txt && React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap", alignSelf: "center" } }, hi.txt),
                 tappable && React.createElement("div", { style: { fontSize: 11, opacity: 0.85, marginTop: 4 } }, "\u30BF\u30C3\u30D7\u3067+1\u30E9\u30C3\u30AF"),
-                React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && (React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF"))) : brk === i && (React.createElement("button", { onClick: (e) => { e.stopPropagation(); swapBreak(); }, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF"))),
                 isDropZone && React.createElement("div", { ref: zoneBallRefs[i], style: {
-                        display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5, marginTop: 6, minHeight: 30,
-                        background: highlight[i] ? "rgba(255,255,255,0.22)" : "transparent",
-                        borderRadius: 10, padding: zoneBalls.length || highlight[i] ? 5 : 0,
-                        transition: "background 120ms ease",
+                        flex: 1, display: "flex", flexWrap: "wrap", alignContent: "flex-start", justifyContent: "center", alignItems: "flex-start", gap: 5, marginTop: 8, minHeight: 64,
+                        background: highlight[i] ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)",
+                        border: `1.5px dashed rgba(255,255,255,${highlight[i] ? 0.85 : 0.4})`,
+                        borderRadius: 10, padding: 6,
+                        transition: "background 120ms ease, border-color 120ms ease",
                     } },
-                    zoneBalls.length === 0 && highlight[i] && React.createElement("div", { style: { fontSize: 11, fontWeight: 800, opacity: 0.9, padding: "4px 0" } }, "\u30BF\u30C3\u30D7\u3067\u79FB\u52D5"),
+                    zoneBalls.length === 0 && React.createElement("div", { style: { fontSize: 11, fontWeight: highlight[i] ? 800 : 600, opacity: highlight[i] ? 1 : 0.7, padding: "4px 0", margin: "auto" } }, highlight[i] ? "\u30BF\u30C3\u30D7\u3067\u79FB\u52D5" : "\u3053\u3053\u306B\u5165\u308A\u307E\u3059"),
                     zoneBalls.map((b) => React.createElement(Ball, { key: b.n, b: b, money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === (i === 0 ? "p1" : "p2"), pressed: pressed === b.n, selected: selectedBall === b.n, area: "zone", style: { opacity: flight && flight.n === b.n ? 0 : 1 }, onPress: onPress, onGesture: onGesture, onDrag: onDrag })))));
         })),
         hillHill && matchWinner == null && phase === "play" && ruleset.hillThreshold != null && (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 } },
@@ -2582,10 +2624,12 @@ function MatchScreen({ setupInfo, onExit }) {
             phase === "done" && lastResult ? (React.createElement("button", { onClick: nextRack, style: { ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" } }, "\u6B21\u306E\u30E9\u30C3\u30AF \u25B6")) : (React.createElement("button", { onClick: undoRack, disabled: !hist.length, style: { ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 } }, "\u25C0 1\u30E9\u30C3\u30AF\u623B\u3059"))))),
         ruleset.unit !== "rack" && !ruleset.simplified8 && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
             React.createElement("div", { onClick: returnSelectedToCenter, style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "2px 0 6px", cursor: selectedBall != null ? "pointer" : "default" } },
-                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } }, selectedOffTable && React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
-                    "\u30BF\u30C3\u30D7\u3067",
-                    React.createElement("br", null),
-                    "\u53F0\u306B\u623B\u3059")),
+                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } },
+                    selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
+                        "\u30BF\u30C3\u30D7\u3067",
+                        React.createElement("br", null),
+                        "\u53F0\u306B\u623B\u3059")
+                        : callText(0) && React.createElement("span", { style: { color: PC[0], fontWeight: 900, fontSize: 15, lineHeight: 1.3 } }, callText(0))),
                 React.createElement("div", { ref: rackRef, style: {
                         display: "grid",
                         gridTemplateColumns: ruleset.ballCount === 10 ? "repeat(5, minmax(0, 44px))" : "repeat(3, minmax(0, 52px))",
@@ -2603,6 +2647,7 @@ function MatchScreen({ setupInfo, onExit }) {
                         "\u30BF\u30C3\u30D7\u3067",
                         React.createElement("br", null),
                         "\u53F0\u306B\u623B\u3059")
+                        : callText(1) ? React.createElement("span", { style: { color: PC[1], fontWeight: 900, fontSize: 15, lineHeight: 1.3 } }, callText(1))
                         : matchWinner == null && phase === "play" && React.createElement("span", { style: { fontSize: 11 } }, "2\u56DE\u30BF\u30C3\u30D7\u3067\u7121\u52B9\u7403"))),
             matchWinner == null && phase === "play" && !selectedBall && React.createElement("div", { style: { textAlign: "center", fontSize: 11.5, color: C.sub, marginTop: -2, marginBottom: 6 } }, "\u2191 \u4E0A\u306E\u30DC\u30C3\u30AF\u30B9\u3078\u30B9\u30EF\u30A4\u30D7\u3001\u307E\u305F\u306F\u7403\u3092\u30BF\u30C3\u30D7\u3057\u3066\u9078\u629E"),
             flight && React.createElement(FlyingBall, { flight: flight, palette: palette, money: ruleset.money, ballCount: ruleset.ballCount })),
