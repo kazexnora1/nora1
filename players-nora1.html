@@ -113,8 +113,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.035";
-const BUILD_TIME = "2026-09-21 「📱 QR」タブを新設。☰メニューの奥に埋もれていたQRコード表示をここに一本化";
+const APP_VERSION = "1.036";
+const BUILD_TIME = "2026-09-21 スコアゾーンを左右の大きな色付きボックスに統合（ビリログ参考）。斜めスワイプで左右どちらの選手か判定、球が実際に飛んでいくアニメーションを追加";
 
 
 
@@ -2122,22 +2122,31 @@ function MatchScreen({ setupInfo, onExit }) {
         saveMatchHistory(matchId, stateRef.current, `第${rack}ラック確定の前`);
         applyLocal((s) => ({ ...s, balls: nb, tot: [s.tot[0] + add[0], s.tot[1] + add[1]], lastResult: entry, hist: [...s.hist, entry], phase: "done" }));
     };
-    const move = (n, dir) => {
+    // side: 0=P1（左）／1=P2（右）。台（center）にある球だけを動かす経路（選手エリアに既にある球はここでは動かさない）
+    const move = (n, side) => {
         if (phase !== "play")
             return;
         const b = balls.find((x) => x.n === n);
-        let loc = b.loc;
-        if (dir === "up")
-            loc = b.loc === "c" ? "p1" : b.loc === "p2" ? "c" : "p1";
-        else
-            loc = b.loc === "c" ? "p2" : b.loc === "p1" ? "c" : "p2";
+        if (!b || b.loc !== "c")
+            return;
+        const loc = side === 0 ? "p1" : "p2";
         const nb = balls.map((x) => (x.n === n ? { ...x, loc } : x));
-        if (n === ruleset.money && (loc === "p1" || loc === "p2") && !b.dead)
-            finish(nb, loc === "p1" ? 0 : 1);
+        if (n === ruleset.money && !b.dead)
+            finish(nb, side);
         else {
             pushUndo();
             applyLocal((s) => ({ ...s, balls: nb }));
         }
+    };
+    // 選手エリアにある球を、台へ戻す（swipeで下に戻す時、この経路を使う）
+    const returnToCenterBall = (n) => {
+        if (phase !== "play")
+            return;
+        const b = balls.find((x) => x.n === n);
+        if (!b || b.loc === "c")
+            return;
+        pushUndo();
+        applyLocal((s) => ({ ...s, balls: s.balls.map((x) => (x.n === n ? { ...x, loc: "c" } : x)) }));
     };
     const toggleDead = (n) => {
         if (phase !== "play")
@@ -2272,14 +2281,52 @@ function MatchScreen({ setupInfo, onExit }) {
         applyLocal((s) => ({ ...s, balls: s.balls.map((x) => (x.n === selectedBall ? { ...x, loc: "c" } : x)) }));
         setSelectedBall(null);
     };
+    // ===== 球が実際に飛んでいくアニメーション =====
+    // スワイプで指を離した瞬間、即座にデータを書き換えるのではなく、
+    // 一旦「飛んでいる球」だけを見せてから（約220ms）実際の移動を反映する。
+    // どちらに入ったかを目で追えるようにするための演出で、間違った側に入れてしまう事故を減らす狙い
+    const [flight, setFlight] = useState(null); // { n, from:{x,y}, to:{x,y} } または null
+    const zoneBallRefs = [useRef(null), useRef(null)]; // 各選手エリア内、球が並ぶ場所の代表点
+    const rackRef = useRef(null); // 台（ラック）側の代表点
+    const flyToZone = (n, fromRect, side) => {
+        const toEl = zoneBallRefs[side].current;
+        const toRect = toEl ? toEl.getBoundingClientRect() : null;
+        if (!fromRect || !toRect) { move(n, side); return; } // 位置が取れない時は、演出なしでそのまま反映（保険）
+        setFlight({
+            n,
+            from: { x: fromRect.left + fromRect.width / 2, y: fromRect.top + fromRect.height / 2 },
+            to: { x: toRect.left + toRect.width / 2, y: toRect.top + toRect.height / 2 },
+        });
+        setTimeout(() => { move(n, side); setFlight(null); }, 220);
+    };
+    const flyToRack = (n, fromRect) => {
+        const toEl = rackRef.current;
+        const toRect = toEl ? toEl.getBoundingClientRect() : null;
+        if (!fromRect || !toRect) { returnToCenterBall(n); return; }
+        setFlight({
+            n,
+            from: { x: fromRect.left + fromRect.width / 2, y: fromRect.top + fromRect.height / 2 },
+            to: { x: toRect.left + toRect.width / 2, y: toRect.top + toRect.height / 2 },
+        });
+        setTimeout(() => { returnToCenterBall(n); setFlight(null); }, 220);
+    };
     // タップで球を選び、選手エリアをタップして移動できる（スワイプが苦手な人向けの代替操作）。
     // 1回タップ＝選択（もう一度同じ球をタップで解除）。素早く2回タップ＝無効球の切り替え（球エリアの球のみ。選手エリアの球には効かない）。
-    // 選手エリアに入っている球を選択中は、球エリア内のどこ（他の球の上でも）をタップしても「台に戻す」を優先する
-    const gestureImpl = (n, dy, area) => {
-        if (Math.abs(dy) > 28) {
+    // 選手エリアに入っている球を選択中は、球エリア内のどこ（他の球の上でも）をタップしても「台に戻す」を優先する。
+    // スワイプは斜め方向も見る：上方向に一定以上動いたら、左右どちらに寄ったかでどちらの選手エリアかを決める。
+    // 下方向に一定以上動いた時は、その球が選手エリアにある場合だけ台へ戻す
+    const gestureImpl = (n, dy, dx, area, rect) => {
+        const b = balls.find((x) => x.n === n);
+        if (dy < -28 && b && b.loc === "c") {
             lastTapRef.current[n] = 0;
             setSelectedBall(null);
-            move(n, dy < 0 ? "up" : "down");
+            flyToZone(n, rect, dx >= 0 ? 1 : 0);
+            return;
+        }
+        if (dy > 28 && b && b.loc !== "c") {
+            lastTapRef.current[n] = 0;
+            setSelectedBall(null);
+            flyToRack(n, rect);
             return;
         }
         if (area === "rack") {
@@ -2303,18 +2350,17 @@ function MatchScreen({ setupInfo, onExit }) {
     };
     const gestureRef = useRef(gestureImpl);
     gestureRef.current = gestureImpl;
-    const onGesture = useCallback((n, dy, area) => gestureRef.current(n, dy, area), []);
-    // ドラッグ中（指を離す前）に、今どちら向きかをライブで受け取り、対応する選手エリアをハイライトする
-    const dragImpl = (n, dir) => { setDragDir(dir); if (dir != null)
+    const onGesture = useCallback((n, dy, dx, area, rect) => gestureRef.current(n, dy, dx, area, rect), []);
+    // ドラッグ中（指を離す前）に、今どちら側に寄っているかをライブで受け取り、対応する選手エリアをハイライトする
+    const dragImpl = (n, side) => { setDragDir(side); if (side != null)
         setSelectedBall(null); };
     const dragRef = useRef(dragImpl);
     dragRef.current = dragImpl;
-    const onDrag = useCallback((n, dir) => dragRef.current(n, dir), []);
+    const onDrag = useCallback((n, side) => dragRef.current(n, side), []);
     // 選択中の球を、タップした側の選手エリアへ移動する
-    const commitSelectedTo = (dir) => { if (selectedBall == null)
-        return; move(selectedBall, dir); setSelectedBall(null); };
-    const highlightUp = selectedBall != null || dragDir === "up";
-    const highlightDown = selectedBall != null || dragDir === "down";
+    const commitSelectedTo = (side) => { if (selectedBall == null)
+        return; move(selectedBall, side); setSelectedBall(null); };
+    const highlight = [selectedBall != null || dragDir === 0, selectedBall != null || dragDir === 1];
     // 選択中の球が、すでにどちらかの選手エリアに入っている場合だけ「タップで台に戻す」を案内する
     const selectedOffTable = selectedBall != null && (balls.find((b) => b.n === selectedBall) || {}).loc !== "c";
     const hillInfoLocal = (i) => {
@@ -2444,7 +2490,11 @@ function MatchScreen({ setupInfo, onExit }) {
             const pc = PC[i];
             const hi = hillInfoLocal(i);
             const tappable = ruleset.unit === "rack" && phase === "play" && matchWinner == null && !bothLose;
-            return (React.createElement("div", { key: i, onClick: tappable ? () => recordSetRack(i) : undefined, style: { flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: brk === i ? "inset 0 0 0 3px rgba(255,255,255,0.65)" : "none", cursor: tappable ? "pointer" : "default", userSelect: "none", WebkitTapHighlightColor: "transparent" } },
+            const isDropZone = ruleset.unit !== "rack" && !ruleset.simplified8 && phase === "play" && matchWinner == null && !bothLose;
+            const zoneBalls = isDropZone ? col(i === 0 ? "p1" : "p2") : [];
+            const onBoxClick = tappable ? () => recordSetRack(i) : isDropZone ? () => commitSelectedTo(i) : undefined;
+            return (React.createElement("div", { key: i, onClick: onBoxClick, style: { flex: 1, minWidth: 0, background: pc, borderRadius: 14, padding: "8px 6px 6px", textAlign: "center", color: "#fff", boxShadow: (highlight[i] || brk === i) ? "inset 0 0 0 3px rgba(255,255,255,0.75)" : "none", cursor: (tappable || isDropZone) ? "pointer" : "default", userSelect: "none", WebkitTapHighlightColor: "transparent", transition: "box-shadow 120ms ease" } },
+                rival && teamNames && React.createElement("div", { style: { fontSize: 10, fontWeight: 800, opacity: 0.85, letterSpacing: 0.3, marginBottom: 1 } }, teamNames[i]),
                 React.createElement("div", { style: {
                         fontSize: 15, fontWeight: 800, borderRadius: 7, padding: "2px 0", marginBottom: 2,
                         background: `linear-gradient(to right, rgba(255,255,255,0.42) ${Math.min(100, Math.round(rate(i) * 100))}%, rgba(0,0,0,0.14) ${Math.min(100, Math.round(rate(i) * 100))}%)`,
@@ -2460,7 +2510,15 @@ function MatchScreen({ setupInfo, onExit }) {
                     pl[i].raceTo),
                 ruleset.unit !== "rack" && hi.txt && React.createElement("div", { style: { display: "inline-block", background: "#fff", color: hi.on ? pc : C.ink, borderRadius: 8, padding: "2px 8px", fontSize: 13, fontWeight: 800, marginTop: 4, whiteSpace: "nowrap" } }, hi.txt),
                 tappable && React.createElement("div", { style: { fontSize: 11, opacity: 0.85, marginTop: 4 } }, "\u30BF\u30C3\u30D7\u3067+1\u30E9\u30C3\u30AF"),
-                React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && (React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF"))) : brk === i && (React.createElement("button", { onClick: swapBreak, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF")))));
+                React.createElement("div", { style: { minHeight: 18, marginTop: 4 } }, matchWinner != null || bothLose ? null : phase === "done" && lastResult ? (ruleset.nextBrk(lastResult, brk) === i && (React.createElement("span", { style: { color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1 } }, "\u25CF \u6B21\u30D6\u30EC\u30A4\u30AF"))) : brk === i && (React.createElement("button", { onClick: (e) => { e.stopPropagation(); swapBreak(); }, style: { background: "none", border: "none", color: "#fff", fontSize: 11.5, fontWeight: 800, letterSpacing: 1, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "\u25CF \u30D6\u30EC\u30A4\u30AF"))),
+                isDropZone && React.createElement("div", { ref: zoneBallRefs[i], style: {
+                        display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5, marginTop: 6, minHeight: 30,
+                        background: highlight[i] ? "rgba(255,255,255,0.22)" : "transparent",
+                        borderRadius: 10, padding: zoneBalls.length || highlight[i] ? 5 : 0,
+                        transition: "background 120ms ease",
+                    } },
+                    zoneBalls.length === 0 && highlight[i] && React.createElement("div", { style: { fontSize: 11, fontWeight: 800, opacity: 0.9, padding: "4px 0" } }, "\u30BF\u30C3\u30D7\u3067\u79FB\u52D5"),
+                    zoneBalls.map((b) => React.createElement(Ball, { key: b.n, b: b, money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === (i === 0 ? "p1" : "p2"), pressed: pressed === b.n, selected: selectedBall === b.n, area: "zone", style: { opacity: flight && flight.n === b.n ? 0 : 1 }, onPress: onPress, onGesture: onGesture, onDrag: onDrag })))));
         })),
         hillHill && matchWinner == null && phase === "play" && ruleset.hillThreshold != null && (React.createElement("div", { style: { background: C.hillBg, border: `1.5px solid ${C.hill}`, color: C.hill, borderRadius: 10, padding: "6px 10px", textAlign: "center", fontSize: 13.5, fontWeight: 800, marginBottom: 6 } },
             "\u30D2\u30EB\u30D2\u30EB\uFF1A\u3053\u306E\u30E9\u30C3\u30AF\u3067",
@@ -2523,17 +2581,12 @@ function MatchScreen({ setupInfo, onExit }) {
                 React.createElement("span", { style: { color: C.red } }, live[1]))) : null),
             phase === "done" && lastResult ? (React.createElement("button", { onClick: nextRack, style: { ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" } }, "\u6B21\u306E\u30E9\u30C3\u30AF \u25B6")) : (React.createElement("button", { onClick: undoRack, disabled: !hist.length, style: { ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 } }, "\u25C0 1\u30E9\u30C3\u30AF\u623B\u3059"))))),
         ruleset.unit !== "rack" && !ruleset.simplified8 && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
-            React.createElement(Zone, { label: pl[0].name, team: rival && teamNames ? teamNames[0] : null, side: "up", color: C.blue, balls: col("p1"), money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === "p1", pressed: pressed, selectedBall: selectedBall, highlight: phase === "play" && highlightUp, onPress: onPress, onGesture: onGesture, onDrag: onDrag, onZoneTap: () => commitSelectedTo("up") }),
-            React.createElement("div", { onClick: returnSelectedToCenter, style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "6px 0", cursor: selectedBall != null ? "pointer" : "default" } },
-                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } }, selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
+            React.createElement("div", { onClick: returnSelectedToCenter, style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "2px 0 6px", cursor: selectedBall != null ? "pointer" : "default" } },
+                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } }, selectedOffTable && React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
                     "\u30BF\u30C3\u30D7\u3067",
                     React.createElement("br", null),
-                    "\u53F0\u306B\u623B\u3059")
-                    : matchWinner == null && phase === "play" && React.createElement(React.Fragment, null,
-                        "\u2191\u30B9\u30EF\u30A4\u30D7\u3067",
-                        React.createElement("br", null),
-                        pl[0].name)),
-                React.createElement("div", { style: {
+                    "\u53F0\u306B\u623B\u3059")),
+                React.createElement("div", { ref: rackRef, style: {
                         display: "grid",
                         gridTemplateColumns: ruleset.ballCount === 10 ? "repeat(5, minmax(0, 44px))" : "repeat(3, minmax(0, 52px))",
                         gap: 7, flexShrink: 0,
@@ -2543,19 +2596,16 @@ function MatchScreen({ setupInfo, onExit }) {
                         transition: "background 120ms ease, border-color 120ms ease",
                     } }, balls.map((b) => {
                     const moved = b.loc !== "c";
-                    return React.createElement(Ball, { key: b.n, b: b, big: true, size: ruleset.ballCount === 10 ? 44 : undefined, money: ruleset.money, palette: palette, pressed: pressed === b.n, selected: selectedBall === b.n, area: "rack", style: { opacity: moved ? 0.2 : 1 }, onPress: onPress, onGesture: onGesture, onDrag: onDrag });
+                    return React.createElement(Ball, { key: b.n, b: b, big: true, size: ruleset.ballCount === 10 ? 44 : undefined, money: ruleset.money, palette: palette, pressed: pressed === b.n, selected: selectedBall === b.n, area: "rack", style: { opacity: (flight && flight.n === b.n) ? 0 : moved ? 0.2 : 1 }, onPress: onPress, onGesture: onGesture, onDrag: onDrag });
                 })),
-                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word", touchAction: "pan-y" } }, selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
-                    "\u30BF\u30C3\u30D7\u3067",
-                    React.createElement("br", null),
-                    "\u53F0\u306B\u623B\u3059")
-                    : matchWinner == null && phase === "play" && React.createElement(React.Fragment, null,
-                        "\u2193\u30B9\u30EF\u30A4\u30D7\u3067",
+                React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "left", lineHeight: 1.5, paddingLeft: 6, overflowWrap: "break-word", touchAction: "pan-y" } },
+                    selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
+                        "\u30BF\u30C3\u30D7\u3067",
                         React.createElement("br", null),
-                        pl[1].name,
-                        React.createElement("br", null),
-                        React.createElement("span", { style: { fontSize: 11 } }, "2\u56DE\u30BF\u30C3\u30D7\u3067\u7121\u52B9\u7403")))),
-            React.createElement(Zone, { label: pl[1].name, team: rival && teamNames ? teamNames[1] : null, side: "down", color: C.red, balls: col("p2"), money: ruleset.money, palette: palette, sub: phase === "done" && winnerLoc === "p2", pressed: pressed, selectedBall: selectedBall, highlight: phase === "play" && highlightDown, onPress: onPress, onGesture: onGesture, onDrag: onDrag, onZoneTap: () => commitSelectedTo("down") })),
+                        "\u53F0\u306B\u623B\u3059")
+                        : matchWinner == null && phase === "play" && React.createElement("span", { style: { fontSize: 11 } }, "2\u56DE\u30BF\u30C3\u30D7\u3067\u7121\u52B9\u7403"))),
+            matchWinner == null && phase === "play" && !selectedBall && React.createElement("div", { style: { textAlign: "center", fontSize: 11.5, color: C.sub, marginTop: -2, marginBottom: 6 } }, "\u2191 \u4E0A\u306E\u30DC\u30C3\u30AF\u30B9\u3078\u30B9\u30EF\u30A4\u30D7\u3001\u307E\u305F\u306F\u7403\u3092\u30BF\u30C3\u30D7\u3057\u3066\u9078\u629E"),
+            flight && React.createElement(FlyingBall, { flight: flight, palette: palette, money: ruleset.money, ballCount: ruleset.ballCount })),
         histRows.length > 0 && (React.createElement("div", { style: { marginTop: 10 } },
             React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, marginBottom: 5 } },
                 ruleset.unit === "rack" ? "\u30E9\u30C3\u30AF\u306E\u5C65\u6B74\uFF08" : "\u30E9\u30C3\u30AF\u6BCE\u306E\u30B9\u30B3\u30A2\uFF08\u5C65\u6B74 ",
@@ -2577,18 +2627,21 @@ function MatchScreen({ setupInfo, onExit }) {
                             React.createElement("span", { style: { color: C.red } }, h.add[1])))))))),
         React.createElement(BannerLine, { boxed: true, style: { marginTop: 16 } })));
 }
-function Zone({ label, team, side, color, balls, money, palette, sub, pressed, selectedBall, highlight, onPress, onGesture, onDrag, onZoneTap }) {
-    return (React.createElement("div", { onClick: onZoneTap, style: {
-            background: highlight ? C.lightBlue : C.zone,
-            border: `1.5px solid ${highlight ? C.blue : C.line}`,
-            borderRadius: 12, padding: "7px 8px", minHeight: 52,
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-            transition: "background 120ms ease, border-color 120ms ease",
+// 球が実際に飛んでいく見た目だけの演出。実データは触らず、開始位置→到着位置へCSSトランジションで動かすだけ
+function FlyingBall({ flight, palette, money, ballCount }) {
+    const [pos, setPos] = useState(flight.from);
+    useEffect(() => {
+        const id = requestAnimationFrame(() => setPos(flight.to));
+        return () => cancelAnimationFrame(id);
+    }, [flight.n, flight.to.x, flight.to.y]);
+    const size = ballCount === 10 ? 44 : 52;
+    return (React.createElement("div", { style: {
+            position: "fixed", left: pos.x, top: pos.y, width: size, height: size,
+            transform: "translate(-50%, -50%)",
+            transition: "left 220ms cubic-bezier(0.22,0.9,0.3,1), top 220ms cubic-bezier(0.22,0.9,0.3,1)",
+            zIndex: 9999, pointerEvents: "none",
         } },
-        team && React.createElement("div", { style: { fontSize: 10, fontWeight: 800, color: C.sub, letterSpacing: 0.3 } }, team),
-        React.createElement("div", { style: { fontSize: 12.5, fontWeight: 800, color } }, label),
-        balls.length === 0 && (React.createElement("div", { style: { color: highlight ? C.blue : C.sub, fontSize: 11.5, textAlign: "center", fontWeight: highlight ? 800 : 400 } }, highlight ? "タップで移動" : side === "up" ? "↑ 上にスワイプ" : "↓ 下にスワイプ")),
-        React.createElement("div", { style: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5 } }, balls.map((b) => React.createElement(Ball, { key: b.n, b: b, money: money, palette: palette, sub: sub, pressed: pressed === b.n, selected: selectedBall === b.n, area: "zone", onPress: onPress, onGesture: onGesture, onDrag: onDrag })))));
+        React.createElement(Ball, { b: { n: flight.n, loc: "c", dead: false }, big: true, size: size, money: money, palette: palette, area: "rack", onPress: () => { }, onGesture: () => { }, onDrag: () => { } })));
 }
 function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, selected, area, style, onPress, onGesture, onDrag }) {
     const size = sizeOverride || (big ? 52 : 34);
@@ -2599,20 +2652,23 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, select
     const isMoney = b.n === (money || 9);
     const ring = isMoney || b.n === 9;
     const ref = useRef(null);
+    const startXRef = useRef(0);
     const startYRef = useRef(0);
     useEffect(() => {
         const el = ref.current;
         if (!el)
             return;
-        let curDir = null; // 今ドラッグ中の向き（ライブ判定。閾値を超えたら選手エリアをハイライトする用）
-        const start = (e) => { e.preventDefault(); startYRef.current = e.touches[0].clientY; curDir = null; onPress(b.n, true); };
+        let curDir = null; // 今ドラッグ中の向き（ライブ判定。上方向に一定以上動いた時だけ左右どちらかを暫定表示）
+        const start = (e) => { e.preventDefault(); startXRef.current = e.touches[0].clientX; startYRef.current = e.touches[0].clientY; curDir = null; onPress(b.n, true); };
         const move = (e) => {
             e.preventDefault();
             if (!onDrag)
                 return;
+            const x = e.touches[0].clientX;
             const y = e.touches[0].clientY;
+            const dx = x - startXRef.current;
             const dy = y - startYRef.current;
-            const dir = Math.abs(dy) > 28 ? (dy < 0 ? "up" : "down") : null;
+            const dir = dy < -28 ? (dx >= 0 ? 1 : 0) : null;
             if (dir !== curDir) {
                 curDir = dir;
                 onDrag(b.n, dir);
@@ -2623,8 +2679,11 @@ function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, select
             onPress(b.n, false);
             if (onDrag)
                 onDrag(b.n, null);
-            const y = (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startYRef.current);
-            onGesture(b.n, y - startYRef.current, area);
+            const t = e.changedTouches && e.changedTouches[0];
+            const x = t ? t.clientX : startXRef.current;
+            const y = t ? t.clientY : startYRef.current;
+            const rect = el.getBoundingClientRect();
+            onGesture(b.n, y - startYRef.current, x - startXRef.current, area, rect);
         };
         const cancel = (e) => { e.preventDefault(); onPress(b.n, false); if (onDrag)
             onDrag(b.n, null); };
