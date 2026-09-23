@@ -113,8 +113,8 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.037";
-const BUILD_TIME = "2026-09-22 スコアゾーンを固定サイズ・大きめの受け皿表示に変更。台上選択中に選手エリアの球へ触れても点数入力を優先。選手エリアの球のダブルタップで「戻す＋無効球」に。JCLの片方だけヒルの時に実況コール（Xモア／ゲームボール）を追加、ブレイク表示を名前の下へ移動、選手エリアのスクロール抑制を追加";
+const APP_VERSION = "1.038";
+const BUILD_TIME = "2026-09-22 ラック終了時、球ゾーンに大きなポップアップを表示（次のブレイク→このラックのスコア→ヒル/勝ちまでの数字またはヒルヒル案内→戻る/次のラックへ、の順）";
 
 
 
@@ -2422,6 +2422,8 @@ function MatchScreen({ setupInfo, onExit }) {
         return toHill > 0 ? { txt: `あと${toHill}でヒル`, on: false } : { txt: `あと${rem}で勝ち`, on: true };
     };
     const col = (loc) => balls.filter((b) => b.loc === loc);
+    // ラックが終わった直後（訂正／次のラックへ、待ちの状態）は、球ゾーン一帯を大きなポップアップに置き換える
+    const showRackEndPopup = phase === "done" && !!lastResult && ruleset.unit !== "rack" && !ruleset.simplified8 && matchWinner == null && !bothLose;
     // JCLモード限定：片方だけがヒル圏内（ヒルヒルではない）の時、実況風の大きなコールを出す
     const callText = (i) => {
         if (matchWinner != null || bothLose || phase !== "play" || ruleset.hillThreshold == null || hillHill)
@@ -2611,18 +2613,15 @@ function MatchScreen({ setupInfo, onExit }) {
                     })),
                 React.createElement("div", { style: { display: "flex", justifyContent: "center" } },
                     React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 \u30E9\u30C3\u30AF\u3092\u53D6\u308A\u6D88\u3059")))
-        ) : (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 } },
+        ) : (showRackEndPopup ? React.createElement(RackEndPopup, { pl, ruleset, brk, hillHill, hillInfoLocal, lastResult, correct, nextRack }) : React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 } },
 
-            phase === "done" && lastResult ? (React.createElement("button", { onClick: correct, style: { ...ctrl, flex: 1 } }, "\u25C0 \u8A02\u6B63")) : (React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 1\u624B\u623B\u3059")),
-            React.createElement("div", { style: { minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" } }, phase === "done" && lastResult ? (React.createElement(React.Fragment, null,
-                React.createElement("span", { style: { color: C.blue } }, lastResult.add[0]),
-                React.createElement("span", { style: { color: C.sub, margin: "0 4px" } }, "-"),
-                React.createElement("span", { style: { color: C.red } }, lastResult.add[1]))) : phase === "play" ? (React.createElement(React.Fragment, null,
+            React.createElement("button", { onClick: undoLast, disabled: !undoStack.length, style: { ...ctrl, flex: 1, opacity: undoStack.length ? 1 : 0.4 } }, "\u21B6 1\u624B\u623B\u3059"),
+            React.createElement("div", { style: { minWidth: 70, textAlign: "center", fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" } }, phase === "play" ? (React.createElement(React.Fragment, null,
                 React.createElement("span", { style: { color: C.blue } }, live[0]),
                 React.createElement("span", { style: { color: C.sub, margin: "0 4px" } }, "-"),
                 React.createElement("span", { style: { color: C.red } }, live[1]))) : null),
-            phase === "done" && lastResult ? (React.createElement("button", { onClick: nextRack, style: { ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" } }, "\u6B21\u306E\u30E9\u30C3\u30AF \u25B6")) : (React.createElement("button", { onClick: undoRack, disabled: !hist.length, style: { ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 } }, "\u25C0 1\u30E9\u30C3\u30AF\u623B\u3059"))))),
-        ruleset.unit !== "rack" && !ruleset.simplified8 && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
+            React.createElement("button", { onClick: undoRack, disabled: !hist.length, style: { ...ctrl, flex: 1, opacity: hist.length ? 1 : 0.4 } }, "\u25C0 1\u30E9\u30C3\u30AF\u623B\u3059")))),
+        !showRackEndPopup && ruleset.unit !== "rack" && !ruleset.simplified8 && React.createElement("div", { ref: playAreaRef, style: { touchAction: "none" } },
             React.createElement("div", { onClick: returnSelectedToCenter, style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "10px 0", margin: "2px 0 6px", cursor: selectedBall != null ? "pointer" : "default" } },
                 React.createElement("div", { onTouchStart: onDesignSwipeStart, onTouchEnd: onDesignSwipeEnd, style: { flex: 1, minWidth: 0, fontSize: 12, color: C.sub, textAlign: "right", lineHeight: 1.5, paddingRight: 6, overflowWrap: "break-word", touchAction: "pan-y" } },
                     selectedOffTable ? React.createElement("span", { style: { color: C.blue, fontWeight: 800 } },
@@ -2687,6 +2686,31 @@ function FlyingBall({ flight, palette, money, ballCount }) {
             zIndex: 9999, pointerEvents: "none",
         } },
         React.createElement(Ball, { b: { n: flight.n, loc: "c", dead: false }, big: true, size: size, money: money, palette: palette, area: "rack", onPress: () => { }, onGesture: () => { }, onDrag: () => { } })));
+}
+// ラック終了時、球ゾーンの位置に大きく出すポップアップ。
+// プレイヤーが知りたい順に：次のブレイク→このラックのスコア→ヒル/勝ちまでの数字（または次がヒルヒルの案内）→戻る/次のラックへ
+function RackEndPopup({ pl, ruleset, brk, hillHill, hillInfoLocal, lastResult, correct, nextRack }) {
+    const nextBreaker = ruleset.nextBrk(lastResult, brk);
+    return (React.createElement("div", { style: { background: "#fff", border: `2px solid ${C.ink}`, borderRadius: 16, padding: "16px 14px", marginBottom: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)" } },
+        React.createElement("div", { style: { textAlign: "center", fontSize: 13, fontWeight: 700, color: C.sub, marginBottom: 4 } },
+            "\u6B21\u306E\u30D6\u30EC\u30A4\u30AF\u306F ",
+            React.createElement("b", { style: { color: C.ink, fontSize: 15 } }, pl[nextBreaker].name)),
+        React.createElement("div", { style: { textAlign: "center", fontSize: 15, fontWeight: 800, marginBottom: 12 } },
+            "\u3053\u306E\u30E9\u30C3\u30AF\u3000",
+            React.createElement("span", { style: { color: C.blue } }, lastResult.add[0]),
+            React.createElement("span", { style: { color: C.sub, margin: "0 4px" } }, "-"),
+            React.createElement("span", { style: { color: C.red } }, lastResult.add[1])),
+        ruleset.hillThreshold != null && hillHill
+            ? React.createElement("div", { style: { textAlign: "center", fontSize: 16, fontWeight: 900, color: C.hill, background: C.hillBg, borderRadius: 10, padding: "12px 0", marginBottom: 14 } }, "\u6B21\u306E\u30E9\u30C3\u30AF\u306F\u30D2\u30EB\u30D2\u30EB\u3067\u3059")
+            : React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } }, [0, 1].map((i) => {
+                const hi = hillInfoLocal(i);
+                return React.createElement("div", { key: i, style: { flex: 1, textAlign: "center", background: C.zone, borderRadius: 10, padding: "8px 4px" } },
+                    React.createElement("div", { style: { fontSize: 12.5, fontWeight: 800, color: PC[i], marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, pl[i].name),
+                    React.createElement("div", { style: { fontSize: 14, fontWeight: 800, color: C.ink } }, hi.txt || "\u2015"));
+            })),
+        React.createElement("div", { style: { display: "flex", gap: 8 } },
+            React.createElement("button", { onClick: correct, style: { ...ctrl, flex: 1 } }, "\u25C0 \u623B\u308B"),
+            React.createElement("button", { onClick: nextRack, style: { ...ctrl, flex: 1, background: C.ink, color: "#fff", border: "none" } }, "\u6B21\u306E\u30E9\u30C3\u30AF\u3078 \u25B6"))));
 }
 function Ball({ b, big, size: sizeOverride, money, palette, sub, pressed, selected, area, style, onPress, onGesture, onDrag }) {
     const size = sizeOverride || (big ? 52 : 34);
