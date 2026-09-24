@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.248";
-const BUILD_TIME = "2026-09-22 匿名ログインの応答が返らない時、参加者リスト・メンバーDB・接続確認が全部固まって見えていた不具合を修正（ログイン処理に8秒のタイムアウトを追加）";
+const APP_VERSION = "1.249";
+const BUILD_TIME = "2026-09-22 ログインは直ったが、実際のデータ読み込み（dbGet/dbSet/メンバーDB）にもタイムアウトが無く固まる場合があったため追加。応答が無ければ「空」ではなくはっきりエラーとして表示されるように";
 
 
 const C = {
@@ -205,14 +205,25 @@ function authStatusLine() {
 }
 async function membersDbGet(path) {
   await authReady;
-  const snap = await membersDb.ref(path).once("value");
+  const snap = await withDeadline(membersDb.ref(path).once("value"), DB_OP_TIMEOUT_MS, "メンバーDB読み込み");
   return snap.val();
 }
 
 /* 1回だけ読む */
+/* 通信そのもの（Firebaseへの実際の読み書き）にも、認証と同じ理由でタイムアウトを設ける。
+   ここは「諦めて空扱いで進む」と、本当にデータが無いのか通信が固まっているのか区別が付かなくなる
+   （実際に「メンバーが空に見える」不具合の原因になった）ため、認証とは逆に、タイムアウトしたら
+   はっきり失敗（エラー）として呼び出し元に伝える */
+const DB_OP_TIMEOUT_MS = 12000;
+function withDeadline(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`タイムアウト：${label || "通信"}が${Math.round(ms / 1000)}秒以内に応答しませんでした`)), ms)),
+  ]);
+}
 async function dbGet(path) {
   await authReady;
-  const snap = await db.ref(path).once("value");
+  const snap = await withDeadline(db.ref(path).once("value"), DB_OP_TIMEOUT_MS, "読み込み");
   return snap.val();
 }
 /* 変更を購読する。ポーリングと違い、変わった瞬間に届く。戻り値を呼ぶと解除 */
@@ -227,10 +238,10 @@ function dbSubscribe(path, onValue, onError) {
   });
   return () => { cancelled = true; if (ref && handler) ref.off("value", handler); };
 }
-async function dbSet(path, value) { await authReady; await db.ref(path).set(value); }
+async function dbSet(path, value) { await authReady; await withDeadline(db.ref(path).set(value), DB_OP_TIMEOUT_MS, "保存"); }
 /* 複数の場所をまとめて更新する。指定した項目だけが変わるので、
    スコアラーが入力中の値を本部側が上書きしてしまう事故が起きない */
-async function dbUpdate(path, values) { await authReady; await db.ref(path).update(values); }
+async function dbUpdate(path, values) { await authReady; await withDeadline(db.ref(path).update(values), DB_OP_TIMEOUT_MS, "更新"); }
 
 function normalizeRecord(rec) {
   rec = rec || {};
