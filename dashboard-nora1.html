@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.249";
-const BUILD_TIME = "2026-09-22 ログインは直ったが、実際のデータ読み込み（dbGet/dbSet/メンバーDB）にもタイムアウトが無く固まる場合があったため追加。応答が無ければ「空」ではなくはっきりエラーとして表示されるように";
+const APP_VERSION = "1.250";
+const BUILD_TIME = "2026-09-22 データベースの「ルート（/）をまとめて読む・購読する」箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -254,7 +254,17 @@ function normalizeRecord(rec) {
 }
 /* 全体を1回読む（従来のjsonbinReadと同じ形で返す） */
 async function readAll() {
-  return normalizeRecord(await dbGet("/"));
+  // ルート（"/"）をまるごと読むのではなく、必要な場所だけを個別に読む。
+  // Firebaseのルール上、個別の場所（roster・matchesなど）は読めても、ルート直下への
+  // アクセスだけ許可されていない、という設定がありうる（実際にこれが原因で、参加者リストが
+  // 読み込めているように見えて実は読み込み自体が固まっていた、という不具合があった）
+  const [roster, results, matches, refereeCounts] = await Promise.all([
+    dbGet("roster"),
+    dbGet("results"),
+    dbGet("matches"),
+    dbGet("refereeCounts"),
+  ]);
+  return normalizeRecord({ roster, results, matches, refereeCounts });
 }
 const ROSTER_BACKUP_KEY = "jcl9_b1_roster_backup_v1";
 function backupRoster(roster) {
@@ -2243,9 +2253,10 @@ function StandingsTab() {
   const groupMode = !!loadSettings().perTableRR;
   const groupCount = loadSettings().groupCount || 3;
 
-  useEffect(() => dbSubscribe("/",
-    (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
-    (e) => setErr(e)), []);
+  // ルート（"/"）をまとめて購読するのではなく、場所ごとに個別で購読する
+  // （ルートの読み込み・購読だけが権限やタイムアウトで失敗する設定がありうるため）
+  useEffect(() => dbSubscribe("matches", (v) => setMatches(v && typeof v === "object" ? v : {}), (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("roster", (v) => setRoster(Array.isArray(v) ? v : []), (e) => setErr(e)), []);
 
   const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
   const rows = buildStandings(matches, roster, "prelim");
@@ -2621,9 +2632,10 @@ function PcStandingsTab() {
   const groupMode = !!loadSettings().perTableRR;
   const groupCount = loadSettings().groupCount || 3;
 
-  useEffect(() => dbSubscribe("/",
-    (rec) => { const r = normalizeRecord(rec); setMatches(r.matches); setRoster(r.roster); setErr(null); },
-    (e) => setErr(e)), []);
+  // ルート（"/"）をまとめて購読するのではなく、場所ごとに個別で購読する
+  // （ルートの読み込み・購読だけが権限やタイムアウトで失敗する設定がありうるため）
+  useEffect(() => dbSubscribe("matches", (v) => setMatches(v && typeof v === "object" ? v : {}), (e) => setErr(e)), []);
+  useEffect(() => dbSubscribe("roster", (v) => setRoster(Array.isArray(v) ? v : []), (e) => setErr(e)), []);
 
   const hasBracket = Object.values(matches || {}).some((m) => m && m.bracket);
   const { rows: stRows, maxGames } = useMemo(() => buildDetailedStandings(matches, roster, "prelim"), [matches, roster]);
@@ -3331,12 +3343,13 @@ function ConnectionTest() {
     await authReady;
     lines.push(authStatusLine());
     try {
+      // ルート（"/"）はまとめて読まない。実際のアプリがそうしているように、
+      // 場所ごとに個別で読む（ルートだけ権限が違う設定になっていることがあるため）
       const t0 = Date.now();
-      const rec = (await dbGet("/")) || {};
+      const [roster, matches] = await Promise.all([dbGet("roster"), dbGet("matches")]);
       lines.push(`① 読み込み：成功（${Date.now() - t0}ms）`);
-      lines.push(`   データ量：${(JSON.stringify(rec).length / 1024).toFixed(1)} KB`);
-      lines.push(`   メンバー：${(rec.roster || []).length}人`);
-      lines.push(`   対戦データ：${Object.keys(rec.matches || {}).length}件`);
+      lines.push(`   メンバー：${(roster || []).length}人`);
+      lines.push(`   対戦データ：${Object.keys(matches || {}).length}件`);
       // 実データには触れず、確認用の場所に書き込んで権限をチェックする
       const t1 = Date.now();
       await dbSet("_healthcheck", Date.now());
@@ -6689,13 +6702,27 @@ function HomeTab() {
     setRefereeCounts(r.refereeCounts);
     setLoadErr(null);
   };
-  // 手動更新用（購読しているので通常は不要）
+  // 手動更新用（購読しているので通常は不要）。ルート（"/"）はまとめて読まない
+  // （個別の場所は読めても、ルートだけ権限が違う設定になっていることがあるため）
   const refresh = async () => {
-    try { applyRecord(await dbGet("/")); }
+    try {
+      const [roster, matches, refereeCounts] = await Promise.all([dbGet("roster"), dbGet("matches"), dbGet("refereeCounts")]);
+      applyRecord({ roster, matches, refereeCounts });
+    }
     catch (e) { setLoadErr(String(e && e.message ? e.message : e)); }
   };
-  // 変更を購読する。ポーリングしないので、開きっぱなしでも通信が積み上がらない
-  useEffect(() => dbSubscribe("/", applyRecord, (e) => setLoadErr(e)), []);
+  // 変更を購読する。ポーリングしないので、開きっぱなしでも通信が積み上がらない。
+  // ルート（"/"）をまとめて購読するのではなく、場所ごとに個別で購読する
+  // （ルートの読み込み・購読だけが権限やタイムアウトで失敗し、参加者リストが空に見える不具合があった）
+  useEffect(() => dbSubscribe("roster", (v) => setRoster(Array.isArray(v) ? v : []), (e) => setLoadErr(e)), []);
+  useEffect(() => dbSubscribe("refereeCounts", (v) => setRefereeCounts(v && typeof v === "object" ? v : {}), (e) => setLoadErr(e)), []);
+  useEffect(() => dbSubscribe("matches", (v) => {
+    const matches = v && typeof v === "object" ? v : {};
+    setQueues([1, 2, 3].map((t) => getQueueForTable(matches, t)));
+    setCols([1, 2, 3].map((t) => annotateColumn(getAllForTable(matches, t))));
+    setEta(buildEta(matches, parseInt(loadSettings().changeoverMin, 10) || 5));
+    setLoadErr(null);
+  }, (e) => setLoadErr(e)), []);
 
   const getRefereeCandidates = (ti, target) => {
     if (!target) return [];
