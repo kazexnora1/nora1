@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.250";
-const BUILD_TIME = "2026-09-22 データベースの「ルート（/）をまとめて読む・購読する」箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.251";
+const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -1728,7 +1728,7 @@ function TimelineSlotCard({
       await saveMatchHistory(m.id, m, "卓移動の前");
       await dbUpdate("matches/" + m.id, {
         table: newTable, slot: null, scheduledAt: null, createdAt: Date.now(),
-        version: (m.version || 1) + 1, updatedAt: Date.now(),
+        raceTo: m.raceTo, version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
       setMenu(null);
     } catch {}
