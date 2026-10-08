@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.253";
-const BUILD_TIME = "2026-10-04 決勝進出者の名前と目標点を編集可能に（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.254";
+const BUILD_TIME = "2026-10-04 試合の長さはJCLのみ表示（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -1452,13 +1452,15 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
           {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{rosterHandiLabel(p, curSpec.scoring)}</option>)}
         </select>
       </Field>
-      <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
-          <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+      {curSpec.scoring === "jcl" && (
+        <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
+            <span style={{ fontSize: 16, fontWeight: 800 }}>{lenPct}%</span>
+          </div>
+          <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
         </div>
-        <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
-      </div>
+      )}
       {i1 === i2 && <Notice>同じ選手が選ばれています</Notice>}
       {res ? (
         <div style={{ textAlign: "center", fontSize: 15 }}>
