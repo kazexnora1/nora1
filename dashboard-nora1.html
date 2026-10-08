@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.251";
-const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.255";
+const BUILD_TIME = "2026-10-04 決勝進出者の名前と目標点を編集可能に（修正版）（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -2776,6 +2776,8 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
   const [azukiSemi, setAzukiSemi] = useState(() => parseInt(s0.azukiSemi, 10) || 30);
   const [azukiFinal, setAzukiFinal] = useState(() => parseInt(s0.azukiFinal, 10) || 40);
   useEffect(() => { saveSettings({ azukiQuarter, azukiSemi, azukiFinal }); }, [azukiQuarter, azukiSemi, azukiFinal]);
+  const [nameEdits, setNameEdits] = useState(Array(8).fill(""));
+  const [raceToEdits, setRaceToEdits] = useState(Array(8).fill([0, 0]));
   const azukiTargetFor = (r, total) => {
     const distFromFinal = total - r;
     if (distFromFinal <= 0) return azukiFinal;
@@ -3151,6 +3153,16 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
                 <input inputMode="numeric" value={drawNo[i] ?? ""}
                   onChange={(e) => setDrawNo((arr) => { const nx = [...arr]; nx[i] = e.target.value.replace(/[^0-9]/g, "").slice(0, 1); return nx; })}
                   style={{ ...numBoxStyle, width: 46, textAlign: "center", flexShrink: 0, borderColor: bad ? C.minus : undefined, color: bad ? C.minus : C.ink }} />
+                <input type="text" value={nameEdits[i] || ""} placeholder="編集" maxLength="20"
+                  onChange={(e) => setNameEdits((arr) => { const nx = [...arr]; nx[i] = e.target.value; return nx; })}
+                  style={{ ...numBoxStyle, flex: 1, minWidth: 60, fontSize: 12 }} />
+                <input type="number" min="0" max="99" value={(raceToEdits[i] || [0, 0])[0]}
+                  onChange={(e) => setRaceToEdits((arr) => { const nx = [...arr]; const rt = [...(arr[i] || [0, 0])]; rt[0] = parseInt(e.target.value, 10) || 0; nx[i] = rt; return nx; })}
+                  style={{ ...numBoxStyle, width: 38, textAlign: "center", fontSize: 11 }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.sub }}>-</span>
+                <input type="number" min="0" max="99" value={(raceToEdits[i] || [0, 0])[1]}
+                  onChange={(e) => setRaceToEdits((arr) => { const nx = [...arr]; const rt = [...(arr[i] || [0, 0])]; rt[1] = parseInt(e.target.value, 10) || 0; nx[i] = rt; return nx; })}
+                  style={{ ...numBoxStyle, width: 38, textAlign: "center", fontSize: 11 }} />
               </div>
             );
           })}
