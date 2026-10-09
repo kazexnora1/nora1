@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.256";
-const BUILD_TIME = "2026-10-07 ペアマッチ対応（表データ埋め込み）（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.257";
+const BUILD_TIME = "2026-10-09 ペアマッチフォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -935,40 +935,6 @@ function raceFor(o) {
     const t = parseInt(opt.fixedTarget, 10) || 0;
     return { rt1: t, rt2: t };
   }
-
-// ペアマッチ用目標点表（SL1～10×SL1～9）
-const PAIR_MATCH_TABLES = {
-  prelim: {
-    1: [7, 10, 12, 14, 16, 18, 19, 20, 21, 23],
-    2: [10, 12, 14, 16, 18, 19, 21, 22, 23, 25],
-    3: [12, 14, 16, 18, 19, 22, 23, 24, 25, 27],
-    4: [8, 9, 11, 12, 13, 14, 15, 16, 17, 19],
-    5: [9, 10, 12, 13, 14, 16, 17, 18, 19, 21],
-    6: [10, 11, 13, 14, 16, 17, 18, 20, 21, 25],
-    7: [11, 12, 14, 15, 17, 18, 20, 21, 24, 29],
-    8: [12, 13, 15, 16, 18, 20, 21, 24, 29, 35],
-    9: [13, 14, 16, 17, 19, 21, 24, 29, 35, 38],
-    10: [14, 15, 17, 19, 21, 25, 29, 35, 38]
-  },
-  final: {
-    1: [7, 10, 12, 14, 16, 18, 19, 20, 21, 23],
-    2: [10, 12, 14, 16, 18, 19, 21, 22, 23, 25],
-    3: [12, 14, 16, 18, 19, 22, 23, 24, 25, 27],
-    4: [14, 16, 18, 19, 22, 24, 25, 26, 28, 31],
-    5: [16, 18, 19, 22, 24, 26, 27, 29, 31, 35],
-    6: [18, 19, 22, 24, 26, 28, 29, 32, 35, 41],
-    7: [19, 21, 23, 25, 27, 29, 33, 35, 40, 47],
-    8: [20, 22, 24, 26, 29, 32, 35, 40, 47, 57],
-    9: [21, 23, 25, 28, 31, 35, 40, 47, 57, 63],
-    10: [23, 25, 27, 31, 35, 41, 47, 57, 63]
-  }
-};
-
-function pairMatchRaceTo(sl1, sl2, isFinal) {
-  const table = isFinal ? PAIR_MATCH_TABLES.final : PAIR_MATCH_TABLES.prelim;
-  const pairSlIdx = Math.min(sl2 - 1, 9);
-  return table[sl1]?.[pairSlIdx] || 0;
-}
   const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
   return R1 > 0 && R2 > 0 ? computeRace(R1, R2, opt.lenPct || 100) : { rt1: 0, rt2: 0 };
 }
@@ -1025,6 +991,7 @@ function normalizeSpec(sp, fallback) {
     game:      GAMES.some((g) => g.id === s.game) ? s.game : fb.game,
     scoring:   SCORINGS.some((x) => x.id === s.scoring) ? s.scoring : fb.scoring,
     breakMode: BREAK_MODES.some((b) => b.id === s.breakMode) ? s.breakMode : fb.breakMode,
+    pairMatch: s.pairMatch === true || false,
   };
 }
 /* 保存済みの設定から3軸を復元する。まだ spec を持っていない古い設定でも、format から正しく引き継ぐ */
@@ -1035,7 +1002,7 @@ function loadSpec(s) {
 }
 function saveSpec(spec) {
   const sp = normalizeSpec(spec);
-  saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode });
+  saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode, pairMatch: sp.pairMatch });
   return sp;
 }
 const specSummary = (sp) => `${gameInfo(sp.game).label}・${scoringInfo(sp.scoring).label}・${breakInfo(sp.breakMode).label}`;
@@ -3533,6 +3500,12 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [spec, setSpec] = useState(() => loadSpec());
   const format = legacyFormat(spec);
   const updateSpec = (patch) => setSpec(saveSpec({ ...spec, ...patch }));
+  const [pairMatch, setPairMatch] = useState(() => loadSettings().pairMatch === true);
+  const togglePairMatch = () => {
+    const next = !pairMatch;
+    setPairMatch(next);
+    saveSettings({ pairMatch: next });
+  };
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
@@ -3650,7 +3623,22 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
             <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
             {spec.scoring === "set" && <ClassTargetsEditor />}
-            <div style={{ ...HELP, marginTop: 2 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>👥 ペアマッチモード</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>2人1組でペアを組んで対戦</div>
+              </div>
+              <button onClick={togglePairMatch} style={{
+                background: pairMatch ? C.blue : C.line, color: pairMatch ? "#fff" : C.sub,
+                border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
+                cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
+              }}>
+                {pairMatch ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ ...HELP, marginTop: 8 }}>
+              ONにすると、ペアのスキルレベル（SL）の組み合わせから目標点が自動で決まります。参加者は2人1組で登録してください。
+            </div>
             <div style={{ ...HELP, marginTop: 8 }}>
               今の設定：{specSummary(spec)}<br />
               「組む→登録」のタイミングでこの内容が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。
