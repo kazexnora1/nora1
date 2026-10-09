@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.268";
+const APP_VERSION = "1.269";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -5013,7 +5013,7 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, todayEarly, on
               background: "#fff", border: `1px solid ${p ? C.line : C.blue}`, borderRadius: 9,
             }}>
               <div style={{ width: 16, textAlign: "center", fontSize: 11.5, fontWeight: 800, color: p ? C.blue : C.sub, flexShrink: 0 }}>{i + 1}</div>
-              <select value={id || ""} onChange={(e) => onSetSlot(i, e.target.value ? parseInt(e.target.value, 10) : null)}
+              <select value={id || ""} onChange={(e) => onSetSlot(i, e.target.value ? (/^\d+$/.test(e.target.value) ? parseInt(e.target.value, 10) : e.target.value) : null)}
                 style={{
                   flex: 1, minWidth: 0, background: "transparent", border: "none", color: p ? C.ink : C.sub,
                   fontSize: 13, fontWeight: p ? 700 : 500, padding: "4px 0", outline: "none", fontFamily: FONT,
@@ -5131,18 +5131,28 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const rivalTeamA = rivalMode ? Math.max(1, Math.min(players - 1, rivalA)) : null;
   const rivalTeamBCount = rivalTeamA ? players - rivalTeamA : 0;
   // 当日参加者リスト（A）＝参加予定者リスト（B＝roster）の中からtodayIdsで選んだ人。並び順がそのまま抽選番号
+  // ペアマッチON時は、当日の枠＝登録済みペア。枠数はペア数に連動する
+  const pairOn = loadSettings().pairMatch === true;
+  const pairList = useMemo(() => (pairOn ? loadPairRoster() : []), [pairOn]);
+  const rosterForToday = useMemo(() => (pairOn
+    ? pairList.map((pr) => {
+        const names = [pr.m1, pr.m2].map((m) => (m && m.name) || "").filter(Boolean);
+        return { id: pr.id, name: names.length ? `${pr.pairName}（${names.join("・")}）` : pr.pairName, r: "", pairMembers: [pr.m1, pr.m2] };
+      })
+    : roster), [pairOn, pairList, roster]);
+  const slotCount = pairOn ? pairList.length : players;
   const todayRoster = useMemo(
-    () => todayIds.map((id) => (id ? roster.find((p) => p.id === id) : null)).filter(Boolean),
-    [todayIds, roster]
+    () => todayIds.map((id) => (id ? rosterForToday.find((p) => p.id === id) : null)).filter(Boolean),
+    [todayIds, rosterForToday]
   );
   // 人数（枠数）が変わったら、枠の数を常にplayersに合わせる（増えたら空き枠を足す、減ったら末尾を切る）
   useEffect(() => {
     setTodayIds((ids) => {
-      if (ids.length === players) return ids;
-      if (ids.length > players) return ids.slice(0, players);
-      return [...ids, ...Array.from({ length: players - ids.length }, () => null)];
+      if (ids.length === slotCount) return ids;
+      if (ids.length > slotCount) return ids.slice(0, slotCount);
+      return [...ids, ...Array.from({ length: slotCount - ids.length }, () => null)];
     });
-  }, [players]);
+  }, [slotCount]);
   // 枠iに人を割り当てる（idはnullで空きに戻す）。同じ人が既に別の枠にいたら、そちらは自動的に空ける
   const setTodaySlot = (i, id) => {
     setTodayIds((ids) => {
@@ -5170,7 +5180,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       return arr;
     });
   };
-  const clearAllToday = () => { setTodayIds(Array.from({ length: players }, () => null)); setTodayLate({}); setTodayEarly({}); };
+  const clearAllToday = () => { setTodayIds(Array.from({ length: slotCount }, () => null)); setTodayLate({}); setTodayEarly({}); };
   // グループ分け（グループを避けて組む／対抗戦）の時、当日参加者リストの枠の位置がどのグループになるかを、
   // 実際の組み合わせ生成アルゴリズム（groupOf／rivalTeamA判定）と同じ基準でラベル化する
   const rowGroupLabels = useMemo(() => {
@@ -5337,7 +5347,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const noRatings = rows && rows.some((m) => !m.rt1 && !m.rt2);
   const useSkill = curSpec.scoring === "jpa_skill";
   // SL・クラスが無いと目標点が出ないので、入れ忘れている人を名指しで出す
-  const missingHandicap = missingHandicapPlayers(curSpec.scoring, todayRoster);
+  const missingHandicap = pairOn ? [] : missingHandicapPlayers(curSpec.scoring, todayRoster);
 
   // 選んだ予選方式に応じて、その方式だけに必要な設定（グループ数・チーム分けなど）を1ステップぶん挟む。
   // 必要ない方式では番号を詰めて、見出しが「1→2→3→4」と素直につながるようにする
@@ -5486,7 +5496,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
         <div style={{ flex: "0 0 42%", minWidth: 0 }}>
-          <TodayRosterPanel players={players} roster={roster} todayIds={todayIds} todayLate={todayLate} todayEarly={todayEarly}
+          <TodayRosterPanel players={slotCount} roster={rosterForToday} todayIds={todayIds} todayLate={todayLate} todayEarly={todayEarly}
             onSetSlot={setTodaySlot} onToggleLate={toggleLate} onToggleEarly={toggleEarly} onShuffle={shuffleToday} onClearAll={clearAllToday}
             rowGroupLabels={rowGroupLabels} />
         </div>
