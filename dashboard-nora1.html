@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.270";
+const APP_VERSION = "1.271";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -5067,7 +5067,11 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const perTableRR = pMode === "rr_group";
   const avoidGroups = pMode === "rand_group";
   const rivalMode = pMode === "rand_rival";
-  const [players, setPlayers] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
+  const [playersState, setPlayersState] = useState(s0.players || Math.max(3, Math.min(16, roster.length || 12)));
+  // ペアマッチON時は「参加人数」ではなく「参加ペア数」で動く（ペア登録の件数が人数になる）
+  const pairOn = loadSettings().pairMatch === true;
+  const pairList = useMemo(() => (pairOn ? loadPairRoster() : []), [pairOn]);
+  const players = pairOn ? pairList.length : playersState;
   const [games, setGames] = useState(s0.games || 4);
   const [lenPct, setLenPct] = useState(s0.lenPct || 100);
   const [result, setResult] = useState(null);
@@ -5132,8 +5136,6 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const rivalTeamBCount = rivalTeamA ? players - rivalTeamA : 0;
   // 当日参加者リスト（A）＝参加予定者リスト（B＝roster）の中からtodayIdsで選んだ人。並び順がそのまま抽選番号
   // ペアマッチON時は、当日の枠＝登録済みペア。枠数はペア数に連動する
-  const pairOn = loadSettings().pairMatch === true;
-  const pairList = useMemo(() => (pairOn ? loadPairRoster() : []), [pairOn]);
   const rosterForToday = useMemo(() => (pairOn
     ? pairList.map((pr) => {
         const names = [pr.m1, pr.m2].map((m) => (m && m.name) || "").filter(Boolean);
@@ -5388,7 +5390,15 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
       <StepHead n="1" title="人数" sub="当日の参加人数（と1人あたりの試合数）を決めます" />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayers} />
+        {pairOn ? (
+          <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>参加ペア数</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: C.ink, textAlign: "center" }}>{players}組</div>
+            <div style={{ fontSize: 11, color: C.sub, textAlign: "center", marginTop: 4 }}>ペア登録から自動</div>
+          </div>
+        ) : (
+          <BulkStepper label="人数" value={players} min={3} max={16} onChange={setPlayersState} />
+        )}
         {roundRobin ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
