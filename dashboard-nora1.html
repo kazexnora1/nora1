@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.266";
+const APP_VERSION = "1.267";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -4579,7 +4579,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {[["m1", "メンバー1"], ["m2", "メンバー2"]].map(([k, label]) => (
                   <div key={k} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px" }}>
-                    <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 11, color: C.sub, marginBottom: 4, whiteSpace: "nowrap" }}>{label}</div>
                     <input value={p[k].name} onChange={(e) => setMember(p.id, k, "name", e.target.value.slice(0, 12))} placeholder="名前" style={{ width: "100%", boxSizing: "border-box", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "7px 9px", marginBottom: 6 }} />
                     <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
                     <select value={p[k].sl} onChange={(e) => setMember(p.id, k, "sl", parseInt(e.target.value, 10))} style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "7px 9px" }}>
