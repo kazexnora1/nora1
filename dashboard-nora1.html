@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.264";
+const APP_VERSION = "1.265";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -4478,6 +4478,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
   const removePair = (id) => commitPairs(pairs.filter((p) => p.id !== id));
   const setPairField = (id, key, value) => commitPairs(pairs.map((p) => (p.id === id ? { ...p, [key]: value } : p)));
   const setMember = (id, which, field, value) => commitPairs(pairs.map((p) => (p.id === id ? { ...p, [which]: { ...p[which], [field]: value } } : p)));
+  const missingHandicap = missingHandicapPlayers(scoring, roster);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
