@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.251";
+const APP_VERSION = "1.263";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3499,6 +3499,8 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [spec, setSpec] = useState(() => loadSpec());
   const format = legacyFormat(spec);
   const updateSpec = (patch) => setSpec(saveSpec({ ...spec, ...patch }));
+  const [pairMatch, setPairMatch] = useState(() => loadSettings().pairMatch === true);
+  const togglePairMatch = () => { const next = !pairMatch; setPairMatch(next); saveSettings({ pairMatch: next }); };
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
@@ -3616,6 +3618,13 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
             <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
             {spec.scoring === "set" && <ClassTargetsEditor />}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>👥 ペアマッチモード</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>{pairMatch ? "ON（ペアで対戦）" : "OFF（個人で対戦）"}</div>
+              </div>
+              <button onClick={togglePairMatch} style={{ background: pairMatch ? C.blue : C.line, color: pairMatch ? "#fff" : C.sub, border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{pairMatch ? "ON" : "OFF"}</button>
+            </div>
             <div style={{ ...HELP, marginTop: 2 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
             <div style={{ ...HELP, marginTop: 8 }}>
               今の設定：{specSummary(spec)}<br />
