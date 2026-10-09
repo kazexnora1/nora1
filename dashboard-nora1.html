@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.272";
+const APP_VERSION = "1.273";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -925,10 +925,31 @@ function matchScoring(m) {
      jpa_fixed  … 回戦ごとに決めた固定点（fixedTarget）を両者に入れる
      jpa_skill  … 各自のスキルレベル（p.sk）から表引きする。相手も試合の長さも関係しない
    必要な値が欠けている時は0（未算出）を返し、呼んだ側で「未設定です」と出せるようにする */
+// ペアマッチ用 予選表（自分のSL × 相方のSL）。表は対称なので向きは問わない
+const PAIR_PRELIM_TABLE = {
+  1: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+  2: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  3: [7, 8, 10, 11, 12, 13, 14, 15, 16, 17],
+  4: [8, 9, 11, 12, 13, 14, 15, 16, 17, 19],
+  5: [9, 10, 12, 13, 14, 16, 17, 18, 19, 21],
+  6: [10, 11, 13, 14, 16, 17, 18, 20, 21, 25],
+  7: [11, 12, 14, 15, 17, 18, 20, 21, 24, 29],
+  8: [12, 13, 15, 16, 18, 20, 21, 24, 29, 35],
+  9: [13, 14, 16, 17, 19, 21, 24, 29, 35, 38],
+  10: [14, 15, 17, 19, 21, 25, 29, 35, 38],
+};
+// ペア（メンバー2人）の予選目標点。両方のSLを使う（10×10は参加不可）
+function pairPrelimTarget(members) {
+  const m1 = (members && members[0]) || {}, m2 = (members && members[1]) || {};
+  const x = Math.max(1, Math.min(10, parseInt(m1.sl, 10) || 1));
+  const y = Math.max(1, Math.min(10, parseInt(m2.sl, 10) || 1));
+  return (PAIR_PRELIM_TABLE[x] || [])[y - 1] || 0;
+}
 function raceFor(o) {
   const opt = o || {};
   const scoring = opt.scoring || "jcl";
   const p1 = opt.p1 || {}, p2 = opt.p2 || {};
+  if (p1.pairMembers && p2.pairMembers) return { rt1: pairPrelimTarget(p1.pairMembers), rt2: pairPrelimTarget(p2.pairMembers) };
   if (scoring === "jpa_skill") return { rt1: skillTarget(p1.sk), rt2: skillTarget(p2.sk) };
   if (scoring === "set") return { rt1: classTarget(p1), rt2: classTarget(p2) };
   if (scoring === "jpa_fixed") {
@@ -5396,13 +5417,13 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
         <BulkStepper label={pairOn ? "参加ペア数" : "人数"} value={players} min={3} max={16} onChange={setPlayersState} />
         {roundRobin ? (
           <div style={{ flex: 1, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: "10px 10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>1人の試合数</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6, textAlign: "center" }}>{pairOn ? "1ペアの試合数" : "1人の試合数"}</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.blue, textAlign: "center" }}>
               {usePerTableRR ? `グループ毎（${effectiveGames}）` : `総当たり戦（${players - 1}）`}
             </div>
           </div>
         ) : (
-          <BulkStepper label="1人の試合数" value={games} min={2} max={4} onChange={setGames} />
+          <BulkStepper label={pairOn ? "1ペアの試合数" : "1人の試合数"} value={games} min={2} max={4} onChange={setGames} />
         )}
       </div>
 
