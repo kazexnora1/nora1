@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.259";
-const BUILD_TIME = "2026-10-09 ペアマッチUIと自動計算フォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.260";
+const BUILD_TIME = "2026-10-09 決勝トーナメントペアマッチ対応フォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -1389,7 +1389,7 @@ function Portal({ children }) {
 /* ========= 新規作成フォーム（試合の編集 > 試合を新規作成） =========
    空きマス／既存の試合カードの両方から呼べる共通フォーム。ファーゴレートから目標点を自動計算する。
    既存の試合がある場合は保存前に上書き確認を出す */
-function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pairMatch, pairRoster }) {
+function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pairMatch, pairRoster, isFinal }) {
   const [i1, setI1] = useState(0);
   const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
   const [pairA, setPairA] = useState(pairRoster && pairRoster.length > 0 ? 0 : -1);
@@ -1410,8 +1410,8 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pai
     const pairAData = pairRoster[pairA];
     const pairBData = pairRoster[pairB];
     validPlayers = true;
-    const isFinal = false; // 仮：予選用表を使用
-    const racePoint = pairMatchRaceTo(pairAData.member1.sl, pairAData.member2.sl, isFinal);
+    const finalFlag = isFinal === true; // 決勝判定
+    const racePoint = pairMatchRaceTo(pairAData.member1.sl, pairAData.member2.sl, finalFlag);
     res = racePoint > 0 ? { rt1: racePoint, rt2: racePoint } : null;
   } else if (!isPairMode) {
     // 通常モード：個人選択
@@ -2790,7 +2790,7 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster, format, prelimMode, finalMode }) {
+function BracketTab({ roster, format, prelimMode, finalMode, pairMatch, pairRoster }) {
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
   const curSpec = loadSpec();
   const fmt = format || legacyFormat(curSpec);
@@ -2800,6 +2800,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
     lastResult: null, hist: [], ...ruleFields(), ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
+  const isPairMode = pairMatch === true && pairRoster && pairRoster.length >= 2;
   // 決勝の進出方式（イベントの設定・骨組み③で選ぶ）。
   // 「各グループ1位（グループ数ぶん）＋勝ち数（同数なら達成率）上位で枠を埋める」方式は、
   // 予選をグループ分け総当たりで組んだ時だけ成立するので、その条件も合わせて確認する
@@ -3021,7 +3022,17 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
           if (r === 1) {
             const p1 = players[i * 2], p2 = players[i * 2 + 1];
             const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
-            const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
+            let race;
+            if (isPairMode && Array.isArray(players[i * 2]) && Array.isArray(players[i * 2 + 1])) {
+              // ペアマッチモード：pairMatchRaceTo で計算（決勝用表）
+              const pairASl1 = players[i * 2][0];
+              const pairASl2 = players[i * 2][1];
+              const racePoint = pairMatchRaceTo(pairASl1, pairASl2, true); // true = 決勝用表
+              race = { rt1: racePoint, rt2: racePoint };
+            } else {
+              // 通常モード
+              race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
+            }
             next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2) });
           } else {
             const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
@@ -3816,7 +3827,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub={finalMode === "group" ? "各グループ1位＋勝ち数トップで自動選出" : "全体の上位4人／8人と抽選番号を入れて登録"}>
-        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
+        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} pairMatch={pairMatch} pairRoster={pairRoster} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
