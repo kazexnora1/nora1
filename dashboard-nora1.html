@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.255";
-const BUILD_TIME = "2026-10-04 決勝進出者の名前と目標点を編集可能に（修正版）（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.256";
+const BUILD_TIME = "2026-10-07 ペアマッチ対応（表データ埋め込み）（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -935,6 +935,40 @@ function raceFor(o) {
     const t = parseInt(opt.fixedTarget, 10) || 0;
     return { rt1: t, rt2: t };
   }
+
+// ペアマッチ用目標点表（SL1～10×SL1～9）
+const PAIR_MATCH_TABLES = {
+  prelim: {
+    1: [7, 10, 12, 14, 16, 18, 19, 20, 21, 23],
+    2: [10, 12, 14, 16, 18, 19, 21, 22, 23, 25],
+    3: [12, 14, 16, 18, 19, 22, 23, 24, 25, 27],
+    4: [8, 9, 11, 12, 13, 14, 15, 16, 17, 19],
+    5: [9, 10, 12, 13, 14, 16, 17, 18, 19, 21],
+    6: [10, 11, 13, 14, 16, 17, 18, 20, 21, 25],
+    7: [11, 12, 14, 15, 17, 18, 20, 21, 24, 29],
+    8: [12, 13, 15, 16, 18, 20, 21, 24, 29, 35],
+    9: [13, 14, 16, 17, 19, 21, 24, 29, 35, 38],
+    10: [14, 15, 17, 19, 21, 25, 29, 35, 38]
+  },
+  final: {
+    1: [7, 10, 12, 14, 16, 18, 19, 20, 21, 23],
+    2: [10, 12, 14, 16, 18, 19, 21, 22, 23, 25],
+    3: [12, 14, 16, 18, 19, 22, 23, 24, 25, 27],
+    4: [14, 16, 18, 19, 22, 24, 25, 26, 28, 31],
+    5: [16, 18, 19, 22, 24, 26, 27, 29, 31, 35],
+    6: [18, 19, 22, 24, 26, 28, 29, 32, 35, 41],
+    7: [19, 21, 23, 25, 27, 29, 33, 35, 40, 47],
+    8: [20, 22, 24, 26, 29, 32, 35, 40, 47, 57],
+    9: [21, 23, 25, 28, 31, 35, 40, 47, 57, 63],
+    10: [23, 25, 27, 31, 35, 41, 47, 57, 63]
+  }
+};
+
+function pairMatchRaceTo(sl1, sl2, isFinal) {
+  const table = isFinal ? PAIR_MATCH_TABLES.final : PAIR_MATCH_TABLES.prelim;
+  const pairSlIdx = Math.min(sl2 - 1, 9);
+  return table[sl1]?.[pairSlIdx] || 0;
+}
   const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
   return R1 > 0 && R2 > 0 ? computeRace(R1, R2, opt.lenPct || 100) : { rt1: 0, rt2: 0 };
 }
@@ -2776,8 +2810,6 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
   const [azukiSemi, setAzukiSemi] = useState(() => parseInt(s0.azukiSemi, 10) || 30);
   const [azukiFinal, setAzukiFinal] = useState(() => parseInt(s0.azukiFinal, 10) || 40);
   useEffect(() => { saveSettings({ azukiQuarter, azukiSemi, azukiFinal }); }, [azukiQuarter, azukiSemi, azukiFinal]);
-  const [nameEdits, setNameEdits] = useState(Array(8).fill(""));
-  const [raceToEdits, setRaceToEdits] = useState(Array(8).fill([0, 0]));
   const azukiTargetFor = (r, total) => {
     const distFromFinal = total - r;
     if (distFromFinal <= 0) return azukiFinal;
@@ -3153,16 +3185,6 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
                 <input inputMode="numeric" value={drawNo[i] ?? ""}
                   onChange={(e) => setDrawNo((arr) => { const nx = [...arr]; nx[i] = e.target.value.replace(/[^0-9]/g, "").slice(0, 1); return nx; })}
                   style={{ ...numBoxStyle, width: 46, textAlign: "center", flexShrink: 0, borderColor: bad ? C.minus : undefined, color: bad ? C.minus : C.ink }} />
-                <input type="text" value={nameEdits[i] || ""} placeholder="編集" maxLength="20"
-                  onChange={(e) => setNameEdits((arr) => { const nx = [...arr]; nx[i] = e.target.value; return nx; })}
-                  style={{ ...numBoxStyle, flex: 1, minWidth: 60, fontSize: 12 }} />
-                <input type="number" min="0" max="99" value={(raceToEdits[i] || [0, 0])[0]}
-                  onChange={(e) => setRaceToEdits((arr) => { const nx = [...arr]; const rt = [...(arr[i] || [0, 0])]; rt[0] = parseInt(e.target.value, 10) || 0; nx[i] = rt; return nx; })}
-                  style={{ ...numBoxStyle, width: 38, textAlign: "center", fontSize: 11 }} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.sub }}>-</span>
-                <input type="number" min="0" max="99" value={(raceToEdits[i] || [0, 0])[1]}
-                  onChange={(e) => setRaceToEdits((arr) => { const nx = [...arr]; const rt = [...(arr[i] || [0, 0])]; rt[1] = parseInt(e.target.value, 10) || 0; nx[i] = rt; return nx; })}
-                  style={{ ...numBoxStyle, width: 38, textAlign: "center", fontSize: 11 }} />
               </div>
             );
           })}
