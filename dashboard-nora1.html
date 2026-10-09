@@ -134,8 +134,8 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.262";
-const BUILD_TIME = "2026-10-09 saveSettings pairMatch 修正"ペアマッチ対応フォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const APP_VERSION = "1.251";
+const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -287,16 +287,6 @@ function markArchivedThisRun() {
 function clearArchivedThisRunFlag() {
   try { localStorage.removeItem(ARCHIVE_FLAG_KEY); } catch {}
 }
-
-function loadPairRoster() {
-  try {
-    return JSON.parse(localStorage.getItem("pairRoster") || "[]");
-  } catch { return []; }
-}
-function savePairRoster(pairs) {
-  try { localStorage.setItem("pairRoster", JSON.stringify(pairs)); } catch {}
-}
-
 async function saveRoster(roster, allowEmpty) {
   // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
   if (!allowEmpty && (!roster || roster.length === 0)) {
@@ -854,7 +844,7 @@ function saveSettings(patch) {
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
   ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "setBaseMinutes", "tournamentName", "liveUrl", "format", "timeLimitEnabled",
-   "game", "scoring", "breakMode", "pairMatch"].forEach((k) => {
+   "game", "scoring", "breakMode"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
@@ -1001,7 +991,6 @@ function normalizeSpec(sp, fallback) {
     game:      GAMES.some((g) => g.id === s.game) ? s.game : fb.game,
     scoring:   SCORINGS.some((x) => x.id === s.scoring) ? s.scoring : fb.scoring,
     breakMode: BREAK_MODES.some((b) => b.id === s.breakMode) ? s.breakMode : fb.breakMode,
-    pairMatch: s.pairMatch === true,
   };
 }
 /* 保存済みの設定から3軸を復元する。まだ spec を持っていない古い設定でも、format から正しく引き継ぐ */
@@ -1012,7 +1001,7 @@ function loadSpec(s) {
 }
 function saveSpec(spec) {
   const sp = normalizeSpec(spec);
-  saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode, pairMatch: sp.pairMatch });
+  saveSettings({ spec: sp, format: legacyFormat(sp), game: sp.game, scoring: sp.scoring, breakMode: sp.breakMode });
   return sp;
 }
 const specSummary = (sp) => `${gameInfo(sp.game).label}・${scoringInfo(sp.scoring).label}・${breakInfo(sp.breakMode).label}`;
@@ -1389,39 +1378,24 @@ function Portal({ children }) {
 /* ========= 新規作成フォーム（試合の編集 > 試合を新規作成） =========
    空きマス／既存の試合カードの両方から呼べる共通フォーム。ファーゴレートから目標点を自動計算する。
    既存の試合がある場合は保存前に上書き確認を出す */
-function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pairMatch, pairRoster, isFinal }) {
+function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
   const [i1, setI1] = useState(0);
   const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
-  const [pairA, setPairA] = useState(pairRoster && pairRoster.length > 0 ? 0 : -1);
-  const [pairB, setPairB] = useState(pairRoster && pairRoster.length > 1 ? 1 : -1);
   const [table, setTable] = useState(defaultTable || 1);
   const [lenPct, setLenPct] = useState(parseInt(loadSettings().lenPct, 10) || 100);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  const isPairMode = pairMatch === true && pairRoster && pairRoster.length >= 2;
   const curSpec = loadSpec();
   const missingLabel = handicapFieldLabel(curSpec.scoring);
-  let validPlayers = false;
-  let res = null;
-  
-  if (isPairMode && pairA >= 0 && pairB >= 0 && pairA !== pairB) {
-    // ペアマッチモード：目標点を pairMatchRaceTo で計算
-    const pairAData = pairRoster[pairA];
-    const pairBData = pairRoster[pairB];
-    validPlayers = true;
-    const finalFlag = isFinal === true; // 決勝判定
-    const racePoint = pairMatchRaceTo(pairAData.member1.sl, pairAData.member2.sl, finalFlag);
-    res = racePoint > 0 ? { rt1: racePoint, rt2: racePoint } : null;
-  } else if (!isPairMode) {
-    // 通常モード：個人選択
-    const p1 = roster[i1], p2 = roster[i2];
-    validPlayers = p1 && p2 && i1 !== i2;
-    if (validPlayers) {
-      const race0 = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct, fixedTarget: parseInt(loadSettings().azukiPrelim, 10) || 12 });
-      res = race0 && (race0.rt1 > 0 || race0.rt2 > 0) ? race0 : null;
-    }
-  }
+  const p1 = roster[i1], p2 = roster[i2];
+  const R1 = p1 ? parseInt(p1.r, 10) : 0, R2 = p2 ? parseInt(p2.r, 10) : 0;
+  const validPlayers = p1 && p2 && i1 !== i2;
+  // 目標点の決め方は得点方式まかせ（ファーゴ計算／固定点／スキル表／クラス表）。0が返ったら「未設定」の案内を出す
+  const race0 = validPlayers
+    ? raceFor({ scoring: curSpec.scoring, p1, p2, lenPct, fixedTarget: parseInt(loadSettings().azukiPrelim, 10) || 12 })
+    : null;
+  const res = race0 && (race0.rt1 > 0 || race0.rt2 > 0) ? race0 : null;
 
   const submit = async () => {
     if (!validPlayers) { setErr("プレイヤー1とプレイヤー2を選んでください"); return; }
@@ -1468,35 +1442,16 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pai
           ))}
         </div>
       </Field>
-      {isPairMode ? (
-        <>
-          <Field label="ペアA">
-            <select value={pairA} onChange={(e) => setPairA(+e.target.value)} style={selectStyle}>
-              <option value="-1">選んでください</option>
-              {pairRoster.map((p, i) => <option key={p.id} value={i}>{p.pairName}（{p.member1.name} SL{p.member1.sl} ＆ {p.member2.name} SL{p.member2.sl}）</option>)}
-            </select>
-          </Field>
-          <Field label="ペアB">
-            <select value={pairB} onChange={(e) => setPairB(+e.target.value)} style={selectStyle}>
-              <option value="-1">選んでください</option>
-              {pairRoster.map((p, i) => <option key={p.id} value={i}>{p.pairName}（{p.member1.name} SL{p.member1.sl} ＆ {p.member2.name} SL{p.member2.sl}）</option>)}
-            </select>
-          </Field>
-        </>
-      ) : (
-        <>
-          <Field label="プレイヤー1">
-            <select value={i1} onChange={(e) => setI1(+e.target.value)} style={selectStyle}>
-              {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{rosterHandiLabel(p, curSpec.scoring)}</option>)}
-            </select>
-          </Field>
-          <Field label="プレイヤー2">
-            <select value={i2} onChange={(e) => setI2(+e.target.value)} style={selectStyle}>
-              {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{rosterHandiLabel(p, curSpec.scoring)}</option>)}
-            </select>
-          </Field>
-        </>
-      )}
+      <Field label="プレイヤー1">
+        <select value={i1} onChange={(e) => setI1(+e.target.value)} style={selectStyle}>
+          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{rosterHandiLabel(p, curSpec.scoring)}</option>)}
+        </select>
+      </Field>
+      <Field label="プレイヤー2">
+        <select value={i2} onChange={(e) => setI2(+e.target.value)} style={selectStyle}>
+          {roster.map((p, i) => <option key={p.id} value={i}>{p.name || "（無名）"}　{rosterHandiLabel(p, curSpec.scoring)}</option>)}
+        </select>
+      </Field>
       <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>試合の長さ</span>
@@ -1504,8 +1459,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel, pai
         </div>
         <input type="range" min={40} max={140} step={5} value={lenPct} onChange={(e) => setLenPct(+e.target.value)} style={{ width: "100%", accentColor: C.blue }} />
       </div>
-      {!isPairMode && i1 === i2 && <Notice>同じ選手が選ばれています</Notice>}
-      {isPairMode && pairA === pairB && pairA >= 0 && <Notice>同じペアが選ばれています</Notice>}
+      {i1 === i2 && <Notice>同じ選手が選ばれています</Notice>}
       {res ? (
         <div style={{ textAlign: "center", fontSize: 15 }}>
           目標点：<b style={{ color: C.blue }}>{res.rt1}</b> 対 <b style={{ color: C.red }}>{res.rt2}</b>
@@ -1941,7 +1895,6 @@ function TimelineSlotCard({
                 roster={roster} defaultTable={table} existing={m}
                 onDone={() => { setMenu(null); onOpenCreate && onOpenCreate(); }}
                 onCancel={() => setMenu(m ? "edit" : "menu")}
-                pairMatch={loadSettings().pairMatch === true} pairRoster={loadPairRoster()}
               />
             )}
 
@@ -2790,7 +2743,7 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster, format, prelimMode, finalMode, pairMatch, pairRoster }) {
+function BracketTab({ roster, format, prelimMode, finalMode }) {
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
   const curSpec = loadSpec();
   const fmt = format || legacyFormat(curSpec);
@@ -2800,7 +2753,6 @@ function BracketTab({ roster, format, prelimMode, finalMode, pairMatch, pairRost
     lastResult: null, hist: [], ...ruleFields(), ...extra,
   });
   const s0 = useMemo(() => loadSettings(), []);
-  const isPairMode = pairMatch === true && pairRoster && pairRoster.length >= 2;
   // 決勝の進出方式（イベントの設定・骨組み③で選ぶ）。
   // 「各グループ1位（グループ数ぶん）＋勝ち数（同数なら達成率）上位で枠を埋める」方式は、
   // 予選をグループ分け総当たりで組んだ時だけ成立するので、その条件も合わせて確認する
@@ -3022,17 +2974,7 @@ function BracketTab({ roster, format, prelimMode, finalMode, pairMatch, pairRost
           if (r === 1) {
             const p1 = players[i * 2], p2 = players[i * 2 + 1];
             const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
-            let race;
-            if (isPairMode && Array.isArray(players[i * 2]) && Array.isArray(players[i * 2 + 1])) {
-              // ペアマッチモード：pairMatchRaceTo で計算（決勝用表）
-              const pairASl1 = players[i * 2][0];
-              const pairASl2 = players[i * 2][1];
-              const racePoint = pairMatchRaceTo(pairASl1, pairASl2, true); // true = 決勝用表
-              race = { rt1: racePoint, rt2: racePoint };
-            } else {
-              // 通常モード
-              race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
-            }
+            const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
             next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2) });
           } else {
             const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
@@ -3557,12 +3499,6 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   const [spec, setSpec] = useState(() => loadSpec());
   const format = legacyFormat(spec);
   const updateSpec = (patch) => setSpec(saveSpec({ ...spec, ...patch }));
-  const [pairMatch, setPairMatch] = useState(() => loadSettings().pairMatch === true);
-  const togglePairMatch = () => {
-    const next = !pairMatch;
-    setPairMatch(next);
-    saveSettings({ pairMatch: next });
-  };
   const [timeLimitEnabled, setTimeLimitEnabled] = useState(() => loadSettings().timeLimitEnabled === true);
   // 試合の骨組み：予選の組み方（排他）と決勝の進出方式
   const [prelimMode, setPrelimMode] = useState(() => loadPrelimMode());
@@ -3680,22 +3616,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             <AxisPicker title="得点方式" items={SCORINGS} value={spec.scoring} onPick={(v) => updateSpec({ scoring: v })} />
             <AxisPicker title="ブレイク順" items={BREAK_MODES} value={spec.breakMode} onPick={(v) => updateSpec({ breakMode: v })} />
             {spec.scoring === "set" && <ClassTargetsEditor />}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>👥 ペアマッチモード</div>
-                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>2人1組でペアを組んで対戦</div>
-              </div>
-              <button onClick={togglePairMatch} style={{
-                background: pairMatch ? C.blue : C.line, color: pairMatch ? "#fff" : C.sub,
-                border: "none", borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 800,
-                cursor: "pointer", fontFamily: FONT, flexShrink: 0, marginLeft: 10,
-              }}>
-                {pairMatch ? "ON" : "OFF"}
-              </button>
-            </div>
-            <div style={{ ...HELP, marginTop: 8 }}>
-              ONにすると、ペアのスキルレベル（SL）の組み合わせから目標点が自動で決まります。参加者は2人1組で登録してください。
-            </div>
+            <div style={{ ...HELP, marginTop: 2 }}>「ペア・トリオ」は後の更新でこの下に足します。</div>
             <div style={{ ...HELP, marginTop: 8 }}>
               今の設定：{specSummary(spec)}<br />
               「組む→登録」のタイミングでこの内容が各試合に書き込まれます。登録後に変えても既存の試合には影響しません。
@@ -3823,11 +3744,11 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🎱" title="予選を組む" sub={`${prelimModeInfo(prelimMode).label}｜人数・参加者・時間割を入れて対戦表をつくる`}>
-        <BulkScheduleTab key={presetTick} roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} prelimMode={prelimMode} pairMatch={pairMatch} format={format} />
+        <BulkScheduleTab key={presetTick} roster={roster} setRoster={setRoster} onRefresh={onRefresh} loaded={loaded} loadError={loadError} prelimMode={prelimMode} format={format} />
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub={finalMode === "group" ? "各グループ1位＋勝ち数トップで自動選出" : "全体の上位4人／8人と抽選番号を入れて登録"}>
-        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} pairMatch={pairMatch} pairRoster={loadPairRoster()} />
+        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
@@ -4531,9 +4452,7 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
   );
 }
 
-function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format, scoring, pairMatch }) {
-  const isPairMode = pairMatch === true;
-  const [pairRoster, setPairRoster] = useState(() => (isPairMode ? loadPairRoster() : []));
+function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format, scoring }) {
   const useSkill = scoring === "jpa_skill"; // スキルハンデの時はファーゴ欄の代わりにSL欄を出す
   const useClass = scoring === "set"; // セットマッチの時はファーゴ欄の代わりにクラス欄を出す
   const missingHandicap = missingHandicapPlayers(scoring, roster);
@@ -4628,45 +4547,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
       {(useSkill || useClass) && missingHandicap.length > 0 && (
         <Notice>{useSkill ? "スキルハンデは各自のSLで目標点が決まります。" : "セットマッチは各自のクラスで先取数が決まります。"}未設定：{missingHandicap.join("・")}</Notice>
       )}
-      {isPairMode ? (
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 12 }}>👥 ペア登録（2人1組）</div>
-          {pairRoster.map((pair) => (
-            <div key={pair.id} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10 }}>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                <input value={pair.pairName} onChange={(e) => updatePair(pair.id, "pairName", e.target.value.slice(0, 16))} placeholder="ペア名"
-                  style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 13, padding: "8px 10px" }} />
-                <button onClick={() => removePair(pair.id)} style={{ background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>削除</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>メンバー 1</div>
-                  <input value={pair.member1.name} onChange={(e) => updateMember(pair.id, 1, "name", e.target.value.slice(0, 12))} placeholder="名前"
-                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px", marginBottom: 6, boxSizing: "border-box" }} />
-                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
-                  <select value={pair.member1.sl} onChange={(e) => updateMember(pair.id, 1, "sl", parseInt(e.target.value))}
-                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px" }}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((sl) => <option key={sl} value={sl}>{sl}</option>)}
-                  </select>
-                </div>
-                <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>メンバー 2</div>
-                  <input value={pair.member2.name} onChange={(e) => updateMember(pair.id, 2, "name", e.target.value.slice(0, 12))} placeholder="名前"
-                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px", marginBottom: 6, boxSizing: "border-box" }} />
-                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
-                  <select value={pair.member2.sl} onChange={(e) => updateMember(pair.id, 2, "sl", parseInt(e.target.value))}
-                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px" }}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((sl) => <option key={sl} value={sl}>{sl}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-          ))}
-          <button onClick={addPair} style={{ width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 14 }}>+ ペアを追加</button>
-        </div>
-      ) : (
-        <>
-          {roster.map((p) => (
+      {roster.map((p) => (
         <div key={p.id} style={{ display: "flex", gap: 5, marginBottom: 6, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
             style={{ flex: 2, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 13.5, padding: "8px 8px", outline: "none", fontFamily: FONT }} />
@@ -4706,8 +4587,6 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
           {regularMsg && <div style={{ fontSize: 11.5, color: C.sub, textAlign: "center" }}>{regularMsg}</div>}
         </div>
       )}
-          </>
-        )}
       {showPicker && (
         <div style={{ marginTop: 10 }}>
           <PickFromMembersPanel roster={roster} setRoster={setRoster} persist={persist} onClose={() => setShowPicker(false)} />
@@ -5113,12 +4992,11 @@ function TodayRosterPanel({ players, roster, todayIds, todayLate, todayEarly, on
   );
 }
 
-function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prelimMode, format, pairMatch }) {
+function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prelimMode, format }) {
   const registeringRef = useRef(false); // 連打による二重登録防止（state更新は非同期なのでrefで即座にブロック）
   const curSpec = loadSpec();
   const fmt = format || legacyFormat(curSpec);
   const s0 = useMemo(() => loadSettings(), []);
-  const pairRoster = pairMatch ? loadPairRoster() : [];
   // 予選の組み方は「イベントの設定」の骨組み②で1つだけ選ぶ。ここでは選ばれた方式から必要なフラグを導くだけで、
   // このタブ側でON/OFFを切り替えることはしない（組み合わせで意味の通らない状態が作れないようにするため）
   const pMode = prelimMode || loadPrelimMode(s0);
@@ -7658,7 +7536,7 @@ function AddCardMini({ roster, table }) {
           }}>
             <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 12px" }} />
             <div style={{ fontSize: 15, fontWeight: 900, textAlign: "center", marginBottom: 12 }}>T{table} の最後に試合を追加</div>
-            <CreateMatchForm roster={roster} defaultTable={table} existing={null} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} pairMatch={pairMatch} pairRoster={loadPairRoster()} />
+            <CreateMatchForm roster={roster} defaultTable={table} existing={null} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
           </div>
         </div>
         </Portal>
