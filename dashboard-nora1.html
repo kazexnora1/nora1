@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.265";
+const APP_VERSION = "1.266";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -4573,8 +4573,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
           {pairs.map((p) => (
             <div key={p.id} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 12px", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <input value={p.pairName} onChange={(e) => setPairField(p.id, "pairName", e.target.value.slice(0, 16))} placeholder="ペア名" style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 13, padding: "8px 10px" }} />
-                <button onClick={() => removePair(p.id)} style={{ background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>削除</button>
+                <input value={p.pairName} onChange={(e) => setPairField(p.id, "pairName", e.target.value.slice(0, 16))} placeholder="ペア名" style={{ flex: 1, minWidth: 0, width: "100%", boxSizing: "border-box", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 13, padding: "8px 10px" }} />
+                <button onClick={() => removePair(p.id)} style={{ flexShrink: 0, background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>削除</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {[["m1", "メンバー1"], ["m2", "メンバー2"]].map(([k, label]) => (
