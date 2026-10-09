@@ -135,7 +135,7 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
 const APP_VERSION = "1.260";
-const BUILD_TIME = "2026-10-09 決勝トーナメントペアマッチ対応フォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
+const BUILD_TIME = "2026-10-09 saveSettings pairMatch 修正"ペアマッチ対応フォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
 const C = {
@@ -854,7 +854,7 @@ function saveSettings(patch) {
   // 選手用アプリ（B2）の予定表が、開始見込み時刻の計算に使う
   const share = {};
   ["startH", "startM", "endH", "endM", "changeoverMin", "per100Min", "setBaseMinutes", "tournamentName", "liveUrl", "format", "timeLimitEnabled",
-   "game", "scoring", "breakMode"].forEach((k) => {
+   "game", "scoring", "breakMode", "pairMatch"].forEach((k) => {
     if (patch[k] !== undefined && patch[k] !== null) share[k] = String(patch[k]);
   });
   if (Object.keys(share).length) { dbUpdate("config", share).catch(() => {}); }
@@ -1001,7 +1001,7 @@ function normalizeSpec(sp, fallback) {
     game:      GAMES.some((g) => g.id === s.game) ? s.game : fb.game,
     scoring:   SCORINGS.some((x) => x.id === s.scoring) ? s.scoring : fb.scoring,
     breakMode: BREAK_MODES.some((b) => b.id === s.breakMode) ? s.breakMode : fb.breakMode,
-    pairMatch: s.pairMatch === true || false,
+    pairMatch: s.pairMatch === true,
   };
 }
 /* 保存済みの設定から3軸を復元する。まだ spec を持っていない古い設定でも、format から正しく引き継ぐ */
