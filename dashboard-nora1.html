@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.257";
+const APP_VERSION = "1.258";
 const BUILD_TIME = "2026-10-09 ペアマッチフォーマット設定UI追加（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -287,6 +287,16 @@ function markArchivedThisRun() {
 function clearArchivedThisRunFlag() {
   try { localStorage.removeItem(ARCHIVE_FLAG_KEY); } catch {}
 }
+
+function loadPairRoster() {
+  try {
+    return JSON.parse(localStorage.getItem("pairRoster") || "[]");
+  } catch { return []; }
+}
+function savePairRoster(pairs) {
+  try { localStorage.setItem("pairRoster", JSON.stringify(pairs)); } catch {}
+}
+
 async function saveRoster(roster, allowEmpty) {
   // 通信不良などでメンバーが空のまま保存が走り、共有リストを消してしまう事故を防ぐ
   if (!allowEmpty && (!roster || roster.length === 0)) {
@@ -4474,7 +4484,7 @@ function PickFromMembersPanel({ roster, setRoster, persist, onClose }) {
   );
 }
 
-function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format, scoring }) {
+function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveFromToday, format, scoring, pairMatch }) {
   const useSkill = scoring === "jpa_skill"; // スキルハンデの時はファーゴ欄の代わりにSL欄を出す
   const useClass = scoring === "set"; // セットマッチの時はファーゴ欄の代わりにクラス欄を出す
   const missingHandicap = missingHandicapPlayers(scoring, roster);
@@ -4569,7 +4579,45 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
       {(useSkill || useClass) && missingHandicap.length > 0 && (
         <Notice>{useSkill ? "スキルハンデは各自のSLで目標点が決まります。" : "セットマッチは各自のクラスで先取数が決まります。"}未設定：{missingHandicap.join("・")}</Notice>
       )}
-      {roster.map((p) => (
+      {isPairMode ? (
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 12 }}>👥 ペア登録（2人1組）</div>
+          {pairRoster.map((pair) => (
+            <div key={pair.id} style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <input value={pair.pairName} onChange={(e) => updatePair(pair.id, "pairName", e.target.value.slice(0, 16))} placeholder="ペア名"
+                  style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, fontSize: 13, padding: "8px 10px" }} />
+                <button onClick={() => removePair(pair.id)} style={{ background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>削除</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>メンバー 1</div>
+                  <input value={pair.member1.name} onChange={(e) => updateMember(pair.id, 1, "name", e.target.value.slice(0, 12))} placeholder="名前"
+                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px", marginBottom: 6, boxSizing: "border-box" }} />
+                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
+                  <select value={pair.member1.sl} onChange={(e) => updateMember(pair.id, 1, "sl", parseInt(e.target.value))}
+                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px" }}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((sl) => <option key={sl} value={sl}>{sl}</option>)}
+                  </select>
+                </div>
+                <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>メンバー 2</div>
+                  <input value={pair.member2.name} onChange={(e) => updateMember(pair.id, 2, "name", e.target.value.slice(0, 12))} placeholder="名前"
+                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px", marginBottom: 6, boxSizing: "border-box" }} />
+                  <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
+                  <select value={pair.member2.sl} onChange={(e) => updateMember(pair.id, 2, "sl", parseInt(e.target.value))}
+                    style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "8px 10px" }}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((sl) => <option key={sl} value={sl}>{sl}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button onClick={addPair} style={{ width: "100%", background: C.blue, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT, marginBottom: 14 }}>+ ペアを追加</button>
+        </div>
+      ) : (
+        <>
+          {roster.map((p) => (
         <div key={p.id} style={{ display: "flex", gap: 5, marginBottom: 6, alignItems: "center" }}>
           <input value={p.name} onChange={(e) => update(p.id, "name", e.target.value.slice(0, 12))}
             style={{ flex: 2, minWidth: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, fontSize: 13.5, padding: "8px 8px", outline: "none", fontFamily: FONT }} />
@@ -4609,6 +4657,8 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
           {regularMsg && <div style={{ fontSize: 11.5, color: C.sub, textAlign: "center" }}>{regularMsg}</div>}
         </div>
       )}
+          </>
+        )}
       {showPicker && (
         <div style={{ marginTop: 10 }}>
           <PickFromMembersPanel roster={roster} setRoster={setRoster} persist={persist} onClose={() => setShowPicker(false)} />
