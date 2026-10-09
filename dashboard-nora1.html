@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.267";
+const APP_VERSION = "1.268";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -4478,6 +4478,19 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
   const removePair = (id) => commitPairs(pairs.filter((p) => p.id !== id));
   const setPairField = (id, key, value) => commitPairs(pairs.map((p) => (p.id === id ? { ...p, [key]: value } : p)));
   const setMember = (id, which, field, value) => commitPairs(pairs.map((p) => (p.id === id ? { ...p, [which]: { ...p[which], [field]: value } } : p)));
+  const pickMember = (id, which, name) => {
+    const hit = roster.find((x) => x.name === name);
+    const sl = hit ? (skOf(hit) || 1) : 1; // 参加予定のJPAスキル（SL）をそのまま使う。未設定は1
+    commitPairs(pairs.map((p) => (p.id === id ? { ...p, [which]: { name, sl } } : p)));
+  };
+  const usedNames = (exceptId, exceptWhich) => {
+    const s = new Set();
+    pairs.forEach((p) => {
+      if (!(p.id === exceptId && exceptWhich === "m1")) { if (p.m1 && p.m1.name) s.add(p.m1.name); }
+      if (!(p.id === exceptId && exceptWhich === "m2")) { if (p.m2 && p.m2.name) s.add(p.m2.name); }
+    });
+    return s;
+  };
   const missingHandicap = missingHandicapPlayers(scoring, roster);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
@@ -4580,7 +4593,7 @@ function MembersTab({ roster, setRoster, onRefresh, loaded, loadError, onRemoveF
                 {[["m1", "メンバー1"], ["m2", "メンバー2"]].map(([k, label]) => (
                   <div key={k} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px" }}>
                     <div style={{ fontSize: 11, color: C.sub, marginBottom: 4, whiteSpace: "nowrap" }}>{label}</div>
-                    <input value={p[k].name} onChange={(e) => setMember(p.id, k, "name", e.target.value.slice(0, 12))} placeholder="名前" style={{ width: "100%", boxSizing: "border-box", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "7px 9px", marginBottom: 6 }} />
+                    <select value={p[k].name} onChange={(e) => pickMember(p.id, k, e.target.value)} style={{ width: "100%", boxSizing: "border-box", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "7px 9px", marginBottom: 6 }}><option value="">（選んでください）</option>{roster.filter((m) => m.name && (m.name === p[k].name || !usedNames(p.id, k).has(m.name))).map((m) => <option key={m.id || m.name} value={m.name}>{m.name}（SL{skOf(m) || "未"}）</option>)}</select>
                     <div style={{ fontSize: 11, color: C.sub, marginBottom: 4 }}>SL</div>
                     <select value={p[k].sl} onChange={(e) => setMember(p.id, k, "sl", parseInt(e.target.value, 10))} style={{ width: "100%", background: "#f5f5f5", border: "none", borderRadius: 6, color: C.ink, fontSize: 13, padding: "7px 9px" }}>
                       {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((sl) => <option key={sl} value={sl}>{sl}</option>)}
