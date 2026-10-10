@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.283";
+const APP_VERSION = "1.284";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -993,6 +993,8 @@ function matchMinutesFor(scoring, race, lenPct, per100Min) {
 /* 選手を選ぶリストで、名前の右に出す補足。得点方式によって見せるものが変わる */
 function rosterHandiLabel(p, scoring) {
   if (!p) return "";
+  // ペアの候補は、2人分のSLを並べて表示する（個人のSL未設定の表示は出さない）
+  if (p.pairMembers) return "SL" + p.pairMembers.map((m) => (m && m.sl) || "?").join("・");
   if (scoring === "jpa_skill") return skOf(p) ? `SL${skOf(p)}` : "SL未設定";
   if (scoring === "set") return clsOf(p) ? `クラス${clsOf(p)}` : "クラス未設定";
   if (scoring === "jcl") return p.r ? `Fargo ${p.r}` : "";
