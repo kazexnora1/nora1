@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.275";
+const APP_VERSION = "1.276";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1835,14 +1835,19 @@ function TimelineSlotCard({
               const col = st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red);
               const label = String(names[i] || "").split("（")[0];
               const isPair = !!sub[i];
+              const members = isPair ? String(sub[i]).split("・") : [];
               return (
-                <div key={i} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 4 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ textAlign: "left", fontSize: 17, fontWeight: won(i) ? 900 : 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.25 }}>{label}</div>
-                    {isPair && <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.3, wordBreak: "break-all" }}>{sub[i]}</div>}
-                  </div>
+                <div key={i} style={{ minWidth: 0 }}>
+                  <div style={{ textAlign: "left", fontSize: 17, fontWeight: won(i) ? 900 : 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.25 }}>{label}</div>
+                  {isPair && (
+                    <div style={{ marginTop: 2 }}>
+                      {members.map((mem, k) => (
+                        <div key={k} style={{ fontSize: 11, color: C.sub, lineHeight: 1.35, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mem}</div>
+                      ))}
+                    </div>
+                  )}
                   {isPair && rt[i] > 0 && (
-                    <div style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: C.ink, background: C.zone, borderRadius: 6, padding: "1px 5px", marginTop: 2 }}>目標{rt[i]}</div>
+                    <div style={{ display: "inline-block", marginTop: 3, fontSize: 12, fontWeight: 800, color: C.ink, background: C.zone, borderRadius: 6, padding: "1px 7px" }}>目標{rt[i]}</div>
                   )}
                 </div>
               );
