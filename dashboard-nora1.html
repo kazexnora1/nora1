@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.281";
+const APP_VERSION = "1.282";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1416,7 +1416,15 @@ function Portal({ children }) {
 /* ========= 新規作成フォーム（試合の編集 > 試合を新規作成） =========
    空きマス／既存の試合カードの両方から呼べる共通フォーム。ファーゴレートから目標点を自動計算する。
    既存の試合がある場合は保存前に上書き確認を出す */
-function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
+function CreateMatchForm({ roster: rosterProp, defaultTable, existing, onDone, onCancel }) {
+  // ペアマッチON時は、候補＝登録ペア（2組以上のとき）。試合追加もペア単位になる
+  const pairOnC = loadSettings().pairMatch === true;
+  const pairListC = pairOnC ? loadPairRoster() : [];
+  const isPairC = pairOnC && pairListC.length >= 2;
+  const roster = isPairC ? pairListC.map((pr) => {
+    const names = [pr.m1, pr.m2].map((m) => (m && m.name) || "").filter(Boolean);
+    return { id: pr.id, name: names.length ? `${pr.pairName}（${names.join("・")}）` : pr.pairName, r: "", pairMembers: [pr.m1, pr.m2] };
+  }) : rosterProp;
   const [i1, setI1] = useState(0);
   const [i2, setI2] = useState(roster.length > 1 ? 1 : 0);
   const [table, setTable] = useState(defaultTable || 1);
@@ -1450,7 +1458,7 @@ function CreateMatchForm({ roster, defaultTable, existing, onDone, onCancel }) {
         version: (existing && existing.version || 0) + 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
         balls: mkMatchBalls(),
         lastResult: null, hist: [], raceTo: rt,
-        names: [p1.name, p2.name], table,
+        names: [p1.name, p2.name], sub: [p1.pairMembers ? pairMembersText(p1.pairMembers) : "", p2.pairMembers ? pairMembersText(p2.pairMembers) : ""], table,
         r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), lenPct,
         matchMinutes: matchMinutesFor(curSpec.scoring, res, lenPct, loadSettings().per100Min),
         createdAt: existing ? existing.createdAt : now, updatedAt: now,
