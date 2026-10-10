@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.273";
+const APP_VERSION = "1.274";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -5611,7 +5611,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           display: "flex", alignItems: "center", gap: 8, background: "#FFF3E0", border: `1px solid ${C.hill}`,
           borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#7A4B0B",
         }}>
-          ⏰ 遅刻設定の{lateCountInPlay}人を、できるだけ後の試合になるよう最優先で調整します
+          ⏰ 遅刻設定の{lateCountInPlay}{pairOn ? "組" : "人"}を、できるだけ後の試合になるよう最優先で調整します
           {roundRobin && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（リーグ戦は全員が毎ラウンド対戦するため、実際には反映されません）</span>}
         </div>
       )}
@@ -5621,7 +5621,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           display: "flex", alignItems: "center", gap: 8, background: "#E8F5E9", border: `1px solid ${C.win}`,
           borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontWeight: 700, color: "#1B5E20",
         }}>
-          🏃 早退設定の{earlyCountInPlay}人を、できるだけ早い試合になるよう最優先で調整します
+          🏃 早退設定の{earlyCountInPlay}{pairOn ? "組" : "人"}を、できるだけ早い試合になるよう最優先で調整します
           {roundRobin && <span style={{ display: "block", fontWeight: 700, marginTop: 2 }}>（リーグ戦は全員が毎ラウンド対戦するため、実際には反映されません）</span>}
         </div>
       )}
