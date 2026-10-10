@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.279";
+const APP_VERSION = "1.280";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -938,12 +938,25 @@ const PAIR_PRELIM_TABLE = {
   9: [13, 14, 16, 17, 19, 21, 24, 29, 35, 38],
   10: [14, 15, 17, 19, 21, 25, 29, 35, 38],
 };
-// ペア（メンバー2人）の予選目標点。両方のSLを使う（10×10は参加不可）
-function pairPrelimTarget(members) {
+// ペアマッチ 決勝表（自分のSL × 相方のSL）。表は対称
+const PAIR_FINAL_TABLE = {
+  1: [7, 10, 12, 14, 16, 18, 19, 20, 21, 23],
+  2: [10, 12, 14, 16, 18, 19, 21, 22, 23, 25],
+  3: [12, 14, 16, 18, 19, 22, 23, 24, 25, 27],
+  4: [14, 16, 18, 19, 22, 24, 25, 26, 28, 31],
+  5: [16, 18, 19, 22, 24, 26, 27, 29, 31, 35],
+  6: [18, 19, 22, 24, 26, 28, 29, 32, 35, 41],
+  7: [19, 21, 23, 25, 27, 29, 33, 35, 40, 47],
+  8: [20, 22, 24, 26, 29, 32, 35, 40, 47, 57],
+  9: [21, 23, 25, 28, 31, 35, 40, 47, 57, 63],
+  10: [23, 25, 27, 31, 35, 41, 47, 57, 63],
+};
+// ペア（メンバー2人）の目標点。isFinal で予選表／決勝表を切り替える。両方のSLを使う（10×10は参加不可）
+function pairPrelimTarget(members, isFinal) {
   const m1 = (members && members[0]) || {}, m2 = (members && members[1]) || {};
   const x = Math.max(1, Math.min(10, parseInt(m1.sl, 10) || 1));
   const y = Math.max(1, Math.min(10, parseInt(m2.sl, 10) || 1));
-  return (PAIR_PRELIM_TABLE[x] || [])[y - 1] || 0;
+  return ((isFinal ? PAIR_FINAL_TABLE : PAIR_PRELIM_TABLE)[x] || [])[y - 1] || 0;
 }
 // ペアのメンバーとSLを表示用の文字にする（例：「辻 SL10・青柳 SL9」）
 function pairMembersText(members) {
@@ -953,7 +966,7 @@ function raceFor(o) {
   const opt = o || {};
   const scoring = opt.scoring || "jcl";
   const p1 = opt.p1 || {}, p2 = opt.p2 || {};
-  if (p1.pairMembers && p2.pairMembers) return { rt1: pairPrelimTarget(p1.pairMembers), rt2: pairPrelimTarget(p2.pairMembers) };
+  if (p1.pairMembers && p2.pairMembers) return { rt1: pairPrelimTarget(p1.pairMembers, p1.pairFinal), rt2: pairPrelimTarget(p2.pairMembers, p2.pairFinal) };
   if (scoring === "jpa_skill") return { rt1: skillTarget(p1.sk), rt2: skillTarget(p2.sk) };
   if (scoring === "set") return { rt1: classTarget(p1), rt2: classTarget(p2) };
   if (scoring === "jpa_fixed") {
@@ -2781,7 +2794,13 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster, format, prelimMode, finalMode }) {
+function BracketTab({ roster: rosterProp, format, prelimMode, finalMode }) {
+  // ペアマッチON時は、決勝の出場候補＝登録ペア（任意の1組を手で選べる）
+  const pairOnB = loadSettings().pairMatch === true;
+  const roster = useMemo(() => (pairOnB ? loadPairRoster().map((pr) => {
+    const names = [pr.m1, pr.m2].map((m) => (m && m.name) || "").filter(Boolean);
+    return { id: pr.id, name: names.length ? `${pr.pairName}（${names.join("・")}）` : pr.pairName, r: "", pairMembers: [pr.m1, pr.m2], pairFinal: true };
+  }) : rosterProp), [pairOnB, rosterProp]);
   const registeringRef = useRef(false); // Reactのstate更新は非同期なので、連打による二重登録をrefで即座にブロックする
   const curSpec = loadSpec();
   const fmt = format || legacyFormat(curSpec);
@@ -3013,7 +3032,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             const p1 = players[i * 2], p2 = players[i * 2 + 1];
             const R1 = parseInt(p1.r, 10) || 0, R2 = parseInt(p2.r, 10) || 0;
             const race = raceFor({ scoring: curSpec.scoring, p1, p2, lenPct: plan.pct, fixedTarget: azukiTargetFor(r, total) });
-            next[id] = mkMatch({ ...common, names: [p1.name, p2.name], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2) });
+            next[id] = mkMatch({ ...common, names: [p1.name, p2.name], sub: [p1.pairMembers ? pairMembersText(p1.pairMembers) : "", p2.pairMembers ? pairMembersText(p2.pairMembers) : ""], raceTo: [race.rt1, race.rt2], r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), cls1: clsOf(p1), cls2: clsOf(p2) });
           } else {
             const prevLabel = (r - 1) === total ? "決勝" : total - (r - 1) === 1 ? "準決勝" : `${r - 1}回戦`;
             next[id] = mkMatch({
@@ -3085,7 +3104,7 @@ function BracketTab({ roster, format, prelimMode, finalMode }) {
             version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
             balls: mkMatchBalls(),
             lastResult: null, hist: [], raceTo: [race.rt1, race.rt2],
-            names: [p1.name, p2.name], table: nextRound === totalRounds ? 1 : tables[i],
+            names: [p1.name, p2.name], sub: [p1.pairMembers ? pairMembersText(p1.pairMembers) : "", p2.pairMembers ? pairMembersText(p2.pairMembers) : ""], table: nextRound === totalRounds ? 1 : tables[i],
             r1: p1.r, r2: p2.r, sk1: p1.sk || 0, sk2: p2.sk || 0, cls1: p1.cls || "", cls2: p2.cls || "", lenPct: pct, matchMinutes: plan.mins,
             createdAt: now + i, updatedAt: now,
             bracket: true, bracketRound: nextRound, bracketPos: i, bracketSize: size,
