@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.278";
+const APP_VERSION = "1.279";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3550,6 +3550,9 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
   // 決勝の「各グループ1位＋…」方式は、予選をグループ分け総当たりで組んだ時だけ成立する
   const groupFinalAvailable = prelimMode === "rr_group";
   const updateFinalMode = (v) => { setFinalMode(v); saveSettings({ finalMode: v }); };
+  // 決勝の人数（4組／8組）。予選の前に決める。決勝トーナメントの画面も同じ値を使う
+  const [advSize, setAdvSize] = useState(() => (loadSettings().bracketSize === 4 ? 4 : 8));
+  const updateAdvSize = (n) => { setAdvSize(n); saveSettings({ bracketSize: n }); };
   const updatePrelimMode = (id) => {
     setPrelimMode(id);
     const flags = prelimModeFlags(id);
@@ -3723,9 +3726,19 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
                   {finalMode === "overall" ? "● " : "○ "}全体の勝ち数上位 4名 or 8名
                 </div>
                 <div style={{ fontSize: 12, color: "#3F4A55", marginTop: 2, lineHeight: 1.6, paddingLeft: 17 }}>
-                  グループに関係なく、全員を勝ち数（同数なら達成率）の順に並べて上位から選びます。人数は「🏆 決勝トーナメント」で選びます
+                  グループに関係なく、全員を勝ち数（同数なら達成率）の順に並べて上位から選びます。人数は上の「決勝の人数」で決めます
                 </div>
               </button>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.ink, marginBottom: 6 }}>決勝の人数（予選の前に決めます）</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[4, 8].map((n) => (
+                  <button key={n} onClick={() => updateAdvSize(n)} style={{ flex: 1, border: `2px solid ${advSize === n ? C.blue : C.line}`, background: advSize === n ? C.lightBlue : "#fff", borderRadius: 10, padding: "10px 0", fontSize: 15, fontWeight: 800, color: advSize === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>
+                    {advSize === n ? "● " : "○ "}{n}組
+                  </button>
+                ))}
+              </div>
             </div>
             {!groupFinalAvailable && (
               <div style={{ ...HELP, marginTop: 8, color: C.sub }}>
