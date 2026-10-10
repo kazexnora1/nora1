@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.280";
+const APP_VERSION = "1.281";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -2794,7 +2794,7 @@ function PcStandingsTab() {
 }
 
 /* ========= 決勝トーナメント（4人 or 8人の抽選ブラケット。予選と同じハンデ・試合の長さで組む） ========= */
-function BracketTab({ roster: rosterProp, format, prelimMode, finalMode }) {
+function BracketTab({ roster: rosterProp, format, prelimMode, finalMode, bracketSizeProp }) {
   // ペアマッチON時は、決勝の出場候補＝登録ペア（任意の1組を手で選べる）
   const pairOnB = loadSettings().pairMatch === true;
   const roster = useMemo(() => (pairOnB ? loadPairRoster().map((pr) => {
@@ -2820,6 +2820,7 @@ function BracketTab({ roster: rosterProp, format, prelimMode, finalMode }) {
   const groupBracketSize = groupCount <= 4 ? 4 : 8; // グループ数が収まる最小のブラケットサイズ（4 or 8）
   const [size, setSize] = useState(groupMode ? groupBracketSize : (s0.bracketSize === 4 ? 4 : 8));
   useEffect(() => { if (groupMode && size !== groupBracketSize) setSize(groupBracketSize); }, [groupMode, groupBracketSize]);
+  useEffect(() => { if (!groupMode && bracketSizeProp && size !== bracketSizeProp) setSize(bracketSizeProp); }, [groupMode, bracketSizeProp]);
   const [slotIdx, setSlotIdx] = useState(() => Array.from({ length: 8 }, () => 0)); // 出場する8人（成績順に並ぶ）
   const [drawNo, setDrawNo] = useState(() => Array.from({ length: 8 }, (_, i) => String(i + 1))); // 各人が引いた抽選番号
   // 予選と同じ長さを基準に、勝ち上がるほど1試合を長くする（決勝がいちばん長い）
@@ -3150,10 +3151,8 @@ function BracketTab({ roster: rosterProp, format, prelimMode, finalMode }) {
               </div>
             </div>
           ) : (
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              {[4, 8].map((n) => (
-                <button key={n} onClick={() => setSize(n)} style={{ flex: 1, border: `2px solid ${size === n ? C.blue : C.line}`, background: size === n ? C.lightBlue : "#fff", borderRadius: 12, padding: "12px 0", fontSize: 15, fontWeight: 800, color: size === n ? C.blue : C.ink, cursor: "pointer", fontFamily: FONT }}>{n}人</button>
-              ))}
+            <div style={{ background: C.zone, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontSize: 14, fontWeight: 800, color: C.ink }}>
+              決勝 {size}組（人数は「⚙️ イベント設定」で決めます）
             </div>
           )}
 
@@ -3827,7 +3826,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
       </Section>
 
       <Section icon="🏆" title="決勝トーナメント" sub={finalMode === "group" ? "各グループ1位＋勝ち数トップで自動選出" : "全体の上位4人／8人と抽選番号を入れて登録"}>
-        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} />
+        <BracketTab key={presetTick} roster={roster} format={format} prelimMode={prelimMode} finalMode={finalMode} bracketSizeProp={advSize} />
       </Section>
 
       <Section icon="🛟" title="その他" sub="バックアップ・つながり具合・個別の対戦追加">
