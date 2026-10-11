@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.287";
+const APP_VERSION = "1.288";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1570,6 +1570,7 @@ function TimelineSlotCard({
   const tot = m ? (m.tot || [0, 0]) : [0, 0];
   const rt = m ? (m.raceTo || [0, 0]) : [0, 0];
   const sub = m && Array.isArray(m.sub) ? m.sub : ["", ""];
+  const tots = m && Array.isArray(m.tot) ? m.tot : [0, 0];
   const w = st === "done" ? matchWinnerIndex(m) : null;
 
   // 試合中の進行バー用：残り時間だけは時間経過そのものでも変わるので、定期的に再描画する
@@ -1884,7 +1885,7 @@ function TimelineSlotCard({
               borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
             }}>{style.badge}</span>
             {m && m.phaseTag && (
-              <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, color: m.phaseTag === "final" ? C.hill : C.sub }}>{m.phaseTag === "final" ? "決勝" : "予選"}</span>
+              <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap", color: m.phaseTag === "final" ? C.hill : C.sub }}>{m.phaseTag === "final" ? "決勝" : "予選"}</span>
             )}
           </div>
 
@@ -1901,7 +1902,7 @@ function TimelineSlotCard({
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, minWidth: 0 }}>
                     <div style={{ flex: 1, minWidth: 0, textAlign: "left", fontSize: 16, fontWeight: won(i) ? 900 : 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.2 }}>{label}</div>
                     {isPair && rt[i] > 0 && (
-                      <div style={{ flexShrink: 0, fontSize: 15, fontWeight: 900, color: col, lineHeight: 1.2 }}>{rt[i]}</div>
+                      <div style={{ flexShrink: 0, fontSize: 15, fontWeight: 900, color: col, lineHeight: 1.2 }}>{st === "done" ? tots[i] : rt[i]}</div>
                     )}
                   </div>
                   {isPair && members.map((mem, k) => (
