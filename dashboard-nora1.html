@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.288";
+const APP_VERSION = "1.289";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -398,6 +398,7 @@ function isMatchFinished(m) {
   // スコアラー側で決着が確定した試合。9番以外で目標点に到達して勝った場合、
   // 台上の球がまだ tot に入っていないことがあるので、tot だけでは終了と判定できない
   if (m.winner === 0 || m.winner === 1) return true; // 時間切れ・最終ラック終了時にどちらも目標に届かなかった場合
+  if (m.reopened) return false; // 終了を取り消した試合は、次に「終了にする」を選ぶまで点数による自動終了をしない
   const rt = m.raceTo || [0, 0], tot = m.tot || [0, 0];
   return (rt[0] > 0 && tot[0] >= rt[0]) || (rt[1] > 0 && tot[1] >= rt[1]);
 }
@@ -1774,7 +1775,7 @@ function TimelineSlotCard({
     try {
       await saveMatchHistory(m.id, m, "終了にする前");
       await dbUpdate("matches/" + m.id, {
-        winner, bothLose: !!bothLose, finishedAt: Date.now(),
+        winner, bothLose: !!bothLose, finishedAt: Date.now(), reopened: false,
         version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
       setMenu(null);
@@ -1787,7 +1788,7 @@ function TimelineSlotCard({
     try {
       await saveMatchHistory(m.id, m, "終了を取り消す前");
       await dbUpdate("matches/" + m.id, {
-        winner: null, bothLose: false, finishedAt: null,
+        winner: null, bothLose: false, finishedAt: null, reopened: true,
         version: (m.version || 1) + 1, updatedAt: Date.now(),
       });
       setMenu(null);
