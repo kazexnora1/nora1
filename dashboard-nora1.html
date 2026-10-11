@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.286";
+const APP_VERSION = "1.287";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1467,7 +1467,7 @@ function CreateMatchForm({ roster: rosterProp, defaultTable, existing, onDone, o
       const state = {
         version: (existing && existing.version || 0) + 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
         balls: mkMatchBalls(),
-        lastResult: null, hist: [], raceTo: rtFinal,
+        lastResult: null, hist: [], raceTo: rtFinal, phaseTag: isPairC ? phaseC : null,
         names: namesFinal, sub: [p1.pairMembers ? pairMembersText(p1.pairMembers) : "", p2.pairMembers ? pairMembersText(p2.pairMembers) : ""], table,
         r1: R1, r2: R2, sk1: skOf(p1), sk2: skOf(p2), lenPct,
         matchMinutes: matchMinutesFor(curSpec.scoring, res, lenPct, loadSettings().per100Min),
@@ -1883,6 +1883,9 @@ function TimelineSlotCard({
               border: st === "call" ? `1.5px solid ${C.blue}` : "none",
               borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
             }}>{style.badge}</span>
+            {m && m.phaseTag && (
+              <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, color: m.phaseTag === "final" ? C.hill : C.sub }}>{m.phaseTag === "final" ? "決勝" : "予選"}</span>
+            )}
           </div>
 
           {/* 2: 選手（名前は横書きのまま上下2段。スコアと目標点は出さず、名前だけを大きく見せる。
