@@ -691,7 +691,7 @@ function deletePair(id){
 /* ================= 段階3：試合運用 ================= */
 const clone=o=>JSON.parse(JSON.stringify(o));
 function blankRunDraft(){
-  const d={date:todayStr(),name:'',fmtId:null,pairId:null,fromRun:null,targets:{}};
+  const d={date:todayStr(),name:'',fmtId:null,pairId:null,mtId:null,fromRun:null,targets:{}};
   const pr=d.pairId?db.pairings[d.pairId]:null;
   if(pr&&pr.formatId&&db.formats[pr.formatId]) d.fmtId=pr.formatId;
   const f=d.fmtId?db.formats[d.fmtId]:null; if(f) d.name=f.name;
@@ -742,17 +742,37 @@ function targetError(fmt,pair,targets){
   }
   return '';
 }
+// 運営で使うメンバー表（複製のときは、元の運営が持っていたコピー）
+function runMt(d){
+  if(d.fromRun){ const s=db.runs[d.fromRun]; return s&&s.memberTable?clone(s.memberTable):null; }
+  return d.mtId&&db.mtables[d.mtId]?clone(db.mtables[d.mtId]):null;
+}
+// 組み合わせに入れられる人：来店している人。遅刻の人も含める（前半は欠席として扱う）
+function mtPlayable(mt){ return (mt.members||[]).filter(m=>m.arrived||m.late); }
+function mtLine(m,entry){
+  const marks=(m.late?' 遅':'')+(m.early?' 早':'');
+  if(entry==='pair'){
+    return (m.members||[]).map(x=>x.name+(x.sl?' SL'+x.sl:'')).join('・')+marks;
+  }
+  return m.name+(m.sl?' SL'+m.sl:'')+marks;
+}
 function validateRunSetup(d){
   const r=resolveRun(d); if(!r) return '複製元が見つかりません';
-  if(!r.pair) return '組み合わせ表を指定してください';
   if(!r.fmt) return 'フォーマットを指定してください';
-  if(!r.pair.plan) return '組み合わせ表が、まだ「組む」を実行していません。段階2で「組む」を押してください';
-  const se=skillError(r.fmt,r.pair);
+  if(!r.pair) return '対戦枠を指定してください';
+  const mt=runMt(d);
+  if(!mt) return 'メンバー表を指定してください';
+  if(mt.entry!==r.pair.entry) return `参加の形が合いません（対戦枠：${ENTRY[r.pair.entry]}／メンバー表：${ENTRY[mt.entry]}）`;
+  const unit=r.pair.entry==='pair'?'組':'人';
+  const pl=mtPlayable(mt);
+  if(pl.length!==r.pair.count) return `来店・遅刻の人は${pl.length}${unit}、対戦枠は${r.pair.count}${unit}です。人数を合わせてください`;
+  const se=skillError(r.fmt,{entry:r.pair.entry,count:r.pair.count,members:pl.map(m=>mtLine(m,mt.entry))});
   if(se) return se;
   const te=targetError(r.fmt,r.pair,d.targets);
   if(te) return te;
   return '';
 }
+
 function validateRun(d){
   if(!d.date) return '日付を入力してください';
   if(!d.name.trim()) return '名前を入力してください';
@@ -761,6 +781,12 @@ function validateRun(d){
 function startRun(d){
   const e=validateRun(d); if(e){ err=e; return; }
   const r=resolveRun(d);
+  const mt=runMt(d);
+  const lines=mtPlayable(mt).map(m=>mtLine(m,mt.entry));
+  const pairing=Object.assign(clone(r.pair),{members:lines,entry:mt.entry,frameId:r.pair.id,plan:null,planAt:null});
+  try{ pairing.plan=generatePlan(pairing); pairing.planAt=Date.now(); }
+  catch(ex){ err=ex.message||'組み合わせを作れませんでした'; return; }
+  r.pair=pairing;
   const title=d.name.trim(), name=`${d.date} ${title}`;
   const cur=db.activeRunId&&db.runs[db.activeRunId]?db.runs[db.activeRunId]:null;
   const msg=`この内容で試合を始めてよろしいですか\n\n${name}\nフォーマット：${summaryLine(r.fmt)}\n組み合わせ表：${r.pair.date} ${r.pair.name}（${r.pair.count}${r.pair.entry==='pair'?'組':'人'}・${r.pair.tables}卓）`+(cur?`\n\n※今の「${cur.name}」は中断されます`:'');
@@ -768,7 +794,7 @@ function startRun(d){
   if(cur) cur.status='中断';
   const id=newId('r');
   const tg={}; if(needsTargets(r.fmt)) targetRounds(r.fmt,r.pair).forEach(x=>{ tg[x.key]=parseInt(d.targets[x.key],10); });
-  db.runs[id]={id,date:d.date,title,name,status:'進行中',createdAt:Date.now(),startedAt:Date.now(),format:r.fmt,pairing:r.pair,targets:tg,
+  db.runs[id]={id,date:d.date,title,name,status:'進行中',createdAt:Date.now(),startedAt:Date.now(),format:r.fmt,pairing:r.pair,memberTable:mt,targets:tg,
                copiedFrom:d.fromRun&&db.runs[d.fromRun]?db.runs[d.fromRun].name:null};
   db.activeRunId=id; curId=id; save(); err=''; draft=null; view='rdetail';
 }
@@ -852,7 +878,9 @@ function renderRunWizard(){
     body+=`<div class="note">複製元：${esc(db.runs[d.fromRun].name)}（フォーマットと組み合わせ表を引き継ぎます。試合の結果は引き継ぎません）</div>`;
   }else{
     body+=`<div class="field"><label>フォーマット</label><div class="chips">${fmts.map(x=>`<button class="chip ${d.fmtId===x.id?'on':''}" data-rfmt="${x.id}">${esc(x.date)} ${esc(x.name)}</button>`).join('')||'<span class="note">フォーマットがありません（段階1で作れます）</span>'}</div></div>
-    <div class="field"><label>組み合わせ表</label><div class="chips">${prs.map(x=>`<button class="chip ${d.pairId===x.id?'on':''}" data-rpair="${x.id}">${esc(x.date)} ${esc(x.name)}${x.plan?'':'（未作成）'}</button>`).join('')||'<span class="note">組み合わせ表がありません（段階2で作れます）</span>'}</div></div>`;
+    <div class="field"><label>対戦枠</label><div class="chips">${prs.map(x=>`<button class="chip ${d.pairId===x.id?'on':''}" data-rpair="${x.id}">${esc(x.date)} ${esc(x.name)}${x.plan?'':'（未作成）'}</button>`).join('')||'<span class="note">組み合わせ表がありません（段階2で作れます）</span>'}</div></div>`;
+    const mts=Object.values(db.mtables||{}).sort((a,b)=>b.createdAt-a.createdAt);
+    body+=`<div class="field"><label>メンバー表</label><div class="chips">${mts.map(x=>`<button class="chip ${d.mtId===x.id?'on':''}" data-rmt="${x.id}">${esc(x.date)} ${esc(x.name)}</button>`).join('')||'<span class="note">メンバー表がありません（3で作れます）</span>'}</div></div>`;
   }
   let tgBody='';
   if(r.fmt&&r.pair&&needsTargets(r.fmt)){
@@ -860,7 +888,9 @@ function renderRunWizard(){
   }
   const rows=[];
   if(r.fmt){ rows.push(['フォーマット',summaryLine(r.fmt)],['ブレイク順',BREAK[r.fmt.breakMode||'winner']]); }
-  if(r.pair){ rows.push(['組み合わせ表',`${r.pair.date} ${r.pair.name}`],['参加',`${r.pair.count}${r.pair.entry==='pair'?'組':'人'}`],['卓の数',`${r.pair.tables}卓`]); }
+  if(r.pair){ rows.push(['対戦枠',`${r.pair.date} ${r.pair.name}`],['参加',`${r.pair.count}${r.pair.entry==='pair'?'組':'人'}`],['卓の数',`${r.pair.tables}卓`]); }
+  const mtd=runMt(d);
+  if(mtd){ const pl=mtPlayable(mtd); rows.push(['メンバー表',`${mtd.date} ${mtd.name}`],['来店・遅刻',`${pl.length}${mtd.entry==='pair'?'組':'人'}`]); }
   return `<h2>試合を始める</h2>${body}
     <div class="field"><label>日付</label><input type="date" id="r-date" value="${esc(d.date)}"></div>
     <div class="field"><label>名前</label><input type="text" id="r-name" value="${esc(d.name)}" placeholder="例：あずき杯"></div>
@@ -1187,6 +1217,8 @@ document.addEventListener('click',e=>{
   }
   const mp=e.target.closest('[data-mpick]');
   if(mp&&stage==='m'){ const tt=db.mtables[mtCur]; const person=dbRoster.find(p=>p.name===mp.dataset.mpick); if(tt&&person){ const msg=mtPick(tt,person); save(); if(msg) alert(msg); render(); } return; }
+  const rm=e.target.closest('[data-rmt]');
+  if(rm&&draft&&stage===3){ draft.mtId=rm.dataset.rmt||null; err=''; render(); return; }
   const rf=e.target.closest('[data-rfmt]');
   if(rf&&draft&&stage===3){
     draft.fmtId=rf.dataset.rfmt||null;
