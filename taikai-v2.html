@@ -233,7 +233,6 @@ function pairOverviewRows(d){
   const lines=memberLines(d);
   const rows=[
     ['名前',`${d.date||''} ${d.name||''}`.trim()||'（未入力）'],
-    ['フォーマット',f?`${f.name}（${summaryLine(f)}）`:'未指定（分け方だけ）'],
     ['参加の形',ENTRY[pairEntry(d)]],
     [pairEntry(d)==='pair'?'参加ペア数':'参加人数',`${d.count}${pairEntry(d)==='pair'?'組':'人'}`],
     ['卓の数',`${d.tables}卓`],
@@ -612,7 +611,6 @@ function renderPairWizard(){
         <div class="note">不戦勝の枠は${byes}です。シードは最大${byes}人まで。</div></div>`
     : (isTour?`<div class="note">シードは名簿を入れると指定できます。</div>`:'');
   return `<h2>${title}</h2>
-    <div class="field"><label>フォーマット</label>${fmtChips}</div>
     <div class="field"><label>日付</label><input type="date" id="p-date" value="${esc(d.date)}"></div>
     <div class="field"><label>名前</label><input type="text" id="p-name" value="${esc(d.name)}" placeholder="例：9人・3卓・リーグ戦"></div>
     <div class="field"><label>参加の形（個人／ペア）</label>${seg('entry',[['indiv','個人'],['pair','ペア']],d.entry)}</div>
