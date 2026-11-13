@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.294";
+const APP_VERSION = "1.296";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1263,7 +1263,7 @@ const TOUR = (function () {
     { no: 7,  kind: "敗者側", a: { l: 1 }, b: { l: 2 } },
     { no: 8,  kind: "敗者側", a: { l: 3 }, b: { l: 4 } },
     { no: 9,  kind: "敗者側", a: { l: 5 }, b: { l: 6 } },
-    { no: 10, kind: "敗者側", a: { l: 7 }, b: { l: 8 } },
+    { no: 10, kind: "敗者側", a: { w: 7 }, b: { w: 8 } },
     { no: 11, kind: "勝者側", a: { w: 1 }, b: { w: 9 } },
     { no: 12, kind: "勝者側", a: { w: 2 }, b: { w: 3 } },
     { no: 13, kind: "勝者側", a: { w: 4 }, b: { w: 5 } },
@@ -1527,6 +1527,7 @@ function App() {
     ["qr", "📱 QR"],
     ["settings", "⚙️ 設定"],
   ];
+  if (loadPrelimMode() === "tour12") tabs.splice(1, 0, ["tour", "🏆 トーナメント表"]);
 
   const tabBarJsx = (
     <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
@@ -1589,6 +1590,7 @@ function App() {
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
           {tab === "tables" && <LiveTablesTab />}
+          {tab === "tour" && <TourTableTab />}
           {tab === "player" && playerContent}
           {tab === "qr" && <QrTab />}
           {tab === "settings" && (
@@ -3792,6 +3794,85 @@ function FoldHead({ n, title, sub, summary, open, onToggle }) {
   );
 }
 // 画面の描画で起きたエラーを、白い画面にせず、場所と内容を表示する（原因の特定用）
+// 予選トーナメントの表：最新の対戦表（group）を、試合番号つきで並べる。結果が出るたびに画面も更新される
+function tourTableView(matches) {
+  const recs = Object.values(matches || {}).filter((m) => m && m.tour);
+  if (!recs.length) return null;
+  const latest = recs.reduce((a, b) => ((b.createdAt || 0) > (a.createdAt || 0) ? b : a));
+  const group = latest.tour.group;
+  const byNo = {};
+  recs.filter((m) => m.tour.group === group).forEach((m) => { byNo[m.tour.no] = m; });
+  const sideOf = (m, i) => {
+    const name = (m.names && m.names[i]) || "";
+    return {
+      name, placeholder: isTourPlaceholder(name) || !name,
+      cls: (i === 0 ? m.cls1 : m.cls2) || "", target: (m.raceTo && m.raceTo[i]) || 0,
+    };
+  };
+  const build = (no) => {
+    const m = byNo[no];
+    if (!m) return null;
+    const w = m.phase === "done" ? matchWinnerIndex(m) : null;
+    const state = m.phase === "done" ? "終了" : m.phase === "play" ? "試合中" : (isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]) ? "待ち" : "未開始");
+    return { no, kind: m.tour.kind, a: sideOf(m, 0), b: sideOf(m, 1), winner: w, state, score: m.tot || [0, 0] };
+  };
+  const nums = (from, to) => Array.from({ length: to - from + 1 }, (_, k) => from + k);
+  const cols = [
+    { title: "1回戦（ダブル）", items: nums(1, 6) },
+    { title: "敗者側", items: nums(7, 10) },
+    { title: "勝者側", items: nums(11, 16) },
+    { title: "決勝", items: [17] },
+  ].map((c) => ({ ...c, matches: c.items.map(build).filter(Boolean) }));
+  const final = byNo[17];
+  const ranking = final && final.phase === "done" && matchWinnerIndex(final) !== null
+    ? { first: final.names[matchWinnerIndex(final)], second: final.names[1 - matchWinnerIndex(final)] } : null;
+  const doneCount = recs.filter((m) => m.tour.group === group && m.phase === "done").length;
+  return { cols, ranking, doneCount, total: 17 };
+}
+function TourMatchCard({ m }) {
+  const stateCol = m.state === "試合中" ? C.blue : m.state === "終了" ? C.win : C.sub;
+  return (
+    <div style={{ background: m.state === "試合中" ? C.lightBlue : "#fff", border: `1.5px solid ${m.state === "試合中" ? C.blue : C.line}`, borderRadius: 12, padding: "6px 8px", marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.sub, marginBottom: 2 }}>
+        <b style={{ color: C.ink }}>({m.no})</b><span style={{ color: stateCol, fontWeight: 800 }}>{m.state}</span>
+      </div>
+      {[m.a, m.b].map((p, i) => {
+        const won = m.winner === i, lost = m.winner !== null && m.winner !== i;
+        return (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, fontSize: 13, fontWeight: won ? 900 : 600, color: p.placeholder ? C.sub : (i === 0 ? C.blue : C.red), textDecoration: lost ? "line-through" : "none", fontStyle: p.placeholder ? "italic" : "normal", minWidth: 0 }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{won ? "▲ " : ""}{p.name || "—"}</span>
+            <span style={{ fontSize: 10.5, color: C.sub, flexShrink: 0 }}>{p.cls}{p.target ? ` ${p.target}` : ""}{m.state === "終了" ? `｜${m.score[i]}` : ""}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function TourTableTab() {
+  const [matches, setMatches] = useState({});
+  useEffect(() => dbSubscribe("matches", (m) => setMatches(m || {}), () => {}), []);
+  const view = useMemo(() => tourTableView(matches), [matches]);
+  if (!view) return <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>予選トーナメントの対戦表がまだありません。「予選を組む」で作って登録してください。</div>;
+  return (
+    <div style={{ padding: "14px 10px 28px", color: C.ink }}>
+      <div style={{ textAlign: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 16, fontWeight: 900 }}>🏆 予選トーナメント</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>終了 {view.doneCount} / {view.total}試合（結果が入るたびに自動で更新）</div>
+        {view.ranking && (
+          <div style={{ marginTop: 8, fontSize: 14, fontWeight: 900, color: C.win }}>1位：{view.ranking.first}　2位：{view.ranking.second}</div>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, alignItems: "start" }}>
+        {view.cols.map((c) => (
+          <div key={c.title}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, textAlign: "center", marginBottom: 6 }}>{c.title}</div>
+            {c.matches.map((m) => <TourMatchCard key={m.no} m={m} />)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 class ErrorShield extends React.Component {
   constructor(props) { super(props); this.state = { err: null }; }
   static getDerivedStateFromError(err) { return { err }; }
@@ -6335,7 +6416,7 @@ function ExtendMidwayPanel({ existingMatches, roster, setRoster, fmt, scoring, l
                     {result.board.map((m, i) => (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.zone, border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px" }}>
                         <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, width: 24 }}>T{m.table}</div>
-                        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{m.n1} 対 {m.n2}</div>
+                        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{m.tour ? `(${m.tour.no}) ` : ""}{m.n1} 対 {m.n2}</div>
                         {m.isRematch && <div style={{ fontSize: 10.5, fontWeight: 800, color: C.hill }}>再戦</div>}
                       </div>
                     ))}
@@ -6363,6 +6444,7 @@ function BulkCard({ m }) {
       {m.carry > 0 && <div style={{ position: "absolute", top: 4, right: 5, fontSize: 9, fontWeight: 800, color: C.blue }}>連投</div>}
       {m.sameGroup && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.hill }}>同G</div>}
       {m.grp != null && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 9, fontWeight: 800, color: C.win }}>G{m.grp}</div>}
+      {m.tour && <div style={{ position: "absolute", top: 4, left: 5, fontSize: 10, fontWeight: 900, color: C.blue }}>({m.tour.no})</div>}
       <div style={{ display: "flex", gap: 3 }}>
         {[[m.n1, m.rt1, C.blue], [m.n2, m.rt2, C.red]].map(([name, rt, col], i) => (
           <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
