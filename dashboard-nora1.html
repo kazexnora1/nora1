@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.296";
+const APP_VERSION = "1.297";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -2057,6 +2057,7 @@ function TimelineSlotCard({
       opacity: swapMode ? (isSwapSource || swapEligible ? 1 : 0.35) : ((st === "queued" || st === "pending") && !menu ? 0.7 : 1),
       cursor: swapMode ? (isSwapSource || swapEligible ? "pointer" : "default") : "pointer",
     }}>
+      {m && m.tour && <div style={{ position: "absolute", top: 3, right: 6, zIndex: 1, fontSize: 11, fontWeight: 900, color: C.blue, background: "#fff", borderRadius: 6, padding: "0 4px" }}>({m.tour.no})</div>}
       {swapMode && (isSwapSource || swapEligible) && (
         <div style={{
           position: "absolute", top: 3, left: 3, zIndex: 2, background: C.blue, color: "#fff",
@@ -2793,6 +2794,7 @@ function PcMatchCard({ m, st }) {
       ...box, borderRadius: 12, display: "flex", alignItems: "stretch", overflow: "hidden",
       minHeight: 0, position: "relative",
     }}>
+      {m.tour && <div style={{ position: "absolute", top: 3, right: 6, zIndex: 1, fontSize: 12, fontWeight: 900, color: C.blue }}>({m.tour.no})</div>}
       <div style={{
         flex: "0 0 46px", display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: 14, fontWeight: 900, color: C.sub, borderRight: `1px solid ${divider}`,
@@ -6908,7 +6910,7 @@ function LiveTablePanel({ tableNum, m }) {
     // 予定のない卓は情報が無いので、場所を取らないように1行だけにする
     return (
       <div style={{ ...panelBox, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={tBadge}>T{tableNum}</span>
+        <span style={tBadge}>T{tableNum}</span>{m && m.tour && <span style={{ fontSize: 13, fontWeight: 900, color: C.blue }}>({m.tour.no})</span>}
         <span style={{ fontSize: 14, fontWeight: 800, color: C.sub }}>予定なし</span>
       </div>
     );
@@ -7073,7 +7075,7 @@ function LiveTablePanel({ tableNum, m }) {
     <div style={panelBox}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
-          <span style={tBadge}>T{tableNum}</span>
+          <span style={tBadge}>T{tableNum}</span>{m.tour && <span style={{ fontSize: 13, fontWeight: 900, color: C.blue }}>({m.tour.no})</span>}
           <span style={{ fontSize: 14.5, fontWeight: 900, color: m.bracket ? C.hill : C.sub, whiteSpace: "nowrap" }}>{roundLabelOf(m)}</span>
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 900, color: C.ink }}>
