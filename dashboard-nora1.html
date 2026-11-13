@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.290";
+const APP_VERSION = "1.291";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1247,7 +1247,197 @@ const PRELIM_MODES = [
   { id: "rand_all",   kind: "random", label: "全体からランダム",           sub: "決めた試合数ぶん、全体から相手を割り当てます" },
   { id: "rand_group", kind: "random", label: "グループ内を避けてランダム", sub: "A/B/Cの3グループに分け、同じグループ同士をできるだけ避けます" },
   { id: "rand_rival", kind: "random", label: "対抗戦（必ず相手チーム）",   sub: "2チームに分け、必ず違うチームの相手とだけ対戦します" },
+  { id: "tour12", kind: "tournament", label: "予選トーナメント（12人）", sub: "12人・17試合。1回戦はダブル（敗者は敗者側へ）。敗者側から2人が勝者側へ上がり、(17)が決勝。セットマッチ（女子プロ6・A5・B4、敗者側は1つ減らす）" },
 ];
+/* 予選トーナメント（12人・17試合）の中身。カゼログへ組み込む前の単独版。
+   参加者：players[0..11] = { name, cls: "S"|"A"|"B", absent: boolean }（番号は1〜12＝くじの順）
+   試合：no 1〜17。a/b は { p: 参加者番号 } か { w: 試合番号 }（その試合の勝者）か { l: 試合番号 }（その試合の敗者） */
+const TOUR = (function () {
+  const DEF = [
+    { no: 1,  kind: "1回戦", a: { p: 1 },  b: { p: 2 } },
+    { no: 2,  kind: "1回戦", a: { p: 3 },  b: { p: 4 } },
+    { no: 3,  kind: "1回戦", a: { p: 5 },  b: { p: 6 } },
+    { no: 4,  kind: "1回戦", a: { p: 7 },  b: { p: 8 } },
+    { no: 5,  kind: "1回戦", a: { p: 9 },  b: { p: 10 } },
+    { no: 6,  kind: "1回戦", a: { p: 11 }, b: { p: 12 } },
+    { no: 7,  kind: "敗者側", a: { l: 1 }, b: { l: 2 } },
+    { no: 8,  kind: "敗者側", a: { l: 3 }, b: { l: 4 } },
+    { no: 9,  kind: "敗者側", a: { l: 5 }, b: { l: 6 } },
+    { no: 10, kind: "敗者側", a: { l: 7 }, b: { l: 8 } },
+    { no: 11, kind: "勝者側", a: { w: 1 }, b: { w: 9 } },
+    { no: 12, kind: "勝者側", a: { w: 2 }, b: { w: 3 } },
+    { no: 13, kind: "勝者側", a: { w: 4 }, b: { w: 5 } },
+    { no: 14, kind: "勝者側", a: { w: 6 }, b: { w: 10 } },
+    { no: 15, kind: "勝者側", a: { w: 11 }, b: { w: 12 } },
+    { no: 16, kind: "勝者側", a: { w: 13 }, b: { w: 14 } },
+    { no: 17, kind: "決勝",   a: { w: 15 }, b: { w: 16 } },
+  ];
+  const ROUND = (no) => (no === 17 ? "決勝" : "予選");   // 表記：(17)のみ決勝、他は予選
+  const ORDER = DEF.map((m) => m.no);
+
+  // 先取数：各選手のクラスの基本値。敗者側の試合は1つ減らす
+  const DEFAULT_TARGETS = { S: 6, A: 5, B: 4 };
+  const sideTarget = (p, match, targets) => {
+    const base = (targets || DEFAULT_TARGETS)[p.cls] || 0;
+    return match.kind === "敗者側" ? base - 1 : base;
+  };
+
+  // 対戦の状態を、結果（試合番号→勝った側 'a'|'b'）から求める
+  // 戻り値：各試合の { a, b } は参加者番号（null＝そこに人がいない）と、勝者・敗者
+  function resolve(players, results) {
+    const st = {};
+    const occ = (ref) => {
+      if (ref.p !== undefined) return players[ref.p - 1] && !players[ref.p - 1].absent ? ref.p : null;
+      const r = st[ref.w !== undefined ? ref.w : ref.l];
+      if (!r || !r.done) return undefined;               // まだ決まっていない
+      if (ref.w !== undefined) return r.winner;           // 勝者
+      return r.loser;                                      // 敗者（いなければ null）
+    };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const m of DEF) {
+        if (st[m.no] && st[m.no].done) continue;
+        const a = occ(m.a), b = occ(m.b);
+        if (a === undefined || b === undefined) continue;   // 未確定
+        if (a === null && b === null) { st[m.no] = { done: true, bye: true, a, b, winner: null, loser: null }; changed = true; continue; }
+        if (a === null || b === null) {                    // 片方がいない＝不戦勝
+          const w = a === null ? b : a;
+          st[m.no] = { done: true, bye: true, a, b, winner: w, loser: null }; changed = true; continue;
+        }
+        const res = results && results[m.no];
+        if (!res) { st[m.no] = { done: false, a, b }; continue; }   // 対戦待ち（結果なし）
+        const winner = res === "a" ? a : b, loser = res === "a" ? b : a;
+        st[m.no] = { done: true, bye: false, a, b, winner, loser }; changed = true;
+      }
+    }
+    return st;
+  }
+
+  // 各試合の先取数（両者がいる試合だけ）
+  // a・bは、その試合で実際に対戦する参加者番号（null＝いない）
+  function targetsOf(players, match, targets, a, b) {
+    const pa = a ? players[a - 1] : null, pb = b ? players[b - 1] : null;
+    return { a: pa ? sideTarget(pa, match, targets) : null, b: pb ? sideTarget(pb, match, targets) : null };
+  }
+
+  // 卓の割り当て：試合番号順に、空いた卓へ入れる。前後のずれは許容（準備できた試合を番号順に）。
+  // 1試合を1単位時間とする簡易シミュレーション。results は「その試合の勝者」を返す関数。
+  function schedule(players, courts, playFn, targets) {
+    const done = {};              // no -> { winner, loser }
+    const timeline = [];          // { t, court, no, a, b, targetA, targetB }
+    let t = 0, idle = 0;
+    const playedSet = new Set();
+    while (true) {
+      const st = resolveFrom(players, done);
+      // 準備できて、まだ行っていない試合（不戦勝は卓を使わない）
+      const ready = DEF.filter((m) => !playedSet.has(m.no) && st[m.no] && st[m.no].ready);
+      const byes = DEF.filter((m) => !playedSet.has(m.no) && st[m.no] && st[m.no].bye);
+      byes.forEach((m) => { playedSet.add(m.no); done[m.no] = { winner: st[m.no].winner, loser: null, bye: true }; });
+      if (byes.length) continue;
+      if (!ready.length) break;
+      const free = courts;
+      const pick = ready.slice(0, free).sort((x, y) => x.no - y.no);
+      pick.forEach((m, i) => {
+        const a = st[m.no].a, b = st[m.no].b;
+        const w = playFn(m, a, b);
+        playedSet.add(m.no);
+        done[m.no] = { winner: w === "a" ? a : b, loser: w === "a" ? b : a, bye: false };
+        const tg = targetsOf(players, m, targets, a, b);
+        timeline.push({ t, court: i + 1, no: m.no, round: ROUND(m.no), kind: m.kind, a, b, targetA: tg.a, targetB: tg.b });
+      });
+      idle += free - pick.length;
+      t++;
+    }
+    return { timeline, idleCourtUnits: idle, steps: t, done };
+  }
+  // scheduleの中で使う：完了済みの結果から状態を求める（play待ちも含む）
+  function resolveFrom(players, done) {
+    const st = {};
+    const occ = (ref) => {
+      if (ref.p !== undefined) return players[ref.p - 1] && !players[ref.p - 1].absent ? ref.p : null;
+      const r = st[ref.w !== undefined ? ref.w : ref.l];
+      if (!r || r.ready) return undefined;                // まだ対戦待ち（結果が出ていない）
+      return ref.w !== undefined ? r.winner : r.loser;
+    };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const m of DEF) {
+        if (st[m.no]) continue;
+        const d = done[m.no];
+        const a = occ(m.a), b = occ(m.b);
+        if (a === undefined || b === undefined) continue;
+        if (d) { st[m.no] = { ready: false, bye: !!d.bye, a, b, winner: d.winner, loser: d.loser }; changed = true; continue; }
+        if (a === null && b === null) { st[m.no] = { ready: false, bye: true, a, b, winner: null, loser: null }; changed = true; continue; }
+        if (a === null || b === null) { st[m.no] = { ready: false, bye: true, a, b, winner: a === null ? b : a, loser: null }; changed = true; continue; }
+        st[m.no] = { ready: true, bye: false, a, b, winner: null, loser: null }; changed = true;
+      }
+    }
+    return st;
+  }
+  // 順位：1位＝(17)の勝者、2位＝(17)の敗者（欠席で決勝が不戦勝のときも同じ扱い）
+  function ranking(done) {
+    const f = done[17];
+    if (!f) return null;
+    return { first: f.winner, second: f.loser };
+  }
+
+  const api = { DEF, ORDER, ROUND, DEFAULT_TARGETS, sideTarget, resolve, targetsOf, schedule, ranking };
+  return api;
+})();
+
+// 予選トーナメント：表示・先取数・対戦表・結果からの更新
+const TOUR_MODE = "tour12";
+const tourRoundLabel = (no) => (no === 17 ? "決勝" : "予選");
+const tourRefLabel = (ref) => (ref.w !== undefined ? `(${ref.w})の勝者` : `(${ref.l})の敗者`);
+const isTourPlaceholder = (n) => /^\(\d+\)の(勝者|敗者)$/.test(String(n || ""));
+// その試合での、1人の先取数（敗者側の試合は、クラスの基本数から1つ減らす）
+const tourTargetOf = (cls, kind) => Math.max(0, (classTargets()[cls] || 0) - (kind === "敗者側" ? 1 : 0));
+// 12人の対戦表。persons はくじ順の参加者（1〜12）。卓と順番は番号順に、空いた卓へ入れる
+function buildTourBoard(persons, tables, group) {
+  const players = persons.map((p) => ({ cls: clsOf(p), absent: false }));
+  const sim = TOUR.schedule(players, tables, () => "a", null);
+  const pos = {};
+  sim.timeline.forEach((x) => { pos[x.no] = { slot: x.t, table: x.court - 1 }; });
+  return TOUR.DEF.map((d) => {
+    const at = pos[d.no] || { slot: 0, table: 0 };
+    return {
+      a: d.a.p !== undefined ? d.a.p : null, b: d.b.p !== undefined ? d.b.p : null,
+      slot: at.slot, table: at.table, round: tourRoundLabel(d.no),
+      tour: { group, no: d.no, kind: d.kind, refA: d.a, refB: d.b },
+    };
+  });
+}
+// 結果が出た試合から、次の試合の選手名・先取数を入れる（同じ対戦表 group の試合だけを見る）
+function tourFillUpdates(matches) {
+  const all = Object.entries(matches || {}).filter(([, m]) => m && m.tour);
+  const byNo = {};
+  all.forEach(([, m]) => { byNo[`${m.tour.group}|${m.tour.no}`] = m; });
+  const pick = (ref, group) => {
+    const src = byNo[`${group}|${ref.w !== undefined ? ref.w : ref.l}`];
+    if (!src || src.phase !== "done") return null;            // まだ結果が出ていない
+    const w = matchWinnerIndex(src);
+    if (w !== 0 && w !== 1) return null;
+    const side = ref.w !== undefined ? w : 1 - w;             // 勝者なら勝った側、敗者なら負けた側
+    const name = side === 0 ? src.names[0] : src.names[1];
+    if (!name || isTourPlaceholder(name)) return null;
+    return { name, cls: side === 0 ? src.cls1 : src.cls2, r: side === 0 ? src.r1 : src.r2, sk: side === 0 ? src.sk1 : src.sk2 };
+  };
+  const upd = {};
+  all.forEach(([id, m]) => {
+    if (m.phase !== "banking") return;
+    if (!(isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]))) return;
+    const A = pick(m.tour.refA, m.tour.group), B = pick(m.tour.refB, m.tour.group);
+    if (!A || !B) return;
+    upd[id] = {
+      ...m, names: [A.name, B.name], cls1: A.cls || "", cls2: B.cls || "", r1: A.r || 0, r2: B.r || 0,
+      sk1: A.sk || 0, sk2: B.sk || 0, raceTo: [tourTargetOf(A.cls, m.tour.kind), tourTargetOf(B.cls, m.tour.kind)],
+      updatedAt: Date.now(),
+    };
+  });
+  return upd;
+}
 const prelimModeInfo = (id) => PRELIM_MODES.find((m) => m.id === id) || PRELIM_MODES[2];
 // 旧バージョンの設定（バラバラのフラグ）からも正しく復元できるようにしておく
 function loadPrelimMode(s) {
@@ -1277,6 +1467,11 @@ function loadFinalMode(s) {
 }
 
 function App() {
+  // 予選トーナメント：結果が出た試合から、次の試合の選手名と先取数を入れる（どの画面を開いていても動く）
+  useEffect(() => dbSubscribe("matches", (m) => {
+    const upd = tourFillUpdates(m || {});
+    if (Object.keys(upd).length) Promise.resolve(dbUpdate("matches", upd)).catch(() => {});
+  }, () => {}), []);
   const [tab, setTab] = useState("home");
   const [roster, setRoster] = useState([]);
   const [rosterLoaded, setRosterLoaded] = useState(false); // 読み込みに成功した時だけ true。false の間は保存しない
@@ -3772,6 +3967,7 @@ function SettingsTab({ roster, setRoster, onRefresh, loaded, loadError, deviceMo
             {[
               { kind: "league", label: "リーグ（総当たり）", sub: "決められた相手全員と1回ずつ。順位がはっきり出ます" },
               { kind: "random", label: "ランダム", sub: "1人あたりの試合数を決めて、相手を割り当てます" },
+              { kind: "tournament", label: "トーナメント", sub: "負けたら敗者側へ回り、勝ち上がりで決勝を決めます" },
             ].map(({ kind, label, sub }) => (
               <div key={kind} style={{ marginBottom: kind === "league" ? 14 : 0 }}>
                 <div style={{ fontSize: 14.5, fontWeight: 900, color: C.ink }}>{label}</div>
@@ -5428,10 +5624,18 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
   const usePerTableRR = roundRobin && perTableRR && perTableEligible && groupOptions.includes(groupCount);
   const effectiveGames = usePerTableRR ? Math.max(0, players / groupCount - 1) : roundRobin ? players - 1 : games;
 
+  // 予選トーナメント（12人）：くじ順の参加者1〜12で対戦表を作る
+  const tourGenerate = () => {
+    if (curSpec.scoring !== "set") return { error: "予選トーナメントは得点方式をセットマッチにしてください（イベントの設定）。" };
+    const persons = todayRoster.slice(0, 12);
+    if (players !== 12 || persons.length < 12) return { error: "予選トーナメントは参加者12人で組みます。人数を12にして、参加者を12人そろえてください。" };
+    if (persons.some((p) => !p || !p.name || !clsOf(p))) return { error: "クラス（S/A/B/C）が入っていない参加者がいます。名簿でクラスを入れてください。" };
+    return { board: buildTourBoard(persons, BULK_TABLES, `t${Date.now().toString(36)}`), usedRelaxed: false };
+  };
   const run = () => {
     setBusy(true); setMsg(null);
     setTimeout(() => {
-      setResult(usePerTableRR ? perGroupRoundRobinGenerate(players, groupCount, { fixedTables: fixedGroupTable }) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
+      setResult(pMode === TOUR_MODE ? tourGenerate() : usePerTableRR ? perGroupRoundRobinGenerate(players, groupCount, { fixedTables: fixedGroupTable }) : bulkGenerateAuto(players, effectiveGames, groupSizes, lateSet, rivalTeamA, { earlySet }));
       setBusy(false);
     }, 20);
   };
@@ -5440,6 +5644,16 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
     if (!result || result.error) return null;
     const base = Date.now();
     return result.board.map((m, i) => {
+      if (m.tour) {
+        const pa = m.a !== null ? todayRoster[m.a - 1] : null;
+        const pb = m.b !== null ? todayRoster[m.b - 1] : null;
+        const rtA = pa ? tourTargetOf(clsOf(pa), m.tour.kind) : 0, rtB = pb ? tourTargetOf(clsOf(pb), m.tour.kind) : 0;
+        return { ...m, seq: i, matchId: randomMatchId(), createdAt: base + i * 1000,
+          n1: pa ? pa.name : tourRefLabel(m.tour.refA), n2: pb ? pb.name : tourRefLabel(m.tour.refB),
+          sub1: "", sub2: "", r1: parseInt(pa && pa.r, 10) || 0, r2: parseInt(pb && pb.r, 10) || 0,
+          sk1: skOf(pa || {}), sk2: skOf(pb || {}), cls1: clsOf(pa), cls2: clsOf(pb),
+          rt1: rtA, rt2: rtB, lenPct, matchMinutes: matchMinutesFor(curSpec.scoring, { rt1: rtA, rt2: rtB }, lenPct, per100Min) };
+      }
       const p1 = todayRoster[m.a - 1] || { name: `選手${m.a}`, r: "" };
       const p2 = todayRoster[m.b - 1] || { name: `選手${m.b}`, r: "" };
       const R1 = parseInt(p1.r, 10), R2 = parseInt(p2.r, 10);
@@ -5472,7 +5686,7 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
           version: 1, phase: "banking", brk: null, tot: [0, 0], rack: 1,
           balls: mkMatchBalls(),
           lastResult: null, hist: [], raceTo: [m.rt1, m.rt2],
-          names: [m.n1, m.n2], sub: [m.sub1 || "", m.sub2 || ""], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null,
+          names: [m.n1, m.n2], sub: [m.sub1 || "", m.sub2 || ""], table: m.table + 1, slot: m.slot, grp: m.grp != null ? m.grp : null, tour: m.tour || null,
           r1: m.r1 || 0, r2: m.r2 || 0, sk1: m.sk1 || 0, sk2: m.sk2 || 0, cls1: m.cls1 || "", cls2: m.cls2 || "", lenPct: m.lenPct || 100, matchMinutes: m.matchMinutes || 30,
           createdAt: m.createdAt, updatedAt: now, ...ruleFields(),
           ...(rivalTeamA ? { rival: true, teamNames: [rivalNameA || "Aチーム", rivalNameB || "Bチーム"] } : {}),
