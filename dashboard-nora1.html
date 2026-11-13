@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.293";
+const APP_VERSION = "1.294";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -5650,7 +5650,10 @@ function BulkScheduleTab({ roster, setRoster, onRefresh, loaded, loadError, prel
     if (players !== 12 || persons.length < 12) return { error: "予選トーナメントは参加者12人で組みます。人数を12にして、参加者を12人そろえてください。" };
     if (persons.some((p) => !p || !p.name || !clsOf(p))) return { error: "クラス（S/A/B/C）が入っていない参加者がいます。名簿でクラスを入れてください。" };
     try {
-      return { board: buildTourBoard(persons, BULK_TABLES, `t${Date.now().toString(36)}`), usedRelaxed: false };
+      const board = buildTourBoard(persons, BULK_TABLES, `t${Date.now().toString(36)}`);
+      // 画面の集計（総試合・コマ数）に使うので、ほかの組み方と同じ形の plan を付ける
+      const slots = Math.max(...board.map((m) => m.slot)) + 1;
+      return { board, plan: { total: board.length, slots, lower: "–" }, usedRelaxed: false };
     } catch (e) {
       return { error: `予選トーナメントの対戦表を作れませんでした（${(e && (e.message || e.name)) || "不明なエラー"}）` };
     }
