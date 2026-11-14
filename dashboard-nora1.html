@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.300";
+const APP_VERSION = "1.301";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3867,7 +3867,7 @@ function TourBracketSvg({ view }) {
   const nodes = {};
   view.cols.forEach((c) => c.matches.forEach((m) => { nodes[m.no] = m; }));
   const BW = 152, BH = 62;
-  const colX = (c) => 14 + c * 170;
+  const colX = (c) => 14 + c * 192;
   const rowY = (y) => 66 + y * 74;
   const box = (no) => {
     const p = TOUR_POS[no];
@@ -3885,7 +3885,6 @@ function TourBracketSvg({ view }) {
       // 見やすさのため、隣の列どうしの線だけ引く（列をまたぐ線・1回戦から敗者側へ戻る線は引かない）
       const sc = TOUR_POS[sn][0], tc = TOUR_POS[d.no][0];
       if (Math.abs(sc - tc) !== 1) return;
-      if (sn <= 6 && tc < sc) return;
       const s = box(sn);
       const fwd = s.x < tgt.x;
       const sx = fwd ? s.x + BW : s.x, tx = fwd ? tgt.x : tgt.x + BW;
@@ -3928,7 +3927,7 @@ function TourBracketSvg({ view }) {
           <text key={c} x={colX(c) + BW / 2} y={30} fontSize="16" fontWeight="900" fill={C.sub} textAnchor="middle">{lb}</text>
         ))}
         {lines.map((l) => (
-          <path key={l.key} d={l.d} fill="none" stroke={l.hot ? C.blue : C.line} strokeWidth={l.hot ? 2 : 1.5} />
+          <path key={l.key} d={l.d} fill="none" stroke={l.hot ? C.blue : "#7b8496"} strokeWidth={l.hot ? 3.5 : 2.5} strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {Object.keys(TOUR_POS).map((n) => boxOf(+n))}
       </svg>
