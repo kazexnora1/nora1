@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.310";
+const APP_VERSION = "1.312";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3898,9 +3898,9 @@ const TOUR_COL_LABEL = ["敗者側②", "敗者側①", "1回戦", "勝者側①
 function TourBracketSvg({ view }) {
   const nodes = {};
   view.cols.forEach((c) => c.matches.forEach((m) => { nodes[m.no] = m; }));
-  const BW = 172, BH = 88;
+  const BW = 176, BH = 84;
   const colX = (c) => 14 + c * 204;
-  const rowY = (y) => 74 + y * 100;
+  const rowY = (y) => 74 + y * 96;
   const box = (no) => {
     const p = TOUR_POS[no];
     return { x: colX(p[0]), y: rowY(p[1]) - BH / 2, cy: rowY(p[1]) };
@@ -3946,25 +3946,28 @@ function TourBracketSvg({ view }) {
     const st = m ? m.state : "待ち";
     const fill = st === "試合中" ? C.lightBlue : st === "終了" ? "#f4f6f9" : "#ffffff";
     const stroke = st === "試合中" ? C.blue : C.line;
+    // 1人分の行：名前は左、クラス・目標点は右。勝者は太字と▲、負けた側は灰色
     const row = (p, i, yy) => {
-      const won = m && m.winner === i, lost = !!m && m.winner !== null && m.winner !== undefined && m.winner !== i;
+      const won = !!m && m.winner === i, lost = !!m && m.winner !== null && m.winner !== undefined && m.winner !== i;
       const col = p && p.placeholder ? C.sub : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
+      const name = short(p ? p.name : "—");
+      const meta = p && p.cls ? `${p.cls}${p.target ? p.target : ""}` : "";
       return (
-        <text key={i} x={b.x + 8} y={yy} fontSize="18" fontWeight={won ? 900 : lost ? 500 : 700} fill={col}
-          fontStyle={p && p.placeholder ? "italic" : "normal"}>
-          {won ? "▲ " : lost ? "　" : ""}{short(p ? p.name : "—")}
-          {p && p.cls ? <tspan fill={C.sub} fontSize="14" fontWeight="800"> {p.cls}{p.target ? p.target : ""}</tspan> : null}
-        </text>
+        <g key={i}>
+          <text x={b.x + 10} y={yy} fontSize="17" fontWeight={won ? 900 : lost ? 500 : 700} fill={col}>{won ? "▲ " : ""}{name}</text>
+          {meta ? <text x={b.x + BW - 10} y={yy} fontSize="13" fontWeight="800" fill={C.sub} textAnchor="end">{meta}</text> : null}
+        </g>
       );
     };
+    // 高さを揃える：上段（試合番号・開始時間）と下段（2人分）を、箱の中で等間隔に置く
     return (
       <g key={no}>
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
-        <text x={b.x + BW - 8} y={b.y + 22} fontSize="18" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
-        {est ? <text x={b.x + BW - 8} y={b.y + 42} fontSize="14" fontWeight="800" fill={C.sub} textAnchor="end">約{est}</text> : null}
-        {m ? row(m.a, 0, b.y + 54) : null}
-        {m ? row(m.b, 1, b.y + 80) : null}
-        {!m ? <text x={b.x + 8} y={b.y + 44} fontSize="17" fill={C.sub}>({no})</text> : null}
+        <text x={b.x + 10} y={b.y + 22} fontSize="17" fontWeight="900" fill={C.blue}>({no})</text>
+        {est ? <text x={b.x + BW - 10} y={b.y + 22} fontSize="13" fontWeight="800" fill={C.sub} textAnchor="end">約{est}</text> : null}
+        {m ? row(m.a, 0, b.y + 50) : null}
+        {m ? row(m.b, 1, b.y + 72) : null}
+        {!m ? <text x={b.x + 10} y={b.y + 50} fontSize="17" fontWeight="700" fill={C.sub}>待ち</text> : null}
       </g>
     );
   };
