@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.305";
+const APP_VERSION = "1.306";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1418,8 +1418,8 @@ function tourFillUpdates(matches) {
   const pick = (ref, group) => {
     const no = ref.w !== undefined ? ref.w : ref.l;
     const src = byNo[`${group}|${no}`];
-    if (!src || src.phase !== "done" || !Array.isArray(src.names)) return null;
-    const w = matchWinnerIndex(src);
+    if (!src || !Array.isArray(src.names)) return null;
+    const w = matchWinnerIndex(src);            // 得点で決まる勝者（本部の「試合終了」と同じ判定）
     if (w !== 0 && w !== 1) return null;
     const side = ref.w !== undefined ? w : 1 - w;
     const name = src.names[side];
@@ -1430,7 +1430,7 @@ function tourFillUpdates(matches) {
   all.forEach(([id, m]) => {
     try {
       // 終了した試合は触らない。呼び出し中・試合中でも、選手名が仮のままなら埋める
-      if (m.phase === "done") return;
+      if (matchWinnerIndex(m) === 0 || matchWinnerIndex(m) === 1) return;   // 終了した試合（得点で判定）は触らない
       // 選手名が仮のまま、または先取数が決まっていない試合だけを埋める
       const placeholder = isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]);
       const noSets = !(m.raceTo && m.raceTo[0] > 0 && m.raceTo[1] > 0);
@@ -1485,7 +1485,7 @@ function App() {
       if (!recs.length) { setTourMsg(""); return; }
       const upd = tourFillUpdates(m || {});
       const n = Object.keys(upd).length;
-      const done = recs.filter((x) => x.phase === "done").length;
+      const done = recs.filter((x) => matchWinnerIndex(x) === 0 || matchWinnerIndex(x) === 1).length;
       const ph = recs.filter((x) => isTourPlaceholder(x.names && x.names[0]) || isTourPlaceholder(x.names && x.names[1])).length;
       const info = `予選トーナメント：記録${recs.length}件・終了${done}件・仮の名前${ph}件`;
       if (!n) { setTourMsg(`${info}（埋められる試合なし）`); return; }
