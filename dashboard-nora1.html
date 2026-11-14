@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.314";
+const APP_VERSION = "1.315";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1272,7 +1272,7 @@ const TOUR = (function () {
     { no: 16, kind: "勝者側", a: { w: 13 }, b: { w: 14 } },
     { no: 17, kind: "決勝",   a: { w: 15 }, b: { w: 16 } },
   ];
-  const ROUND = (no) => (no === 17 ? "決勝" : "予選");   // 表記：(17)のみ決勝、他は予選
+  const ROUND = (no) => tourRoundName(no);
   const ORDER = DEF.map((m) => m.no);
 
   // 先取数：各選手のクラスの基本値。敗者側の試合は1つ減らす
@@ -1389,7 +1389,8 @@ const TOUR = (function () {
 
 // 予選トーナメント：表示・先取数・対戦表・結果からの更新
 const TOUR_MODE = "tour12";
-const tourRoundLabel = (no) => (no === 17 ? "決勝" : "予選");
+const tourRoundName = (no) => (no === 17 ? "決勝" : (no === 15 || no === 16) ? "準決勝" : (no >= 11 && no <= 14) ? "準々決勝" : (no <= 6) ? "1回戦" : "敗者側");
+const tourRoundLabel = (no) => tourRoundName(no);
 const tourRefLabel = (ref) => (ref.w !== undefined ? `(${ref.w})の勝者` : `(${ref.l})の敗者`);
 const isTourPlaceholder = (n) => /^\(\d+\)の(勝者|敗者)$/.test(String(n || ""));
 // その試合での、1人の先取数（敗者側の試合は、クラスの基本数から1つ減らす）
@@ -1802,7 +1803,8 @@ function TimelineSlotCard({
   const rt = m ? (m.raceTo || [0, 0]) : [0, 0];
   const sub = m && Array.isArray(m.sub) ? m.sub : ["", ""];
   const tots = m && Array.isArray(m.tot) ? m.tot : [0, 0];
-  const w = st === "done" ? matchWinnerIndex(m) : null;
+  const isDone = st === "done" || (!!m && (matchWinnerIndex(m) === 0 || matchWinnerIndex(m) === 1));   // 得点で決まった試合も終わり
+  const w = isDone ? matchWinnerIndex(m) : null;
 
   // 試合中の進行バー用：残り時間だけは時間経過そのものでも変わるので、定期的に再描画する
   const [, forceTick] = useState(0);
@@ -2116,8 +2118,8 @@ function TimelineSlotCard({
               border: st === "call" ? `1.5px solid ${C.blue}` : "none",
               borderRadius: 12, padding: "3px 10px", fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap",
             }}>{style.badge}</span>
-            {m && m.phaseTag && (
-              <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap", color: m.phaseTag === "final" ? C.hill : C.sub }}>{m.phaseTag === "final" ? "決勝" : "予選"}</span>
+            {m && (m.phaseTag || m.tour) && (
+              <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap", color: m.phaseTag === "final" || (m.tour && m.tour.no === 17) ? C.hill : C.sub }}>{m.tour ? tourRoundName(m.tour.no) : (m.phaseTag === "final" ? "決勝" : "予選")}</span>
             )}
           </div>
 
@@ -2125,7 +2127,7 @@ function TimelineSlotCard({
                  スコアはカードをタップ→「✏️ スコアを修正する」で確認・修正できる） */}
           <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 4px" }}>
             {[0, 1].map((i) => {
-              const col = st === "done" ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red);
+              const col = isDone ? (won(i) ? C.win : C.sub) : (i === 0 ? C.blue : C.red);
               const label = String(names[i] || "").split("（")[0];
               const isPair = !!sub[i];
               const members = isPair ? String(sub[i]).split("・") : [];
@@ -2133,8 +2135,8 @@ function TimelineSlotCard({
                 <div key={i} style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, minWidth: 0 }}>
                     <div style={{ flex: 1, minWidth: 0, textAlign: "left", fontSize: 16, fontWeight: won(i) ? 900 : 700, color: col, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.2 }}>{label}</div>
-                    {isPair && rt[i] > 0 && (
-                      <div style={{ flexShrink: 0, fontSize: 15, fontWeight: 900, color: col, lineHeight: 1.2 }}>{st === "done" ? tots[i] : rt[i]}</div>
+                    {(isPair ? rt[i] > 0 : isDone) && (
+                      <div style={{ flexShrink: 0, fontSize: 15, fontWeight: 900, color: col, lineHeight: 1.2 }}>{isDone ? tots[i] : rt[i]}</div>
                     )}
                   </div>
                   {isPair && members.map((mem, k) => (
@@ -3964,6 +3966,7 @@ function TourBracketSvg({ view }) {
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
         <text x={b.x + BW - 10} y={b.y + 27} fontSize="17" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
         {est ? <text x={b.x + BW - 10} y={b.y + 50} fontSize="13" fontWeight="800" fill={C.sub} textAnchor="end">約{est}</text> : null}
+        {m && m.state === "終了" && m.score ? <text x={b.x + BW - 10} y={b.y + 50} fontSize="15" fontWeight="900" fill={C.ink} textAnchor="end">{m.score[0]}-{m.score[1]}</text> : null}
         {m ? row(m.a, 0, b.y + 27) : null}
         {m ? row(m.b, 1, b.y + 50) : null}
         {!m ? <text x={b.x + 10} y={b.y + 27} fontSize="17" fontWeight="700" fill={C.sub}>待ち</text> : null}
@@ -6758,6 +6761,7 @@ function planMatchUpdate(updates, qm, lenPct, minutes, now) {
 
 /* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
 function roundLabelOf(m) {
+  if (m && m.tour) return tourRoundName(m.tour.no);
   if (!m || !m.bracket) return "予選";
   const total = Math.round(Math.log2(m.bracketSize || 8));
   const r = m.bracketRound || 1;
