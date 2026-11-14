@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.307";
+const APP_VERSION = "1.309";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1414,12 +1414,12 @@ function tourFillUpdates(matches) {
   const all = Object.entries(matches || {}).filter(([, m]) => m && m.tour && m.tour.refA && m.tour.refB);
   const byNo = {};
   all.forEach(([, m]) => { byNo[`${m.tour.group}|${m.tour.no}`] = m; });
-  // 勝った側（w）か、負けた側（l）の選手を取り出す。結果が出ていなければ null
+  // 勝った側（w）か、負けた側（l）の選手を取り出す。その試合の結果が決まっていなければ null
   const pick = (ref, group) => {
     const no = ref.w !== undefined ? ref.w : ref.l;
     const src = byNo[`${group}|${no}`];
     if (!src || !Array.isArray(src.names)) return null;
-    const w = matchWinnerIndex(src);            // 得点で決まる勝者（本部の「試合終了」と同じ判定）
+    const w = matchWinnerIndex(src);            // 得点で決まる勝者（本部の判定と同じ）
     if (w !== 0 && w !== 1) return null;
     const side = ref.w !== undefined ? w : 1 - w;
     const name = src.names[side];
@@ -1429,21 +1429,25 @@ function tourFillUpdates(matches) {
   const upd = {};
   all.forEach(([id, m]) => {
     try {
-      // 終了した試合は触らない。呼び出し中・試合中でも、選手名が仮のままなら埋める
-      if (matchWinnerIndex(m) === 0 || matchWinnerIndex(m) === 1) return;   // 終了した試合（得点で判定）は触らない
-      // 選手名が仮のまま、または先取数が決まっていない試合だけを埋める
-      const placeholder = isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]);
-      const noSets = !(m.raceTo && m.raceTo[0] > 0 && m.raceTo[1] > 0);
-      if (!placeholder && !noSets) return;
+      // 終了した試合は触らない（得点で判定）
+      if (matchWinnerIndex(m) === 0 || matchWinnerIndex(m) === 1) return;
+      // 片側ずつ埋める：決まった側から、その選手の名前・クラス・先取数を入れる（もう一方が仮のままでもよい）
       const A = pick(m.tour.refA, m.tour.group), B = pick(m.tour.refB, m.tour.group);
-      if (!A || !B) return;
+      if (!A && !B) return;
+      const names = [A ? A.name : m.names[0], B ? B.name : m.names[1]];
+      const cls1 = A ? (A.cls || "") : (m.cls1 || ""), cls2 = B ? (B.cls || "") : (m.cls2 || "");
+      const rt0 = A ? tourTargetOf(A.cls, m.tour.kind) : (m.raceTo ? m.raceTo[0] || 0 : 0);
+      const rt1 = B ? tourTargetOf(B.cls, m.tour.kind) : (m.raceTo ? m.raceTo[1] || 0 : 0);
+      const changed = names[0] !== m.names[0] || names[1] !== m.names[1] || rt0 !== ((m.raceTo || [])[0] || 0) || rt1 !== ((m.raceTo || [])[1] || 0);
+      if (!changed) return;                                  // 変わらなければ書き込まない
       upd[id] = {
-        ...m, names: [A.name, B.name], cls1: A.cls || "", cls2: B.cls || "", r1: A.r || 0, r2: B.r || 0,
-        sk1: A.sk || 0, sk2: B.sk || 0, raceTo: [tourTargetOf(A.cls, m.tour.kind), tourTargetOf(B.cls, m.tour.kind)],
-        updatedAt: Date.now(),
+        ...m, names, cls1, cls2,
+        r1: A ? (A.r || 0) : (m.r1 || 0), r2: B ? (B.r || 0) : (m.r2 || 0),
+        sk1: A ? (A.sk || 0) : (m.sk1 || 0), sk2: B ? (B.sk || 0) : (m.sk2 || 0),
+        raceTo: [rt0, rt1], updatedAt: Date.now(),
       };
     } catch (err) {
-      console.warn("予選トーナメントの更新（試合" + id + "）", err);   // 1件の不具合で、ほかの試合の更新は止めない
+      console.warn("予選トーナメントの更新（試合" + id + "）", err);
     }
   });
   return upd;
@@ -3844,7 +3848,7 @@ function tourTableView(matches) {
     if (!m) return null;
     const w = matchWinnerIndex(m);             // 勝者は得点で決まる（本部の判定と同じ）
     const state = (w === 0 || w === 1) ? "終了" : m.phase === "play" ? "試合中" : (isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]) ? "待ち" : "未開始");
-    return { no, kind: m.tour.kind, a: sideOf(m, 0), b: sideOf(m, 1), winner: w, state, score: m.tot || [0, 0] };
+    return { no, kind: m.tour.kind, a: sideOf(m, 0), b: sideOf(m, 1), winner: w, state, score: m.tot || [0, 0], slot: m.slot, mins: m.matchMinutes };
   };
   const nums = (from, to) => Array.from({ length: to - from + 1 }, (_, k) => from + k);
   const cols = [
@@ -3925,8 +3929,20 @@ function TourBracketSvg({ view }) {
       else if (hot) stub.hot = true;
     });
   });
+  // おおよその開始時間：設定の開始時刻 ＋ 順番 × （平均の試合時間 ＋ 交代時間）
+  const st = (typeof loadSettings === "function" ? loadSettings() : {}) || {};
+  const baseMin = (Number(st.startH) || 19) * 60 + (Number(st.startM) || 0);
+  const mins = Object.values(nodes).map((x) => Number(x.mins)).filter((x) => x > 0);
+  const avgMin = mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 60;
+  const slotMin = avgMin + (Number(st.changeoverMin) || 0);
+  const estOf = (x) => {
+    if (!x || x.slot == null) return "";
+    const tm = baseMin + Math.round(Number(x.slot) * slotMin);
+    return `${String(Math.floor(tm / 60) % 24).padStart(2, "0")}:${String(tm % 60).padStart(2, "0")}`;
+  };
   const boxOf = (no) => {
     const m = nodes[no]; const b = box(no);
+    const est = m && m.state !== "終了" ? estOf(m) : "";
     const st = m ? m.state : "待ち";
     const fill = st === "試合中" ? C.lightBlue : st === "終了" ? "#f4f6f9" : "#ffffff";
     const stroke = st === "試合中" ? C.blue : C.line;
@@ -3945,6 +3961,7 @@ function TourBracketSvg({ view }) {
       <g key={no}>
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
         <text x={b.x + BW - 8} y={b.y + 20} fontSize="18" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
+        {est ? <text x={b.x + 8} y={b.y + 20} fontSize="15" fontWeight="800" fill={C.sub}>約{est}</text> : null}
         {m ? row(m.a, 0, b.y + 32) : null}
         {m ? row(m.b, 1, b.y + 58) : null}
         {!m ? <text x={b.x + 8} y={b.y + 38} fontSize="17" fill={C.sub}>({no})</text> : null}
