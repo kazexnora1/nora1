@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.302";
+const APP_VERSION = "1.303";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1411,30 +1411,39 @@ function buildTourBoard(persons, tables, group) {
 }
 // 結果が出た試合から、次の試合の選手名・先取数を入れる（同じ対戦表 group の試合だけを見る）
 function tourFillUpdates(matches) {
-  const all = Object.entries(matches || {}).filter(([, m]) => m && m.tour);
+  const all = Object.entries(matches || {}).filter(([, m]) => m && m.tour && m.tour.refA && m.tour.refB);
   const byNo = {};
   all.forEach(([, m]) => { byNo[`${m.tour.group}|${m.tour.no}`] = m; });
+  // 勝った側（w）か、負けた側（l）の選手を取り出す。結果が出ていなければ null
   const pick = (ref, group) => {
-    const src = byNo[`${group}|${ref.w !== undefined ? ref.w : ref.l}`];
-    if (!src || src.phase !== "done") return null;            // まだ結果が出ていない
+    const no = ref.w !== undefined ? ref.w : ref.l;
+    const src = byNo[`${group}|${no}`];
+    if (!src || src.phase !== "done" || !Array.isArray(src.names)) return null;
     const w = matchWinnerIndex(src);
     if (w !== 0 && w !== 1) return null;
-    const side = ref.w !== undefined ? w : 1 - w;             // 勝者なら勝った側、敗者なら負けた側
-    const name = side === 0 ? src.names[0] : src.names[1];
+    const side = ref.w !== undefined ? w : 1 - w;
+    const name = src.names[side];
     if (!name || isTourPlaceholder(name)) return null;
     return { name, cls: side === 0 ? src.cls1 : src.cls2, r: side === 0 ? src.r1 : src.r2, sk: side === 0 ? src.sk1 : src.sk2 };
   };
   const upd = {};
   all.forEach(([id, m]) => {
-    if (m.phase !== "banking") return;
-    if (!(isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]))) return;
-    const A = pick(m.tour.refA, m.tour.group), B = pick(m.tour.refB, m.tour.group);
-    if (!A || !B) return;
-    upd[id] = {
-      ...m, names: [A.name, B.name], cls1: A.cls || "", cls2: B.cls || "", r1: A.r || 0, r2: B.r || 0,
-      sk1: A.sk || 0, sk2: B.sk || 0, raceTo: [tourTargetOf(A.cls, m.tour.kind), tourTargetOf(B.cls, m.tour.kind)],
-      updatedAt: Date.now(),
-    };
+    try {
+      if (m.phase !== "banking") return;
+      // 選手名が仮のまま、または先取数が決まっていない試合だけを埋める
+      const placeholder = isTourPlaceholder(m.names && m.names[0]) || isTourPlaceholder(m.names && m.names[1]);
+      const noSets = !(m.raceTo && m.raceTo[0] > 0 && m.raceTo[1] > 0);
+      if (!placeholder && !noSets) return;
+      const A = pick(m.tour.refA, m.tour.group), B = pick(m.tour.refB, m.tour.group);
+      if (!A || !B) return;
+      upd[id] = {
+        ...m, names: [A.name, B.name], cls1: A.cls || "", cls2: B.cls || "", r1: A.r || 0, r2: B.r || 0,
+        sk1: A.sk || 0, sk2: B.sk || 0, raceTo: [tourTargetOf(A.cls, m.tour.kind), tourTargetOf(B.cls, m.tour.kind)],
+        updatedAt: Date.now(),
+      };
+    } catch (err) {
+      console.warn("予選トーナメントの更新（試合" + id + "）", err);   // 1件の不具合で、ほかの試合の更新は止めない
+    }
   });
   return upd;
 }
