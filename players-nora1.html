@@ -113,7 +113,7 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.038";
+const APP_VERSION = "1.039";
 const BUILD_TIME = "2026-09-22 ラック終了時、球ゾーンに大きなポップアップを表示（次のブレイク→このラックのスコア→ヒル/勝ちまでの数字またはヒルヒル案内→戻る/次のラックへ、の順）";
 
 
@@ -479,6 +479,147 @@ function bracketMatchesForRound(matches, round) {
 }
 function bracketTotalRounds(size) { return Math.round(Math.log2(size || 8)); }
 /* ========= 対戦表タブ（B1のタイムラインと同じ見た目） ========= */
+
+/* ========= 予選トーナメント（本部B1と同じ見た目・同じ判定） =========
+   1回戦(1)〜(6)、敗者側(7)〜(10)、勝者側(11)〜(16)、決勝(17)。線・注釈・開始時間・スコアは本部と揃える */
+const TOUR_DEF_B2 = [
+  { no: 1, kind: "1回戦", a: { p: 1 }, b: { p: 2 } }, { no: 2, kind: "1回戦", a: { p: 3 }, b: { p: 4 } },
+  { no: 3, kind: "1回戦", a: { p: 5 }, b: { p: 6 } }, { no: 4, kind: "1回戦", a: { p: 7 }, b: { p: 8 } },
+  { no: 5, kind: "1回戦", a: { p: 9 }, b: { p: 10 } }, { no: 6, kind: "1回戦", a: { p: 11 }, b: { p: 12 } },
+  { no: 7, kind: "敗者側", a: { l: 1 }, b: { l: 2 } }, { no: 8, kind: "敗者側", a: { l: 3 }, b: { l: 4 } },
+  { no: 9, kind: "敗者側", a: { l: 5 }, b: { l: 6 } }, { no: 10, kind: "敗者側", a: { w: 7 }, b: { w: 8 } },
+  { no: 11, kind: "勝者側", a: { w: 1 }, b: { w: 9 } }, { no: 12, kind: "勝者側", a: { w: 2 }, b: { w: 3 } },
+  { no: 13, kind: "勝者側", a: { w: 4 }, b: { w: 5 } }, { no: 14, kind: "勝者側", a: { w: 6 }, b: { w: 10 } },
+  { no: 15, kind: "勝者側", a: { w: 11 }, b: { w: 12 } }, { no: 16, kind: "勝者側", a: { w: 13 }, b: { w: 14 } },
+  { no: 17, kind: "決勝", a: { w: 15 }, b: { w: 16 } },
+];
+const TOUR_POS_B2 = {
+  10: [0, 1.5], 7: [1, 0.5], 8: [1, 2.5], 9: [1, 4.5],
+  1: [2, 0], 2: [2, 1], 3: [2, 2], 4: [2, 3], 5: [2, 4], 6: [2, 5],
+  11: [3, 0], 12: [3, 1.5], 13: [3, 3.5], 14: [3, 5],
+  15: [4, 0.75], 16: [4, 4.25],
+  17: [5, 2.5],
+};
+const TOUR_COL_LABEL_B2 = ["敗者側②", "敗者側①", "1回戦", "勝者側①", "勝者側②", "決勝"];
+const tourRoundName = (no) => (no === 17 ? "決勝" : (no === 15 || no === 16) ? "準決勝" : (no >= 11 && no <= 14) ? "準々決勝" : (no <= 6) ? "1回戦" : "敗者側");
+const isTourPlaceholderB2 = (n) => /^\(\d+\)の(勝者|敗者)$/.test(String(n || ""));
+// 先取数の基本（女子プロ6・A5・B4・C3）。敗者側の試合は1つ減らす
+const TOUR_TARGET_BASE = { S: 6, A: 5, B: 4, C: 3 };
+const tourTargetOfB2 = (cls, kind) => Math.max(0, (TOUR_TARGET_BASE[cls] || 0) - (kind === "敗者側" ? 1 : 0));
+const tourDecided = (m) => { const w = m ? matchWinnerIndex(m) : null; return w === 0 || w === 1; };
+// 対戦表の並び：最新の対戦表（group）を、試合番号つきで集める
+function tourTableViewB2(matches) {
+  const recs = Object.entries(matches || {}).filter(([, m]) => m && m.tour).map(([id, m]) => ({ ...m, id }));
+  if (!recs.length) return null;
+  const latest = recs.reduce((a, b) => ((b.createdAt || 0) > (a.createdAt || 0) ? b : a));
+  const group = latest.tour.group;
+  const byNo = {};
+  recs.filter((m) => m.tour.group === group).forEach((m) => { byNo[m.tour.no] = m; });
+  const sideOf = (m, i) => {
+    const name = (m.names && m.names[i]) || "";
+    return { name, placeholder: isTourPlaceholderB2(name) || !name, cls: (i === 0 ? m.cls1 : m.cls2) || "", target: (m.raceTo && m.raceTo[i]) || 0 };
+  };
+  const build = (no) => {
+    const m = byNo[no];
+    if (!m) return null;
+    const w = matchWinnerIndex(m);
+    const state = (w === 0 || w === 1) ? "終了" : m.phase === "play" ? "試合中" : (isTourPlaceholderB2(m.names && m.names[0]) || isTourPlaceholderB2(m.names && m.names[1]) ? "待ち" : "未開始");
+    return { no, kind: m.tour.kind, a: sideOf(m, 0), b: sideOf(m, 1), winner: w, state, score: m.tot || [0, 0], slot: m.slot, mins: m.matchMinutes, rec: m };
+  };
+  const nums = Object.keys(TOUR_POS_B2).map((k) => +k);
+  const all = {};
+  nums.forEach((n) => { all[n] = build(n); });
+  return { group, byNo: all };
+}
+// 開始時間の目安：基準は19:00、試合の平均時間で順番ごとに足す（本部の設定が無いので基準は固定）
+function tourEstOfB2(view, slot) {
+  const mins = Object.values(view.byNo).filter(Boolean).map((x) => Number(x.mins)).filter((x) => x > 0);
+  const avg = mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 60;
+  const tm = 19 * 60 + Math.round(Number(slot || 0) * avg);
+  return `${String(Math.floor(tm / 60) % 24).padStart(2, "0")}:${String(tm % 60).padStart(2, "0")}`;
+}
+// トーナメント表（写真の形）。未開始の試合をタップすると確認してから、その試合のスコアを担当する
+function TourBracketB2({ view, onTapMatch }) {
+  const BW = 176, BH = 64;
+  const colX = (c) => 14 + c * 204;
+  const rowY = (y) => 70 + y * 86;
+  const box = (no) => { const p = TOUR_POS_B2[no]; return { x: colX(p[0]), y: rowY(p[1]) - BH / 2, cy: rowY(p[1]) }; };
+  const W = colX(5) + BW + 14, H = rowY(11.5) + BH / 2 + 16;
+  const short = (s) => (s && s.length > 6 ? s.slice(0, 6) + "…" : s || "");
+  const lines = [];
+  TOUR_DEF_B2.forEach((d) => {
+    const tgt = box(d.no);
+    [d.a, d.b].forEach((ref) => {
+      const sn = ref.w !== undefined ? ref.w : ref.l;
+      if (sn === undefined) return;
+      const sc = TOUR_POS_B2[sn][0], tc = TOUR_POS_B2[d.no][0];
+      if (Math.abs(sc - tc) !== 1) return;
+      const s = box(sn);
+      const fwd = s.x < tgt.x;
+      const sx = fwd ? s.x + BW : s.x, tx = fwd ? tgt.x : tgt.x + BW;
+      const xj = (sx + tx) / 2;
+      const sm = view.byNo[sn];
+      const hot = ref.w !== undefined && !!sm && sm.winner !== null && sm.winner !== undefined;
+      lines.push({ key: `${sn}-${d.no}`, d: `M${sx},${s.cy} H${xj} V${tgt.cy}`, hot });
+      const stub = lines.find((l) => l.key === `t-${d.no}`);
+      if (!stub) lines.push({ key: `t-${d.no}`, d: `M${xj},${tgt.cy} H${tx}`, hot });
+      else if (hot) stub.hot = true;
+    });
+  });
+  const boxOf = (no) => {
+    const m = view.byNo[no]; const b = box(no);
+    const st = m ? m.state : "待ち";
+    const fill = st === "試合中" ? C.lightBlue : st === "終了" ? "#f4f6f9" : "#ffffff";
+    const stroke = st === "試合中" ? C.blue : C.line;
+    const tappable = !!m && st === "未開始" && !!onTapMatch;
+    const row = (p, i, yy) => {
+      const won = !!m && m.winner === i, lost = !!m && m.winner !== null && m.winner !== undefined && m.winner !== i;
+      const col = p && p.placeholder ? C.sub : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
+      const meta = p && p.cls ? `${p.cls}${p.target ? p.target : ""}` : "";
+      return React.createElement("text", { key: i, x: b.x + 10, y: yy, fontSize: 17, fontWeight: won ? 900 : lost ? 500 : 700, fill: col },
+        (won ? "▲ " : "") + short(p ? p.name : "—"),
+        meta ? React.createElement("tspan", { fontSize: 13, fontWeight: 800, fill: C.sub }, " " + meta) : null);
+    };
+    const kids = [
+      React.createElement("rect", { key: "r", x: b.x, y: b.y, width: BW, height: BH, rx: 8, fill, stroke, strokeWidth: st === "試合中" ? 2 : 1 }),
+      React.createElement("text", { key: "n", x: b.x + BW - 10, y: b.y + 27, fontSize: 17, fontWeight: 900, fill: C.blue, textAnchor: "end" }, `(${no})`),
+    ];
+    if (m && m.state === "終了" && m.score) kids.push(React.createElement("text", { key: "s", x: b.x + BW - 10, y: b.y + 50, fontSize: 15, fontWeight: 900, fill: C.ink, textAnchor: "end" }, `${m.score[0]}-${m.score[1]}`));
+    else if (m && m.slot != null && st !== "終了") kids.push(React.createElement("text", { key: "t", x: b.x + BW - 10, y: b.y + 50, fontSize: 13, fontWeight: 800, fill: C.sub, textAnchor: "end" }, `約${tourEstOfB2(view, m.slot)}`));
+    if (m) { kids.push(row(m.a, 0, b.y + 27)); kids.push(row(m.b, 1, b.y + 50)); }
+    else kids.push(React.createElement("text", { key: "w", x: b.x + 10, y: b.y + 50, fontSize: 17, fontWeight: 700, fill: C.sub }, "待ち"));
+    const onClick = tappable ? () => {
+      const names = m.a.name + " 対 " + m.b.name;
+      if (!window.confirm(`(${no})　${m.kind}\n${names}\n\nこの試合のスコアを担当しますか？`)) return;
+      onTapMatch(m.rec);
+    } : undefined;
+    return React.createElement("g", { key: no, onClick, style: { cursor: tappable ? "pointer" : "default" } }, ...kids);
+  };
+  const notes = TOUR_DEF_B2.filter((d) => d.kind === "敗者側" && (d.no === 9 || d.no === 10)).map((d) => {
+    const next = TOUR_DEF_B2.find((x) => [x.a, x.b].some((r) => r.w === d.no));
+    return next ? { no: d.no, to: next.no } : null;
+  }).filter(Boolean);
+  const colLabels = TOUR_COL_LABEL_B2.map((lb, c) => React.createElement("text", { key: "c" + c, x: colX(c) + BW / 2, y: 30, fontSize: 16, fontWeight: 900, fill: C.sub, textAnchor: "middle" }, lb));
+  const pathEls = lines.map((l) => React.createElement("path", { key: l.key, d: l.d, fill: "none", stroke: l.hot ? C.blue : "#7b8496", strokeWidth: l.hot ? 3.5 : 2.5, strokeLinejoin: "round", strokeLinecap: "round" }));
+  const boxEls = Object.keys(TOUR_POS_B2).map((n) => boxOf(+n));
+  const noteEls = notes.map((nt) => { const b = box(nt.no); return React.createElement("text", { key: "note" + nt.no, x: b.x + 4, y: b.y + BH + 20, fontSize: 15, fontWeight: 800, fill: C.sub }, `勝者は(${nt.to})へ`); });
+  return React.createElement("div", { style: { overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 8 } },
+    React.createElement("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, style: { display: "block", minWidth: W } }, ...colLabels, ...pathEls, ...boxEls, ...noteEls));
+}
+// 🏆 表タブ：予選トーナメントの対戦表を、本部と同じように表示する（未開始の試合はタップでスコア担当）
+function TourTableTabB2({ onPick }) {
+  const [matches, setMatches] = useState({});
+  useEffect(() => subscribeAllMatches((m) => setMatches(m || {}), () => { }), []);
+  const view = useMemo(() => tourTableViewB2(matches), [matches]);
+  if (!view) return React.createElement("div", { style: { padding: 24, textAlign: "center", color: C.sub, fontSize: 14 } }, "予選トーナメントの対戦表がまだありません。");
+  const done = Object.values(view.byNo).filter((x) => x && x.winner !== null && x.winner !== undefined).length;
+  return React.createElement("div", { style: { padding: "12px 10px 28px", color: C.ink } },
+    React.createElement("div", { style: { textAlign: "center", marginBottom: 10 } },
+      React.createElement("div", { style: { fontSize: 16, fontWeight: 900 } }, "🏆 予選トーナメント"),
+      React.createElement("div", { style: { fontSize: 12.5, color: C.sub, marginTop: 3 } }, `終了 ${done} / 17試合・未開始の試合をタップするとスコアを担当できます`)),
+    React.createElement(TourBracketB2, { view, onTapMatch: onPick }));
+}
+
 function TimelineTab({ myMatchId, onPick }) {
     const [cols, setCols] = useState([[], [], []]);
     const [raw, setRaw] = useState({});
@@ -585,7 +726,8 @@ function TimelineTab({ myMatchId, onPick }) {
             "\u540C\u671F\u30A8\u30E9\u30FC: ",
             err)));
 }
-function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
+function TimelineSlotCard({ m, st: stRaw, mine, onPick, blockedBy }) {
+    const st = (stRaw !== "done" && m && m.tour && tourDecided(m)) ? "done" : stRaw;
     const names = m.names || ["", ""];
     const tot = m.tot || [0, 0];
     const rt = m.raceTo || [0, 0];
@@ -630,6 +772,8 @@ function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
         } },
         clickable && !mine && (React.createElement("span", { style: { position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" } }, "\u25B6 \u62C5\u5F53\u3059\u308B")),
         mine && React.createElement("span", { style: { position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 900, color: C.win, whiteSpace: "nowrap" } }, "\u25CF \u62C5\u5F53\u4E2D"),
+        m && m.tour && React.createElement("span", { style: { position: "absolute", top: 4, right: 8, fontSize: 14, fontWeight: 900, color: C.blue } }, `(${m.tour.no})`),
+        m && m.tour && React.createElement("span", { style: { position: "absolute", top: 5, left: 8, fontSize: 11, fontWeight: 800, color: C.sub } }, tourRoundName(m.tour.no)),
         React.createElement("div", { style: { textAlign: "center" } },
             React.createElement("span", { style: {
                     display: "inline-block", background: style.badgeBg, color: style.badgeCol,
@@ -646,10 +790,12 @@ function TimelineSlotCard({ m, st, mine, onPick, blockedBy }) {
                     flexShrink: 0, fontVariantNumeric: "tabular-nums", lineHeight: 1.2,
                     fontSize: st === "done" ? 17 : 21, fontWeight: 900,
                     color: st === "done" ? (won(i) ? C.win : C.sub) : C.ink,
-                } }, st === "done" ? (m.bothLose ? "－" : won(i) ? "勝" : "負") : st === "live" ? tot[i] : "")))))));
+                } }, st === "done" ? (m.bothLose ? "－" : (m.tour || m.scoring === "set") ? tot[i] : won(i) ? "勝" : "負") : st === "live" ? tot[i] : "")))))));
 }
 /* 予選／準々決勝／準決勝／決勝。決勝トーナメントの試合だけ回戦名を出す */
 function roundLabelOf(m) {
+    if (m && m.tour)
+        return tourRoundName(m.tour.no);
     if (!m || !m.bracket)
         return "予選";
     const total = Math.round(Math.log2(m.bracketSize || 8));
@@ -1770,6 +1916,9 @@ function Shell() {
         };
     });
     const [tab, setTab] = useState("scorer");
+    const [tourOn, setTourOn] = useState(false);
+    useEffect(() => subscribeAllMatches((m) => setTourOn(Object.values(m || {}).some((x) => x && x.tour)), () => { }), []);
+    const tabListB2 = [["timeline", "🗓 タイム"], ...(tourOn ? [["tour", "🏆 表"]] : []), ["tables", "🐾 卓"], ["schedule", "📋 予定"], ["qr", "📱 QR"], ["scorer", "🎯 スコア"]];
     const [showStandings, setShowStandings] = useState(false);
     const startRef = useRef(null); // タブをなぞり始めた位置
     const swipedRef = useRef(false); // なぞった直後のタップでタブが切り替わらないようにする
@@ -1831,7 +1980,7 @@ function Shell() {
     };
     return (React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, background: C.bg } },
         React.createElement(UpdateBanner, null),
-        React.createElement("div", { style: { display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 } }, TABS.map(([key, label]) => (React.createElement("button", { key: key, onClick: () => { if (swipedRef.current) {
+        React.createElement("div", { style: { display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 } }, tabListB2.map(([key, label]) => (React.createElement("button", { key: key, onClick: () => { if (swipedRef.current) {
                 swipedRef.current = false;
                 return;
             } setTab(key); }, onTouchStart: (e) => { const t = e.touches[0]; startRef.current = { x: t.clientX, y: t.clientY }; swipedRef.current = false; }, onTouchEnd: (e) => {
@@ -1847,10 +1996,12 @@ function Shell() {
                     setShowStandings(true);
                 }
                 startRef.current = null;
-            }, style: { flex: 1, padding: "12px 0", background: "none", border: "none", fontSize: "clamp(10.5px, 3.2vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" } }, label)))),
+            }, style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", padding: "11px 0", background: "none", border: "none", fontSize: "clamp(10px, 3vw, 13px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT, touchAction: "pan-y" } }, label)))),
         React.createElement("div", { style: { flex: 1, minHeight: 0, position: "relative" } },
             React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "timeline" ? "block" : "none" } },
                 React.createElement(TimelineTab, { myMatchId: setupInfo ? setupInfo.matchId : null, onPick: handlePick })),
+            React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "tour" ? "block" : "none" } },
+                React.createElement(TourTableTabB2, { onPick: handlePick })),
             React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "tables" ? "block" : "none" } },
                 React.createElement(TablesTab, null)),
             React.createElement("div", { style: { position: "absolute", inset: 0, overflowY: "auto", display: tab === "schedule" ? "block" : "none" } },
