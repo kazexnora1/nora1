@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.312";
+const APP_VERSION = "1.313";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1620,7 +1620,6 @@ function App() {
       <div className="print-fit" style={{ flex: 1, minHeight: 0, overflowY: (tab === "home" || tab === "player") ? "hidden" : "auto" }}>
         <div style={{ maxWidth: (tab === "home" || tab === "player") && isPc ? 1600 : 820, margin: "0 auto", height: (tab === "home" || tab === "player") ? "100%" : "auto" }}>
           {tab === "home" && (isPc ? <PcMatchGridTab simple={roundRobin} /> : <HomeTab />)}
-          {tourMsg && <div style={{ margin: "6px 10px 0", padding: "6px 10px", borderRadius: 10, background: "#fff7e6", border: "1px solid #d99a2b", fontSize: 12, fontWeight: 700, color: "#7a4a00" }}>{tourMsg}</div>}
           {tab === "tables" && <LiveTablesTab />}
           {tab === "tour" && <TourTableTab />}
           {tab === "player" && playerContent}
