@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.309";
+const APP_VERSION = "1.310";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -1552,20 +1552,20 @@ function App() {
   }, []);
 
   const tabs = [
-    ["home", "🗓 タイムライン"],
-    ["tables", "🐾 テーブル"],
-    ["player", "🧑‍🤝‍🧑 プレイヤー"],
+    ["home", "🗓 タイム"],
+    ["tables", "🐾 卓"],
+    ["player", "🧑 選手"],
     ["qr", "📱 QR"],
     ["settings", "⚙️ 設定"],
   ];
-  if (loadPrelimMode() === "tour12") tabs.splice(1, 0, ["tour", "🏆 トーナメント表"]);
+  if (loadPrelimMode() === "tour12") tabs.splice(1, 0, ["tour", "🏆 表"]);
 
   const tabBarJsx = (
     <div className="no-print" style={{ display: "flex", borderBottom: `1px solid ${C.line}`, background: "#fff", flexShrink: 0 }}>
       <div style={{ display: "flex", width: "100%", maxWidth: 820, margin: "0 auto" }}>
         {tabs.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            style={{ flex: 1, padding: "13px 2px", background: "none", border: "none", fontSize: "clamp(10.5px, 3.6vw, 15px)", whiteSpace: "nowrap", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
+            style={{ flex: 1, minWidth: 0, padding: "11px 0", background: "none", border: "none", fontSize: "clamp(10px, 3.2vw, 14px)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: tab === key ? 800 : 600, color: tab === key ? C.blue : C.sub, cursor: "pointer", fontFamily: FONT }}>
             {label}
           </button>
         ))}
@@ -3898,9 +3898,9 @@ const TOUR_COL_LABEL = ["敗者側②", "敗者側①", "1回戦", "勝者側①
 function TourBracketSvg({ view }) {
   const nodes = {};
   view.cols.forEach((c) => c.matches.forEach((m) => { nodes[m.no] = m; }));
-  const BW = 172, BH = 72;
+  const BW = 172, BH = 88;
   const colX = (c) => 14 + c * 204;
-  const rowY = (y) => 70 + y * 86;
+  const rowY = (y) => 74 + y * 100;
   const box = (no) => {
     const p = TOUR_POS[no];
     return { x: colX(p[0]), y: rowY(p[1]) - BH / 2, cy: rowY(p[1]) };
@@ -3960,14 +3960,19 @@ function TourBracketSvg({ view }) {
     return (
       <g key={no}>
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
-        <text x={b.x + BW - 8} y={b.y + 20} fontSize="18" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
-        {est ? <text x={b.x + 8} y={b.y + 20} fontSize="15" fontWeight="800" fill={C.sub}>約{est}</text> : null}
-        {m ? row(m.a, 0, b.y + 32) : null}
-        {m ? row(m.b, 1, b.y + 58) : null}
-        {!m ? <text x={b.x + 8} y={b.y + 38} fontSize="17" fill={C.sub}>({no})</text> : null}
+        <text x={b.x + BW - 8} y={b.y + 22} fontSize="18" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
+        {est ? <text x={b.x + BW - 8} y={b.y + 42} fontSize="14" fontWeight="800" fill={C.sub} textAnchor="end">約{est}</text> : null}
+        {m ? row(m.a, 0, b.y + 54) : null}
+        {m ? row(m.b, 1, b.y + 80) : null}
+        {!m ? <text x={b.x + 8} y={b.y + 44} fontSize="17" fill={C.sub}>({no})</text> : null}
       </g>
     );
   };
+  // 敗者側の山の最後の試合（勝者の行き先）の注釈：対戦の定義から自動で作る
+  const notes = TOUR.DEF.filter((d) => d.kind === "敗者側").map((d) => {
+    const next = TOUR.DEF.find((x) => [x.a, x.b].some((r) => r.w === d.no));
+    return next && d.no === 9 || (next && d.no === 10) ? { no: d.no, to: next.no } : null;
+  }).filter(Boolean);
   return (
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 8 }}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: W }}>
@@ -3978,6 +3983,10 @@ function TourBracketSvg({ view }) {
           <path key={l.key} d={l.d} fill="none" stroke={l.hot ? C.blue : "#7b8496"} strokeWidth={l.hot ? 3.5 : 2.5} strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {Object.keys(TOUR_POS).map((n) => boxOf(+n))}
+        {notes.map((nt) => {
+          const b = box(nt.no);
+          return <text key={"note" + nt.no} x={b.x + 4} y={b.y + BH + 20} fontSize="15" fontWeight="800" fill={C.sub}>勝者は({nt.to})へ</text>;
+        })}
       </svg>
     </div>
   );
