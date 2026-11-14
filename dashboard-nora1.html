@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.299";
+const APP_VERSION = "1.300";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3866,15 +3866,15 @@ const TOUR_COL_LABEL = ["敗者側②", "敗者側①", "1回戦", "勝者側①
 function TourBracketSvg({ view }) {
   const nodes = {};
   view.cols.forEach((c) => c.matches.forEach((m) => { nodes[m.no] = m; }));
-  const BW = 124, BH = 48;
-  const colX = (c) => 14 + c * 138;
-  const rowY = (y) => 46 + y * 58;
+  const BW = 152, BH = 62;
+  const colX = (c) => 14 + c * 170;
+  const rowY = (y) => 66 + y * 74;
   const box = (no) => {
     const p = TOUR_POS[no];
     return { x: colX(p[0]), y: rowY(p[1]) - BH / 2, cy: rowY(p[1]) };
   };
   const W = colX(5) + BW + 14, H = rowY(11.5) + BH / 2 + 16;
-  const short = (s) => (s && s.length > 6 ? s.slice(0, 6) + "…" : s || "");
+  const short = (s) => (s && s.length > 8 ? s.slice(0, 8) + "…" : s || "");
   // 線：入力になっている試合どうしをつなぐ（前の列から次の列へ。左へ戻る場合も同じ考え方）
   const lines = [];
   TOUR.DEF.forEach((d) => {
@@ -3882,6 +3882,10 @@ function TourBracketSvg({ view }) {
     [d.a, d.b].forEach((ref) => {
       const sn = ref.w !== undefined ? ref.w : ref.l;
       if (sn === undefined) return;
+      // 見やすさのため、隣の列どうしの線だけ引く（列をまたぐ線・1回戦から敗者側へ戻る線は引かない）
+      const sc = TOUR_POS[sn][0], tc = TOUR_POS[d.no][0];
+      if (Math.abs(sc - tc) !== 1) return;
+      if (sn <= 6 && tc < sc) return;
       const s = box(sn);
       const fwd = s.x < tgt.x;
       const sx = fwd ? s.x + BW : s.x, tx = fwd ? tgt.x : tgt.x + BW;
@@ -3900,20 +3904,20 @@ function TourBracketSvg({ view }) {
       const won = m && m.winner === i, lost = m && m.winner !== null && m.winner !== i;
       const col = p && p.placeholder ? C.sub : (i === 0 ? C.blue : C.red);
       return (
-        <text key={i} x={b.x + 6} y={yy} fontSize="12" fontWeight={won ? 900 : 600} fill={col}
+        <text key={i} x={b.x + 7} y={yy} fontSize="16" fontWeight={won ? 900 : 700} fill={col}
           fontStyle={p && p.placeholder ? "italic" : "normal"} textDecoration={lost ? "line-through" : "none"}>
           {won ? "▲" : ""}{short(p ? p.name : "—")}
-          {p && p.cls ? <tspan fill={C.sub} fontSize="10"> {p.cls}{p.target ? p.target : ""}</tspan> : null}
+          {p && p.cls ? <tspan fill={C.sub} fontSize="13" fontWeight="700"> {p.cls}{p.target ? p.target : ""}</tspan> : null}
         </text>
       );
     };
     return (
       <g key={no}>
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
-        <text x={b.x + BW - 6} y={b.y + 12} fontSize="11" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
-        {m ? row(m.a, 0, b.y + 19) : null}
-        {m ? row(m.b, 1, b.y + 38) : null}
-        {!m ? <text x={b.x + 6} y={b.y + 28} fontSize="11" fill={C.sub}>({no})</text> : null}
+        <text x={b.x + BW - 7} y={b.y + 18} fontSize="16" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
+        {m ? row(m.a, 0, b.y + 27) : null}
+        {m ? row(m.b, 1, b.y + 50) : null}
+        {!m ? <text x={b.x + 7} y={b.y + 34} fontSize="15" fill={C.sub}>({no})</text> : null}
       </g>
     );
   };
@@ -3921,7 +3925,7 @@ function TourBracketSvg({ view }) {
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 8 }}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: W }}>
         {TOUR_COL_LABEL.map((lb, c) => (
-          <text key={c} x={colX(c) + BW / 2} y={20} fontSize="12" fontWeight="900" fill={C.sub} textAnchor="middle">{lb}</text>
+          <text key={c} x={colX(c) + BW / 2} y={30} fontSize="16" fontWeight="900" fill={C.sub} textAnchor="middle">{lb}</text>
         ))}
         {lines.map((l) => (
           <path key={l.key} d={l.d} fill="none" stroke={l.hot ? C.blue : C.line} strokeWidth={l.hot ? 2 : 1.5} />
