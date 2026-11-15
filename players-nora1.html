@@ -113,7 +113,7 @@ function computeRace(R1, R2, lenPct) {
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // このアプリ自身のバージョン。GitHub Pagesへ新しいファイルを配置したら、この数字も上げておく
 // （UpdateBannerが自分のURLを定期的に取りに行き、この値の差分で新しいバージョンの公開を検知する）
-const APP_VERSION = "1.039";
+const APP_VERSION = "1.040";
 const BUILD_TIME = "2026-09-22 ラック終了時、球ゾーンに大きなポップアップを表示（次のブレイク→このラックのスコア→ヒル/勝ちまでの数字またはヒルヒル案内→戻る/次のラックへ、の順）";
 
 
@@ -574,7 +574,7 @@ function TourBracketB2({ view, onTapMatch }) {
     const tappable = !!m && st === "未開始" && !!onTapMatch;
     const row = (p, i, yy) => {
       const won = !!m && m.winner === i, lost = !!m && m.winner !== null && m.winner !== undefined && m.winner !== i;
-      const col = p && p.placeholder ? C.sub : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
+      const col = p && p.placeholder ? C.sub : won ? C.win : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
       const meta = p && p.cls ? `${p.cls}${p.target ? p.target : ""}` : "";
       return React.createElement("text", { key: i, x: b.x + 10, y: yy, fontSize: 17, fontWeight: won ? 900 : lost ? 500 : 700, fill: col },
         (won ? "▲ " : "") + short(p ? p.name : "—"),
@@ -585,7 +585,6 @@ function TourBracketB2({ view, onTapMatch }) {
       React.createElement("text", { key: "n", x: b.x + BW - 10, y: b.y + 27, fontSize: 17, fontWeight: 900, fill: C.blue, textAnchor: "end" }, `(${no})`),
     ];
     if (m && m.state === "終了" && m.score) kids.push(React.createElement("text", { key: "s", x: b.x + BW - 10, y: b.y + 50, fontSize: 15, fontWeight: 900, fill: C.ink, textAnchor: "end" }, `${m.score[0]}-${m.score[1]}`));
-    else if (m && m.slot != null && st !== "終了") kids.push(React.createElement("text", { key: "t", x: b.x + BW - 10, y: b.y + 50, fontSize: 13, fontWeight: 800, fill: C.sub, textAnchor: "end" }, `約${tourEstOfB2(view, m.slot)}`));
     if (m) { kids.push(row(m.a, 0, b.y + 27)); kids.push(row(m.b, 1, b.y + 50)); }
     else kids.push(React.createElement("text", { key: "w", x: b.x + 10, y: b.y + 50, fontSize: 17, fontWeight: 700, fill: C.sub }, "待ち"));
     const onClick = tappable ? () => {
@@ -765,9 +764,9 @@ function TimelineSlotCard({ m, st: stRaw, mine, onPick, blockedBy }) {
     };
     return (React.createElement("div", { onClick: clickable ? handleClick : undefined, style: {
             cursor: clickable ? "pointer" : "default",
-            position: "relative", height: 108, boxSizing: "border-box", background: style.bg,
+            position: "relative", height: 124, boxSizing: "border-box", background: style.bg,
             border: `${mine ? 3 : st === "live" || st === "call" ? 2 : 1}px solid ${mine ? C.win : style.border}`,
-            borderRadius: 12, padding: "7px 4px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 7,
+            borderRadius: 12, padding: "24px 8px 8px", display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: 9,
             overflow: "hidden", opacity: st === "queued" ? 0.7 : 1,
         } },
         clickable && !mine && (React.createElement("span", { style: { position: "absolute", bottom: 2, left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" } }, "\u25B6 \u62C5\u5F53\u3059\u308B")),
