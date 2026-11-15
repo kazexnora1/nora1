@@ -134,7 +134,7 @@ function computeRace(R1, R2, lenPct) {
 
 const FONT = "system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif";
 // 更新のたびに0.001ずつ増やす。設定タブの一番下に表示
-const APP_VERSION = "1.315";
+const APP_VERSION = "1.316";
 const BUILD_TIME = "2026-10-04 テーブル移動時に raceTo（目標点）が失われるバグを修正箇所を、B2と同じ「場所ごとに個別で読む」方式へ全面的に変更（参加者リスト・タイムライン・プレイヤータブ・PC戦績タブ・接続確認、計5箇所）。ルート直下だけ権限が違う設定でも影響を受けないようにした";
 
 
@@ -3936,8 +3936,9 @@ function TourBracketSvg({ view }) {
   const mins = Object.values(nodes).map((x) => Number(x.mins)).filter((x) => x > 0);
   const avgMin = mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 60;
   const slotMin = avgMin + (Number(st.changeoverMin) || 0);
+  const timeSet = !!(st.startH || st.startM);   // 開始時刻が未設定（0:00のまま）なら時刻は出さない
   const estOf = (x) => {
-    if (!x || x.slot == null) return "";
+    if (!timeSet || !x || x.slot == null) return "";
     const tm = baseMin + Math.round(Number(x.slot) * slotMin);
     return `${String(Math.floor(tm / 60) % 24).padStart(2, "0")}:${String(tm % 60).padStart(2, "0")}`;
   };
@@ -3950,7 +3951,7 @@ function TourBracketSvg({ view }) {
     // 選手名は左の列（上寄り）。クラス・目標点は名前のすぐ右。勝者は太字と▲、負けた側は灰色
     const row = (p, i, yy) => {
       const won = !!m && m.winner === i, lost = !!m && m.winner !== null && m.winner !== undefined && m.winner !== i;
-      const col = p && p.placeholder ? C.sub : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
+      const col = p && p.placeholder ? C.sub : won ? C.win : lost ? "#9aa3af" : (i === 0 ? C.blue : C.red);
       const name = short(p ? p.name : "—");
       const meta = p && p.cls ? `${p.cls}${p.target ? p.target : ""}` : "";
       return (
@@ -3965,7 +3966,7 @@ function TourBracketSvg({ view }) {
       <g key={no}>
         <rect x={b.x} y={b.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} strokeWidth={st === "試合中" ? 2 : 1} />
         <text x={b.x + BW - 10} y={b.y + 27} fontSize="17" fontWeight="900" fill={C.blue} textAnchor="end">({no})</text>
-        {est ? <text x={b.x + BW - 10} y={b.y + 50} fontSize="13" fontWeight="800" fill={C.sub} textAnchor="end">約{est}</text> : null}
+        {est ? <text x={b.x + BW - 10} y={b.y + 50} fontSize="13" fontWeight="800" fill={C.sub} textAnchor="end">{est}</text> : null}
         {m && m.state === "終了" && m.score ? <text x={b.x + BW - 10} y={b.y + 50} fontSize="15" fontWeight="900" fill={C.ink} textAnchor="end">{m.score[0]}-{m.score[1]}</text> : null}
         {m ? row(m.a, 0, b.y + 27) : null}
         {m ? row(m.b, 1, b.y + 50) : null}
