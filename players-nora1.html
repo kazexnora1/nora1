@@ -538,6 +538,49 @@ function tourEstOfB2(view, slot) {
   const tm = 19 * 60 + Math.round(Number(slot || 0) * avg);
   return `${String(Math.floor(tm / 60) % 24).padStart(2, "0")}:${String(tm % 60).padStart(2, "0")}`;
 }
+
+// 予選トーナメントの名前入れ（本部と同じ判定）：決まった側から、次の試合の選手名・クラス・先取数を入れる
+// 終わった試合は、仮の名前が残っている時だけ名前を直す（勝敗・先取数は変えない）
+function tourFillUpdatesB2(matches) {
+  const all = Object.entries(matches || {}).filter(([, m]) => m && m.tour && m.tour.refA && m.tour.refB);
+  const byNo = {};
+  all.forEach(([, m]) => { byNo[`${m.tour.group}|${m.tour.no}`] = m; });
+  const pick = (ref, group) => {
+    const no = ref.w !== undefined ? ref.w : ref.l;
+    const src = byNo[`${group}|${no}`];
+    if (!src || !Array.isArray(src.names)) return null;
+    const w = matchWinnerIndex(src);
+    if (w !== 0 && w !== 1) return null;
+    const side = ref.w !== undefined ? w : 1 - w;
+    const name = src.names[side];
+    if (!name || isTourPlaceholderB2(name)) return null;
+    return { name, cls: side === 0 ? src.cls1 : src.cls2, r: side === 0 ? src.r1 : src.r2, sk: side === 0 ? src.sk1 : src.sk2 };
+  };
+  const upd = {};
+  all.forEach(([id, m]) => {
+    try {
+      if (m.phase === "play" && (isTourPlaceholderB2(m.names && m.names[0]) || isTourPlaceholderB2(m.names && m.names[1]))) return;   // 試合中の名前は触らない
+      const decided = matchWinnerIndex(m) === 0 || matchWinnerIndex(m) === 1;
+      const phName = isTourPlaceholderB2(m.names && m.names[0]) || isTourPlaceholderB2(m.names && m.names[1]);
+      if (decided && !phName) return;
+      const A = pick(m.tour.refA, m.tour.group), B = pick(m.tour.refB, m.tour.group);
+      if (!A && !B) return;
+      const names = [A ? A.name : m.names[0], B ? B.name : m.names[1]];
+      const cls1 = A ? (A.cls || "") : (m.cls1 || ""), cls2 = B ? (B.cls || "") : (m.cls2 || "");
+      const rt0 = decided ? (m.raceTo ? m.raceTo[0] || 0 : 0) : (A ? tourTargetOfB2(A.cls, m.tour.kind) : (m.raceTo ? m.raceTo[0] || 0 : 0));
+      const rt1 = decided ? (m.raceTo ? m.raceTo[1] || 0 : 0) : (B ? tourTargetOfB2(B.cls, m.tour.kind) : (m.raceTo ? m.raceTo[1] || 0 : 0));
+      const changed = names[0] !== m.names[0] || names[1] !== m.names[1] || rt0 !== ((m.raceTo || [])[0] || 0) || rt1 !== ((m.raceTo || [])[1] || 0);
+      if (!changed) return;
+      upd[id] = {
+        ...m, names, cls1, cls2,
+        r1: A ? (A.r || 0) : (m.r1 || 0), r2: B ? (B.r || 0) : (m.r2 || 0),
+        sk1: A ? (A.sk || 0) : (m.sk1 || 0), sk2: B ? (B.sk || 0) : (m.sk2 || 0),
+        raceTo: [rt0, rt1], updatedAt: Date.now(),
+      };
+    } catch (err) { console.warn("予選トーナメントの名前入れ（試合" + id + "）", err); }
+  });
+  return upd;
+}
 // トーナメント表（写真の形）。未開始の試合をタップすると確認してから、その試合のスコアを担当する
 function TourBracketB2({ view, onTapMatch }) {
   const BW = 176, BH = 64;
@@ -1917,6 +1960,12 @@ function Shell() {
     const [tab, setTab] = useState("scorer");
     const [tourOn, setTourOn] = useState(false);
     useEffect(() => subscribeAllMatches((m) => setTourOn(Object.values(m || {}).some((x) => x && x.tour)), () => { }), []);
+    useEffect(() => subscribeAllMatches((m) => {
+      try {
+        const upd = tourFillUpdatesB2(m || {});
+        if (Object.keys(upd).length) db.ref("matches").update(upd).catch(() => { });
+      } catch (e) { console.warn("予選トーナメントの名前入れ", e); }
+    }, () => { }), []);
     const tabListB2 = [["timeline", "🗓 タイム"], ...(tourOn ? [["tour", "🏆 表"]] : []), ["tables", "🐾 卓"], ["schedule", "📋 予定"], ["qr", "📱 QR"], ["scorer", "🎯 スコア"]];
     const [showStandings, setShowStandings] = useState(false);
     const startRef = useRef(null); // タブをなぞり始めた位置
